@@ -76,7 +76,7 @@ try {
 		? config.headless
 		: await confirm({
 				message:
-					'Do you want to run the browser in headless mode? (You will not see the browser window but the process will run in the background). If something does not work it is recommended to turn it off.',
+					'Run headless? (no browser window). Headless also skips the Hypeddit browser fallback — gates that need Spotify/etc. will fail unless you turn headless off.',
 				default: true,
 			});
 
@@ -171,8 +171,8 @@ try {
 				await hypedditDownloader.close();
 			}
 		} else if (!downloadFilename && gateConfig.headless) {
-			console.log(
-				'Browserless: Hypeddit gate needs a browser (e.g. Spotify). Re-run with headless disabled to allow a browser fallback.',
+			throw new Error(
+				'This Hypeddit gate needs a browser (e.g. Spotify). Re-run with headless disabled to allow a browser fallback.',
 			);
 		}
 	}

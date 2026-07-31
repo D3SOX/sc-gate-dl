@@ -788,6 +788,7 @@ export class DroploudDownloader {
 				'Droploud: waiting up to 2 minutes for manual Repost / captcha solve…',
 			);
 			const manualDeadline = Date.now() + 120_000;
+			let nextApiCheck = 0;
 			while (Date.now() < manualDeadline) {
 				if (page.isClosed()) break;
 				await this.handlePossibleCaptcha(page).catch(() => false);
@@ -797,12 +798,27 @@ export class DroploudDownloader {
 					);
 					return;
 				}
-				const status = await alreadyReposted(page);
-				if (status) {
+				if (
+					!page.isClosed() &&
+					(await this.pageLooksReposted(page).catch(() => false))
+				) {
 					console.log(
-						`Droploud: SoundCloud repost confirmed after manual UI (${status}).`,
+						'Droploud: SoundCloud repost confirmed after manual UI (ui).',
 					);
 					return;
+				}
+				if (Date.now() >= nextApiCheck) {
+					nextApiCheck = Date.now() + 15_000;
+					try {
+						if (await soundcloud.isTrackReposted(trackUrl)) {
+							console.log(
+								'Droploud: SoundCloud repost confirmed after manual UI (api).',
+							);
+							return;
+						}
+					} catch {
+						// logged inside isTrackReposted
+					}
 				}
 				await this.tryClickRepostButton(page).catch(() => null);
 				await timeout(1_000);

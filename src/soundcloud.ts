@@ -192,15 +192,26 @@ export class SoundcloudClient {
 			// optional
 		}
 
-		const response = await fetch(url, {
-			method: 'POST',
-			headers,
-			body: JSON.stringify({
-				query,
-				variables: { trackUrn },
-			}),
-			signal: AbortSignal.timeout(30_000),
-		});
+		let response: Response;
+		try {
+			response = await fetch(url, {
+				method: 'POST',
+				headers,
+				body: JSON.stringify({
+					query,
+					variables: { trackUrn },
+				}),
+				signal: AbortSignal.timeout(30_000),
+			});
+		} catch (error) {
+			const message = error instanceof Error ? error.message : String(error);
+			return {
+				ok: false,
+				status: 0,
+				reason: `fetch-failed:${message.slice(0, 80)}`,
+				body: '',
+			};
+		}
 		const body = await response.text().catch(() => '');
 
 		if (!response.ok) {
@@ -330,12 +341,18 @@ export class SoundcloudClient {
 			const cookies = await loadCookies('soundcloud-cookies.json');
 			const datadome = cookies.find((c) => c.name === 'datadome')?.value;
 			if (cookies.length) {
-				args.push(
-					'-H',
-					`Cookie: ${cookies.map((c) => `${c.name}=${c.value}`).join('; ')}`,
+				const cookieHeader = cookies
+					.map((c) => `${c.name}=${c.value}`)
+					.join('; ');
+				configLines.push(
+					`header = "Cookie: ${escapeCurlConfig(cookieHeader)}"`,
 				);
 			}
-			if (datadome) args.push('-H', `x-datadome-clientid: ${datadome}`);
+			if (datadome) {
+				configLines.push(
+					`header = "x-datadome-clientid: ${escapeCurlConfig(datadome)}"`,
+				);
+			}
 		} catch {
 			// optional
 		}
@@ -436,13 +453,17 @@ export class SoundcloudClient {
 			const cookies = await loadCookies('soundcloud-cookies.json');
 			const datadome = cookies.find((c) => c.name === 'datadome')?.value;
 			if (cookies.length) {
-				args.push(
-					'-H',
-					`Cookie: ${cookies.map((c) => `${c.name}=${c.value}`).join('; ')}`,
+				const cookieHeader = cookies
+					.map((c) => `${c.name}=${c.value}`)
+					.join('; ');
+				configLines.push(
+					`header = "Cookie: ${escapeCurlConfig(cookieHeader)}"`,
 				);
 			}
 			if (datadome) {
-				args.push('-H', `x-datadome-clientid: ${datadome}`);
+				configLines.push(
+					`header = "x-datadome-clientid: ${escapeCurlConfig(datadome)}"`,
+				);
 			}
 		} catch {
 			// optional

@@ -289,9 +289,11 @@ async function runDownloadProcess(jobId: string): Promise<void> {
 				downloadFilename = await hypedditDownloader.downloadAudio(gateUrl);
 				await closeJobDownloader(jobId);
 			} else if (!downloadFilename && job.headless) {
-				console.log(
-					'Browserless: Hypeddit gate needs a browser (e.g. Spotify). Enable “Show browser window (headful)” to continue.',
+				jobStore.setError(
+					jobId,
+					'This Hypeddit gate needs a browser (e.g. Spotify). Enable “Show browser window (headful)” and retry.',
 				);
+				return;
 			}
 		}
 
