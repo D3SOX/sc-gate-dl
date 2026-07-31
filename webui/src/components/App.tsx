@@ -214,6 +214,41 @@ export default function App() {
 		}
 	};
 
+	/** No gate found — download the SoundCloud track itself via yt-dlp. */
+	const handleYtdlpSoundcloudDownload = async () => {
+		if (!job.jobId || !soundcloudUrl.trim()) return;
+
+		setIsLoading(true);
+		setJob((prev) => ({ ...prev, error: null }));
+
+		try {
+			const response = await fetch(
+				`${API_BASE}/api/job/${job.jobId}/hypeddit`,
+				{
+					method: 'POST',
+					headers: { 'Content-Type': 'application/json' },
+					body: JSON.stringify({ hypedditUrl: soundcloudUrl }),
+				},
+			);
+
+			const data = await response.json();
+
+			if (!response.ok) {
+				throw new Error(data.error || 'Failed to start yt-dlp download');
+			}
+
+			setJob((prev) => ({ ...prev, hypedditUrl: soundcloudUrl }));
+			startDownload(job.jobId);
+		} catch (err) {
+			setJob((prev) => ({
+				...prev,
+				error: err instanceof Error ? err.message : 'Unknown error',
+			}));
+		} finally {
+			setIsLoading(false);
+		}
+	};
+
 	// Start download process
 	const startDownload = useCallback(async (jobId: string) => {
 		setStep('progress');
@@ -400,7 +435,7 @@ export default function App() {
 					<span className="logo-icon">&#9654;</span>
 					<h1>sc-gate-dl</h1>
 				</div>
-				<p className="tagline">Download & tag SoundCloud tracks from Hypeddit, Droploud, GateRush, or DownloadGater</p>
+				<p className="tagline">Download & tag SoundCloud tracks from Hypeddit, Droploud, GateRush, DownloadGater, or Bandcamp</p>
 			</header>
 
 			{/* Step indicator */}
@@ -511,50 +546,70 @@ export default function App() {
 
 				{/* Step 2: Gate URL (if needed) */}
 				{step === 'hypeddit' && (
-					<form onSubmit={handleHypedditSubmit} className="form animate-slide-up">
+					<div className="form animate-slide-up">
 						<div className="notice">
 							<span className="notice-icon">i</span>
 							<p>
 								{skipAutomaticHypedditFetch
-									? 'Automatic gate lookup is disabled. Please enter the URL manually.'
-									: 'Gate URL not found in track. Please enter a Hypeddit, Droploud, GateRush, or DownloadGater URL manually.'}
+									? 'Automatic gate lookup is disabled. Enter a gate URL manually, or download the SoundCloud track via yt-dlp.'
+									: 'Gate URL not found in track. Enter a Hypeddit, Droploud, GateRush, DownloadGater, or Bandcamp URL, or download via yt-dlp from SoundCloud.'}
 							</p>
 						</div>
-						<div className="form-group">
-							<label htmlFor="hypeddit-url">Gate URL</label>
-							<input
-								id="hypeddit-url"
-								type="url"
-								name="hypeddit-url"
-								value={hypedditUrlInput}
-								onChange={(e) => setHypedditUrlInput(e.target.value)}
-								placeholder="https://hypeddit.com/... / droploud.com/gate/... / gaterush.me/... / downloadgater.com/g/..."
-								autoComplete="off"
-								required
-								disabled={isLoading}
-							/>
+						<form onSubmit={handleHypedditSubmit}>
+							<div className="form-group">
+								<label htmlFor="hypeddit-url">Gate URL</label>
+								<input
+									id="hypeddit-url"
+									type="url"
+									name="hypeddit-url"
+									value={hypedditUrlInput}
+									onChange={(e) => setHypedditUrlInput(e.target.value)}
+									placeholder="https://hypeddit.com/... / droploud.com/gate/... / gaterush.me/... / downloadgater.com/g/... / artist.bandcamp.com/track/..."
+									autoComplete="off"
+									required
+									disabled={isLoading}
+								/>
+							</div>
+							<label className="checkbox-row" htmlFor="headful-mode-gate">
+								<input
+									id="headful-mode-gate"
+									type="checkbox"
+									checked={headfulMode}
+									onChange={(e) => setHeadfulMode(e.target.checked)}
+									disabled={isLoading}
+								/>
+								<span>Show browser window (headful)</span>
+							</label>
+							<button type="submit" className="btn-primary" disabled={isLoading}>
+								{isLoading ? (
+									<>
+										<span className="spinner" />
+										Starting...
+									</>
+								) : (
+									'Start Download'
+								)}
+							</button>
+						</form>
+						<div className="form-divider" aria-hidden="true">
+							<span>or</span>
 						</div>
-						<label className="checkbox-row" htmlFor="headful-mode-gate">
-							<input
-								id="headful-mode-gate"
-								type="checkbox"
-								checked={headfulMode}
-								onChange={(e) => setHeadfulMode(e.target.checked)}
-								disabled={isLoading}
-							/>
-							<span>Show browser window (headful)</span>
-						</label>
-						<button type="submit" className="btn-primary" disabled={isLoading}>
+						<button
+							type="button"
+							className="btn-secondary btn-full"
+							disabled={isLoading || !soundcloudUrl.trim()}
+							onClick={handleYtdlpSoundcloudDownload}
+						>
 							{isLoading ? (
 								<>
 									<span className="spinner" />
 									Starting...
 								</>
 							) : (
-								'Start Download'
+								'Download via yt-dlp from SoundCloud'
 							)}
 						</button>
-					</form>
+					</div>
 				)}
 
 				{/* Step 3: Progress */}

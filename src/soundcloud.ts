@@ -529,7 +529,11 @@ export class SoundcloudClient {
 					? 'GateRush'
 					: gate.provider === 'downloadgater'
 						? 'DownloadGater'
-						: 'Hypeddit';
+						: gate.provider === 'bandcamp'
+							? 'Bandcamp'
+							: gate.provider === 'soundcloud'
+								? 'SoundCloud'
+								: 'Hypeddit';
 		const sourceLabel =
 			gate.type === 'purchase_url' ? 'purchase URL' : 'description';
 		console.log(

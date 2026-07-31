@@ -207,6 +207,12 @@
 	gap: var(--space-lg);
 }
 
+.form > form {
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-lg);
+}
+
 .form-group {
 	display: flex;
 	flex-direction: column;
@@ -355,6 +361,33 @@
 .btn-secondary:hover {
 	border-color: var(--neon-cyan);
 	color: var(--neon-cyan);
+}
+
+.btn-secondary:disabled {
+	opacity: 0.7;
+	cursor: not-allowed;
+}
+
+.btn-full {
+	width: 100%;
+}
+
+.form-divider {
+	display: flex;
+	align-items: center;
+	gap: var(--space-md);
+	color: var(--text-muted);
+	font-size: 0.85rem;
+	text-transform: lowercase;
+	letter-spacing: 0.04em;
+}
+
+.form-divider::before,
+.form-divider::after {
+	content: '';
+	flex: 1;
+	height: 1px;
+	background: var(--border-strong);
 }
 
 /* Spinner */

@@ -1,4 +1,4 @@
-import { confirm, input } from '@inquirer/prompts';
+import { confirm, input, select } from '@inquirer/prompts';
 import { AudioProcessor } from './audioProcessor';
 import { loadConfig, saveConfig } from './config';
 import { DownloadgaterDownloader } from './downloadgater';
@@ -10,10 +10,10 @@ import { SoundcloudClient } from './soundcloud';
 import {
 	getFfmpegBin,
 	getFfprobeBin,
-	getGateProvider,
-	validateGateUrl,
+	resolveGateProviderUrl,
 	validateSoundcloudUrl,
 } from './utils';
+import { YtDlpDownloader } from './ytdlp';
 
 try {
 	const ffmpegBin = await getFfmpegBin();
@@ -57,36 +57,78 @@ try {
 	let gateUrl = gate?.url ?? null;
 
 	if (!gateUrl) {
-		gateUrl = await input({
-			message:
-				'Enter the Hypeddit, Droploud, GateRush, or DownloadGater gate URL',
-			validate: validateGateUrl,
+		const fallback = await select({
+			message: 'No gate / Bandcamp URL found on this track. What next?',
+			choices: [
+				{
+					name: 'Download via yt-dlp from SoundCloud',
+					value: 'ytdlp' as const,
+				},
+				{
+					name: 'Enter a Hypeddit / Droploud / GateRush / DownloadGater / Bandcamp URL',
+					value: 'manual' as const,
+				},
+			],
 		});
-		const provider = getGateProvider(gateUrl);
-		gate = provider ? { url: gateUrl, provider, type: 'purchase_url' } : null;
+
+		if (fallback === 'ytdlp') {
+			gateUrl = soundcloudUrl;
+			gate = { url: gateUrl, provider: 'soundcloud', type: 'purchase_url' };
+		} else {
+			gateUrl = await input({
+				message:
+					'Enter the Hypeddit, Droploud, GateRush, DownloadGater, or Bandcamp URL',
+				validate: (value) => {
+					const resolved = resolveGateProviderUrl(value);
+					if (!resolved || resolved.provider === 'soundcloud') {
+						return 'A valid Hypeddit, Droploud, GateRush, DownloadGater, or Bandcamp URL is required';
+					}
+					return true;
+				},
+			});
+			const resolved = resolveGateProviderUrl(gateUrl);
+			gate =
+				resolved && resolved.provider !== 'soundcloud'
+					? {
+							url: resolved.url,
+							provider: resolved.provider,
+							type: 'purchase_url',
+						}
+					: null;
+			if (gate) {
+				gateUrl = gate.url;
+			}
+		}
 	}
 
 	if (!gateUrl || !gate) {
 		throw new Error(
-			'A valid Hypeddit, Droploud, GateRush, or DownloadGater URL is required',
+			'A valid Hypeddit, Droploud, GateRush, DownloadGater, Bandcamp, or SoundCloud URL is required',
 		);
 	}
 
-	const headless = config
-		? config.headless
-		: await confirm({
-				message:
-					'Run headless? (no browser window). Headless also skips the Hypeddit browser fallback — gates that need Spotify/etc. will fail unless you turn headless off.',
-				default: true,
-			});
+	const isYtDlp =
+		gate.provider === 'bandcamp' || gate.provider === 'soundcloud';
 
-	const initializeLogins = config
-		? config.initializeLogins
-		: await confirm({
-				message:
-					"Do you want to initialize logins? This is required for the first run. You can skip it for subsequent runs. If you don't use the tool for a while it might be required again.",
-				default: false,
-			});
+	const headless = isYtDlp
+		? true
+		: config
+			? config.headless
+			: await confirm({
+					message:
+						'Run headless? (no browser window). Headless also skips the Hypeddit browser fallback — gates that need Spotify/etc. will fail unless you turn headless off.',
+					default: true,
+				});
+
+	const initializeLogins = isYtDlp
+		? false
+		: config
+			? config.initializeLogins
+			: await confirm({
+					message:
+						"Do you want to initialize logins? This is required for the first run. You can skip it for subsequent runs. If you don't use the tool for a while it might be required again.",
+					default: false,
+				});
 
 	const gateConfig = {
 		name: HYPEDDIT_NAME,
@@ -98,7 +140,14 @@ try {
 	let downloadFilename: string | null = null;
 	let usedBrowser = false;
 
-	if (gate.provider === 'droploud') {
+	if (gate.provider === 'bandcamp' || gate.provider === 'soundcloud') {
+		const sourceLabel =
+			gate.provider === 'bandcamp' ? 'Bandcamp' : 'SoundCloud';
+		const ytDlpDownloader = new YtDlpDownloader(sourceLabel);
+		downloadFilename = await ytDlpDownloader.downloadAudio(gateUrl, {
+			matchTitle: track.title,
+		});
+	} else if (gate.provider === 'droploud') {
 		usedBrowser = true;
 		const droploudDownloader = new DroploudDownloader(gateConfig);
 		try {
