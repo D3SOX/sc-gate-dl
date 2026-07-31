@@ -24,6 +24,7 @@
 	'use strict';
 
 	const WEBUI_BASE_KEY = 'sc-gate-dl-webui-base';
+	const API_BASE_KEY = 'sc-gate-dl-api-base';
 	const PANEL_GEOM_KEY = 'sc-gate-dl-panel-geom';
 	const OUTPUT_FORMAT_KEY = 'sc-gate-dl-output-format';
 	const AUTO_CLOSE_KEY = 'sc-gate-dl-auto-close';
@@ -912,6 +913,22 @@ button[${BUTTON_ATTR}="mui"] svg {
 
 	function getApiBase() {
 		try {
+			if (typeof GM_getValue === 'function') {
+				const gm = GM_getValue(API_BASE_KEY, null);
+				if (typeof gm === 'string' && gm.trim()) {
+					return gm.replace(/\/$/, '');
+				}
+			}
+		} catch {
+			// ignore
+		}
+		try {
+			const stored = localStorage.getItem(API_BASE_KEY)?.replace(/\/$/, '');
+			if (stored) return stored;
+		} catch {
+			// ignore
+		}
+		try {
 			const webui = getWebuiBase();
 			const u = new URL(webui);
 			if (u.port === '4321') u.port = '3000';
@@ -931,7 +948,7 @@ button[${BUTTON_ATTR}="mui"] svg {
 			try {
 				iframe.contentWindow.postMessage(
 					{ source: 'sc-gate-dl-host', type: 'cancel' },
-					'*',
+					new URL(getWebuiBase()).origin,
 				);
 			} catch {
 				// ignore
@@ -963,6 +980,14 @@ button[${BUTTON_ATTR}="mui"] svg {
 		const data = event.data;
 		if (!data || data.source !== 'sc-gate-dl') return;
 		const panel = document.getElementById(PANEL_ID);
+		let webuiOrigin;
+		try {
+			webuiOrigin = new URL(getWebuiBase()).origin;
+		} catch {
+			return;
+		}
+		if (event.origin !== webuiOrigin) return;
+		if (event.source !== panel?.querySelector('iframe')?.contentWindow) return;
 
 		if (data.type === 'job' && data.jobId && panel) {
 			panel.dataset.jobId = String(data.jobId);
@@ -1024,8 +1049,6 @@ button[${BUTTON_ATTR}="mui"] svg {
 					const select = e.target;
 					if (!(select instanceof HTMLSelectElement)) return;
 					setOutputFormat(select.value);
-					const current = panel.dataset.trackUrl;
-					if (current) loadTrackIntoPanel(panel, current);
 				});
 			document.addEventListener('keydown', (e) => {
 				if (e.key === 'Escape' && !panel.hidden) void closePanel();

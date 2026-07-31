@@ -44,6 +44,7 @@ describe('withDownloadRenameLock', () => {
 					exists: (filename) => onDisk.has(filename),
 					isOwnedByOtherJob: (filename) => owned.has(filename),
 				});
+				await Promise.resolve();
 				onDisk.delete(current);
 				onDisk.add(finalName);
 				owned.add(finalName);

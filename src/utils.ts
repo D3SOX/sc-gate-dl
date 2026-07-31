@@ -1,3 +1,4 @@
+import crypto from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { lookpath } from 'find-bin';
@@ -155,13 +156,23 @@ export async function writeSoundcloudNetscapeCookies(
 	if (!(await file.exists())) {
 		return null;
 	}
-	const cookies: LocalCookieData[] = JSON.parse(await file.text());
-	if (!Array.isArray(cookies) || cookies.length === 0) {
+	let cookies: LocalCookieData[];
+	try {
+		const parsed: unknown = JSON.parse(await file.text());
+		if (!Array.isArray(parsed) || parsed.length === 0) {
+			return null;
+		}
+		cookies = parsed as LocalCookieData[];
+	} catch {
 		return null;
 	}
 	const dest =
-		outPath ?? join(tmpdir(), `sc-gate-dl-cookies-${process.pid}.txt`);
-	await Bun.write(dest, cookiesToNetscape(cookies));
+		outPath ??
+		join(
+			tmpdir(),
+			`sc-gate-dl-cookies-${process.pid}-${crypto.randomUUID()}.txt`,
+		);
+	await Bun.write(dest, cookiesToNetscape(cookies), { mode: 0o600 });
 	return dest;
 }
 

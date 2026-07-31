@@ -1,4 +1,4 @@
-import { mkdir } from 'node:fs/promises';
+import { mkdir, rm } from 'node:fs/promises';
 import { basename, join } from 'node:path';
 import { execa } from 'execa';
 import { lookpath } from 'find-bin';
@@ -140,8 +140,9 @@ export class YtDlpDownloader {
 			'--no-warnings',
 		];
 
+		let cookiesPath: string | null = null;
 		if (soundcloud) {
-			const cookiesPath = await writeSoundcloudNetscapeCookies();
+			cookiesPath = await writeSoundcloudNetscapeCookies();
 			if (cookiesPath) {
 				args.push('--cookies', cookiesPath);
 				console.log(
@@ -156,10 +157,15 @@ export class YtDlpDownloader {
 
 		args.push(downloadUrl);
 
-		const { stdout } = await execa(ytDlpBin, args, {
-			timeout: YTDLP_DOWNLOAD_TIMEOUT_MS,
-			killSignal: 'SIGTERM',
-		});
+		let stdout: string;
+		try {
+			({ stdout } = await execa(ytDlpBin, args, {
+				timeout: YTDLP_DOWNLOAD_TIMEOUT_MS,
+				killSignal: 'SIGTERM',
+			}));
+		} finally {
+			if (cookiesPath) await rm(cookiesPath, { force: true });
+		}
 
 		const filepaths = stdout
 			.trim()

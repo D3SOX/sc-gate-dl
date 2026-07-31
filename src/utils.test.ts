@@ -1,10 +1,14 @@
 import { describe, expect, test } from 'bun:test';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import {
 	artistTitleFilename,
 	cookiesToNetscape,
 	previewProcessedFilename,
 	resolveGateProviderUrl,
 	sanitizeFilenamePart,
+	writeSoundcloudNetscapeCookies,
 } from './utils';
 
 describe('resolveGateProviderUrl', () => {
@@ -46,6 +50,19 @@ describe('resolveGateProviderUrl', () => {
 			url: 'https://hypeddit.com/foo',
 			provider: 'hypeddit',
 		});
+	});
+});
+
+describe('writeSoundcloudNetscapeCookies', () => {
+	test('returns null for malformed JSON', async () => {
+		const dir = await mkdtemp(join(tmpdir(), 'sc-gate-dl-test-'));
+		const jsonPath = join(dir, 'cookies.json');
+		try {
+			await writeFile(jsonPath, 'not valid json{{{', 'utf8');
+			expect(await writeSoundcloudNetscapeCookies(jsonPath)).toBeNull();
+		} finally {
+			await rm(dir, { recursive: true, force: true });
+		}
 	});
 });
 

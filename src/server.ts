@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { cp, mkdir, rm } from 'node:fs/promises';
 import { basename, extname, join } from 'node:path';
 import type { SoundcloudTrack } from 'soundcloud.ts';
@@ -215,6 +216,11 @@ async function runDownloadProcess(jobId: string): Promise<void> {
 			throwIfCancelled();
 			const userDataDir = await prepareJobUserDataDir(jobId);
 			jobProfileDirs.set(jobId, userDataDir);
+			if (jobStore.isCancelled(jobId)) {
+				jobProfileDirs.delete(jobId);
+				await rm(userDataDir, { recursive: true, force: true });
+				throw new Error('Download cancelled');
+			}
 			return { ...gateConfigBase, userDataDir };
 		};
 
@@ -417,29 +423,45 @@ async function runDownloadProcess(jobId: string): Promise<void> {
 		}
 		const message =
 			error instanceof Error ? error.message : 'Unknown error occurred';
-		if (/cancel|target closed|session closed|browser.*closed/i.test(message)) {
-			jobStore.cancel(jobId, 'Download cancelled');
-			return;
-		}
 		jobStore.setError(jobId, message);
 	} finally {
 		await closeJobDownloader(jobId);
 	}
 }
 
-const corsHeaders: Record<string, string> = {
-	'Access-Control-Allow-Origin': '*',
-	'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
-	'Access-Control-Allow-Headers':
-		'Content-Type, Authorization, Access-Control-Request-Private-Network',
-	// Chrome Private Network Access: allow soundcloud.com → localhost:3000 (userscript)
-	'Access-Control-Allow-Private-Network': 'true',
-};
+const ALLOWED_ORIGINS = new Set([
+	'https://soundcloud.com',
+	'https://www.soundcloud.com',
+	'https://m.soundcloud.com',
+	'http://localhost:4321',
+	'http://127.0.0.1:4321',
+	'http://localhost:3000',
+	'http://127.0.0.1:3000',
+]);
+
+const requestAls = new AsyncLocalStorage<Request>();
+
+function corsHeaders(): Record<string, string> {
+	const req = requestAls.getStore();
+	const origin = req?.headers.get('Origin');
+	const headers: Record<string, string> = {
+		'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
+		'Access-Control-Allow-Headers':
+			'Content-Type, Authorization, Access-Control-Request-Private-Network',
+		// Chrome Private Network Access: allow soundcloud.com → localhost:3000 (userscript)
+		'Access-Control-Allow-Private-Network': 'true',
+		Vary: 'Origin',
+	};
+	if (origin && ALLOWED_ORIGINS.has(origin)) {
+		headers['Access-Control-Allow-Origin'] = origin;
+	}
+	return headers;
+}
 
 function jsonResponse(data: unknown, options?: { status?: number }): Response {
 	return Response.json(data, {
 		status: options?.status || 200,
-		headers: corsHeaders,
+		headers: corsHeaders(),
 	});
 }
 
@@ -448,14 +470,14 @@ function fileResponse(
 	headers: Record<string, string>,
 ): Response {
 	return new Response(body, {
-		headers: { ...corsHeaders, ...headers },
+		headers: { ...corsHeaders(), ...headers },
 	});
 }
 
 function sseResponse(stream: ReadableStream): Response {
 	return new Response(stream, {
 		headers: {
-			...corsHeaders,
+			...corsHeaders(),
 			'Content-Type': 'text/event-stream',
 			'Cache-Control': 'no-cache',
 			Connection: 'keep-alive',
@@ -463,22 +485,49 @@ function sseResponse(stream: ReadableStream): Response {
 	});
 }
 
+type RouteHandler = (req: Request) => Response | Promise<Response>;
+
+function wrapRouteHandler(handler: RouteHandler): RouteHandler {
+	return (req) => requestAls.run(req, () => handler(req));
+}
+
+function wrapRoutes<T extends Record<string, unknown>>(routes: T): T {
+	const wrapped: Record<string, unknown> = {};
+	for (const [path, handler] of Object.entries(routes)) {
+		if (typeof handler === 'function') {
+			wrapped[path] = wrapRouteHandler(handler as RouteHandler);
+		} else if (handler && typeof handler === 'object') {
+			const methodHandlers: Record<string, unknown> = {};
+			for (const [method, fn] of Object.entries(
+				handler as Record<string, unknown>,
+			)) {
+				methodHandlers[method] =
+					typeof fn === 'function' ? wrapRouteHandler(fn as RouteHandler) : fn;
+			}
+			wrapped[path] = methodHandlers;
+		} else {
+			wrapped[path] = handler;
+		}
+	}
+	return wrapped as T;
+}
+
 const server = Bun.serve({
 	port: 3000,
 	// Increase idle timeout for long-running operations (browser automation, downloads)
 	idleTimeout: 255, // ~4 minutes (max allowed)
-	routes: {
+	routes: wrapRoutes({
 		// CORS preflight handler for all routes
 		'/*': {
 			OPTIONS: () =>
 				new Response(null, {
 					status: 204,
-					headers: corsHeaders,
+					headers: corsHeaders(),
 				}),
 		},
 		'/': () =>
 			new Response('sc-gate-dl API is running!', {
-				headers: corsHeaders,
+				headers: corsHeaders(),
 			}),
 
 		'/api/soundcloud/cleanup': {
@@ -1103,14 +1152,14 @@ const server = Bun.serve({
 
 				return new Response(file, {
 					headers: {
-						...corsHeaders,
+						...corsHeaders(),
 						'Content-Type': file.type || 'application/octet-stream',
 						'Content-Disposition': `attachment; filename="${filename}"`,
 					},
 				});
 			},
 		},
-	},
+	}),
 	error: async (err) => {
 		console.error('Server error:', err);
 		return jsonResponse({ error: 'Internal Server Error' }, { status: 500 });

@@ -44,6 +44,14 @@ interface JobState {
 
 const API_BASE = 'http://localhost:3000';
 
+const ALLOWED_HOST_ORIGINS = new Set([
+	'https://soundcloud.com',
+	'https://www.soundcloud.com',
+	'https://m.soundcloud.com',
+	'http://localhost:4321',
+	'http://127.0.0.1:4321',
+]);
+
 function notifyParent(
 	type: 'file-download' | 'new-download' | 'job' | 'cancelled' | 'ready',
 	payload?: { jobId?: string },
@@ -351,10 +359,15 @@ export default function App() {
 				};
 
 				eventSource.onerror = () => {
+					if (eventSource.readyState === EventSource.CONNECTING) return;
 					eventSource.close();
 					if (eventSourceRef.current === eventSource) {
 						eventSourceRef.current = null;
 					}
+					setJob((prev) => ({
+						...prev,
+						error: 'Lost connection to download progress',
+					}));
 				};
 			} catch (err) {
 				setJob((prev) => ({
@@ -370,14 +383,30 @@ export default function App() {
 		const jobId = job.jobId;
 		if (!jobId) return;
 
+		try {
+			const response = await fetch(`${API_BASE}/api/job/${jobId}/cancel`, {
+				method: 'POST',
+			});
+			if (!response.ok) {
+				const data = await response.json().catch(() => ({}));
+				setJob((prev) => ({
+					...prev,
+					error:
+						(data as { error?: string }).error || 'Failed to cancel download',
+				}));
+				return;
+			}
+		} catch (err) {
+			setJob((prev) => ({
+				...prev,
+				error:
+					err instanceof Error ? err.message : 'Failed to cancel download',
+			}));
+			return;
+		}
+
 		eventSourceRef.current?.close();
 		eventSourceRef.current = null;
-
-		try {
-			await fetch(`${API_BASE}/api/job/${jobId}/cancel`, { method: 'POST' });
-		} catch (err) {
-			console.warn('Cancel request failed', err);
-		}
 
 		setJob((prev) => ({
 			...prev,
@@ -395,6 +424,7 @@ export default function App() {
 	// Parent userscript panel X → cancel in-progress job
 	useEffect(() => {
 		const onMessage = (event: MessageEvent) => {
+			if (!ALLOWED_HOST_ORIGINS.has(event.origin)) return;
 			const data = event.data;
 			if (!data || data.source !== 'sc-gate-dl-host') return;
 			if (data.type === 'cancel') {
