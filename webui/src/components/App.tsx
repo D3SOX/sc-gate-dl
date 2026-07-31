@@ -44,6 +44,119 @@ interface JobState {
 
 const API_BASE = 'http://localhost:3000';
 
+/** Promo fluff often glued onto SoundCloud / gate titles. */
+const PROMO_TAG =
+	String.raw`free\s*d(?:own)?l(?:oad)?s?|free[\s._-]*dl|freedl|out\s*now|premiere|exclusive`;
+
+function cleanPromoTags(value: string): string {
+	if (!value) return value;
+
+	let result = value;
+	result = result.replace(
+		new RegExp(String.raw`\s*[\[\(\{]\s*(?:${PROMO_TAG})\s*[\]\)\}]`, 'gi'),
+		' ',
+	);
+	result = result.replace(
+		new RegExp(
+			String.raw`(?:\s*[-–—|/·•]+\s*|\s+)(?:${PROMO_TAG})\s*$`,
+			'gi',
+		),
+		'',
+	);
+	result = result.replace(new RegExp(String.raw`(?:${PROMO_TAG})\s*$`, 'gi'), '');
+	result = result.replace(
+		new RegExp(
+			String.raw`^\s*(?:${PROMO_TAG})(?:\s*[-–—|/·•]+\s*|\s+)`,
+			'gi',
+		),
+		'',
+	);
+	result = result.replace(/\s{2,}/g, ' ');
+	result = result.replace(/^[\s\-–—|/·•]+|[\s\-–—|/·•]+$/g, '');
+	return result.trim();
+}
+
+/** Strip a leading `Artist - ` / `Artist — ` duplicate from the title. */
+function stripDuplicateArtistFromTitle(title: string, artist: string): string {
+	const trimmedArtist = artist.trim();
+	const trimmedTitle = title.trim();
+	if (!trimmedArtist || !trimmedTitle) return trimmedTitle;
+
+	const escaped = trimmedArtist.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+	return trimmedTitle
+		.replace(new RegExp(String.raw`^${escaped}\s*[-–—|:]\s*`, 'i'), '')
+		.trim();
+}
+
+function cleanMetadataFields(meta: Metadata): Metadata {
+	const artist = cleanPromoTags(meta.artist || '');
+	const title = stripDuplicateArtistFromTitle(
+		cleanPromoTags(meta.title || ''),
+		artist,
+	);
+	return {
+		title,
+		artist,
+		album: cleanPromoTags(meta.album || ''),
+		genre: cleanPromoTags(meta.genre || ''),
+	};
+}
+
+function metadataNeedsCleanup(meta: Metadata): boolean {
+	const cleaned = cleanMetadataFields(meta);
+	return (
+		(meta.title || '') !== (cleaned.title || '') ||
+		(meta.artist || '') !== (cleaned.artist || '') ||
+		(meta.album || '') !== (cleaned.album || '') ||
+		(meta.genre || '') !== (cleaned.genre || '')
+	);
+}
+
+function sanitizeFilenamePart(value: string): string {
+	return value
+		.replace(/[<>:"/\\|?*]/g, '')
+		.replace(/\s+/g, ' ')
+		.trim();
+}
+
+function artistTitleFilename(artist?: string, title?: string): string {
+	const safeArtist = sanitizeFilenamePart(artist || '') || 'Unknown Artist';
+	const safeTitle = sanitizeFilenamePart(title || '') || 'Unknown Title';
+	return `${safeArtist} - ${safeTitle}.mp3`;
+}
+
+function isLosslessFilename(filename: string): boolean {
+	const lower = filename.toLowerCase();
+	return (
+		lower.endsWith('.wav') ||
+		lower.endsWith('.aiff') ||
+		lower.endsWith('.aif') ||
+		lower.endsWith('.flac')
+	);
+}
+
+function previewProcessedFilename(
+	downloadFilename: string | null,
+	options: {
+		nameAsArtistTitle: boolean;
+		artist?: string;
+		title?: string;
+	},
+): string {
+	if (!downloadFilename) return '';
+	if (options.nameAsArtistTitle) {
+		return artistTitleFilename(options.artist, options.title);
+	}
+	if (isLosslessFilename(downloadFilename)) {
+		return downloadFilename
+			.replace(/\.wav$/i, '.mp3')
+			.replace(/\.aiff$/i, '.mp3')
+			.replace(/\.aif$/i, '.mp3')
+			.replace(/\.flac$/i, '.mp3');
+	}
+	return downloadFilename;
+}
+
 export default function App() {
 	const [step, setStep] = useState<Step>('url');
 	const [soundcloudUrl, setSoundcloudUrl] = useState('');
@@ -71,6 +184,7 @@ export default function App() {
 		genre: '',
 	});
 	const [customArtwork, setCustomArtwork] = useState<File | null>(null);
+	const [nameAsArtistTitle, setNameAsArtistTitle] = useState(false);
 	const [isLoading, setIsLoading] = useState(false);
 	const cleanupToastShownRef = useRef(false);
 	const formatPercent = (value?: number) => Math.round(value ?? 0);
@@ -362,7 +476,14 @@ export default function App() {
 				response = await fetch(`${API_BASE}/api/job/${job.jobId}/metadata`, {
 					method: 'POST',
 					headers: { 'Content-Type': 'application/json' },
-					body: JSON.stringify({ preserveMetadata: true }),
+					body: JSON.stringify({
+						preserveMetadata: true,
+						nameAsArtistTitle,
+						title: metadata.title,
+						artist: metadata.artist,
+						album: metadata.album,
+						genre: metadata.genre,
+					}),
 				});
 			} else if (customArtwork) {
 				const formData = new FormData();
@@ -370,6 +491,7 @@ export default function App() {
 				formData.append('artist', metadata.artist || '');
 				formData.append('album', metadata.album || '');
 				formData.append('genre', metadata.genre || '');
+				formData.append('nameAsArtistTitle', String(nameAsArtistTitle));
 				formData.append('artwork', customArtwork);
 
 				response = await fetch(`${API_BASE}/api/job/${job.jobId}/metadata`, {
@@ -380,7 +502,7 @@ export default function App() {
 				response = await fetch(`${API_BASE}/api/job/${job.jobId}/metadata`, {
 					method: 'POST',
 					headers: { 'Content-Type': 'application/json' },
-					body: JSON.stringify(metadata),
+					body: JSON.stringify({ ...metadata, nameAsArtistTitle }),
 				});
 			}
 
@@ -413,6 +535,12 @@ export default function App() {
 		album: '',
 		genre: '',
 	};
+	const canCleanupMetadata = metadataNeedsCleanup(metadata);
+	const outputFilenamePreview = previewProcessedFilename(job.downloadFilename, {
+		nameAsArtistTitle,
+		artist: metadata.artist,
+		title: metadata.title,
+	});
 	const existingTagRows = (
 		[
 			{ key: 'title', label: 'Title' },
@@ -448,6 +576,7 @@ export default function App() {
 		});
 		setMetadata({ title: '', artist: '', album: '', genre: '' });
 		setCustomArtwork(null);
+		setNameAsArtistTitle(false);
 		setStep('url');
 	};
 
@@ -855,6 +984,19 @@ export default function App() {
 									/>
 									<span>Change Artwork</span>
 								</label>
+								{canCleanupMetadata ? (
+									<button
+										type="button"
+										className="btn-secondary btn-auto-cleanup"
+										disabled={isLoading}
+										title="Remove promo tags like [FREE DL] and duplicate Artist - from the title"
+										onClick={() =>
+											setMetadata((prev) => cleanMetadataFields(prev))
+										}
+									>
+										Auto-Cleanup
+									</button>
+								) : null}
 							</div>
 
 							<div className="fields-section">
@@ -937,6 +1079,30 @@ export default function App() {
 										</div>
 									);
 								})}
+							</div>
+						</div>
+
+						<div className="filename-preview">
+							<label className="checkbox-row" htmlFor="name-as-artist-title">
+								<input
+									id="name-as-artist-title"
+									type="checkbox"
+									checked={nameAsArtistTitle}
+									disabled={isLoading}
+									onChange={(e) => setNameAsArtistTitle(e.target.checked)}
+								/>
+								<span>Name file as ARTIST - TITLE</span>
+							</label>
+							<div className="form-group">
+								<label htmlFor="output-filename-preview">Filename</label>
+								<input
+									id="output-filename-preview"
+									type="text"
+									className="filename-preview-input mono"
+									value={outputFilenamePreview}
+									disabled
+									readOnly
+								/>
 							</div>
 						</div>
 

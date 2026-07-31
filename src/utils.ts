@@ -360,3 +360,36 @@ export function losslessToMp3Filename(filename: string): string {
 		.replace(/\.aif$/i, '.mp3')
 		.replace(/\.flac$/i, '.mp3');
 }
+
+/** Strip characters that are unsafe or awkward in filenames. */
+export function sanitizeFilenamePart(value: string): string {
+	return value
+		.replace(/[<>:"/\\|?*]/g, '')
+		.replace(/\s+/g, ' ')
+		.trim();
+}
+
+/** `Artist - Title.mp3` from metadata fields. */
+export function artistTitleFilename(artist?: string, title?: string): string {
+	const safeArtist = sanitizeFilenamePart(artist || '') || 'Unknown Artist';
+	const safeTitle = sanitizeFilenamePart(title || '') || 'Unknown Title';
+	return `${safeArtist} - ${safeTitle}.mp3`;
+}
+
+/** Predicted output name for the metadata step (always ends as MP3). */
+export function previewProcessedFilename(
+	downloadFilename: string,
+	options: {
+		nameAsArtistTitle: boolean;
+		artist?: string;
+		title?: string;
+	},
+): string {
+	if (options.nameAsArtistTitle) {
+		return artistTitleFilename(options.artist, options.title);
+	}
+	if (isLosslessFormat(downloadFilename)) {
+		return losslessToMp3Filename(downloadFilename);
+	}
+	return downloadFilename;
+}

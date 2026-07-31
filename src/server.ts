@@ -1,4 +1,4 @@
-import { cp, mkdir, rm } from 'node:fs/promises';
+import { cp, mkdir, rename, rm } from 'node:fs/promises';
 import { basename, join } from 'node:path';
 import type { SoundcloudTrack } from 'soundcloud.ts';
 import { AudioProcessor } from './audioProcessor';
@@ -11,6 +11,7 @@ import { jobStore } from './jobStore';
 import { SoundcloudClient } from './soundcloud';
 import type { Job, Metadata, OutputFormat } from './types';
 import {
+	artistTitleFilename,
 	extractGateUrl,
 	getDefaultMetadata,
 	getFfmpegBin,
@@ -50,6 +51,25 @@ const HYPEDDIT_EMAIL = getOptionalEnv('HYPEDDIT_EMAIL');
 
 const soundcloudClient = new SoundcloudClient();
 const audioProcessor = new AudioProcessor(ffmpegBin, ffprobeBin);
+
+async function renameDownloadFile(
+	currentFilename: string,
+	desiredFilename: string,
+): Promise<string> {
+	if (currentFilename === desiredFilename) {
+		return currentFilename;
+	}
+
+	const fromPath = join('./downloads', currentFilename);
+	const toPath = join('./downloads', desiredFilename);
+
+	if (await Bun.file(toPath).exists()) {
+		await rm(toPath, { force: true });
+	}
+
+	await rename(fromPath, toPath);
+	return desiredFilename;
+}
 
 type AnyDownloader = {
 	close(): Promise<void>;
@@ -827,6 +847,7 @@ const server = Bun.serve({
 					const contentType = req.headers.get('content-type') || '';
 					let metadata: Metadata;
 					let preserveMetadata = false;
+					let nameAsArtistTitle = false;
 					let customArtwork: { buffer: ArrayBuffer; fileName: string } | null =
 						null;
 
@@ -839,6 +860,7 @@ const server = Bun.serve({
 							genre: formData.get('genre')?.toString() || undefined,
 						};
 						preserveMetadata = formData.get('preserveMetadata') === 'true';
+						nameAsArtistTitle = formData.get('nameAsArtistTitle') === 'true';
 
 						const artworkFile = formData.get('artwork');
 						if (artworkFile instanceof File) {
@@ -850,6 +872,7 @@ const server = Bun.serve({
 					} else {
 						const body = (await req.json()) as Metadata & {
 							preserveMetadata?: boolean;
+							nameAsArtistTitle?: boolean;
 						};
 						metadata = {
 							title: body.title,
@@ -858,6 +881,7 @@ const server = Bun.serve({
 							genre: body.genre,
 						};
 						preserveMetadata = body.preserveMetadata === true;
+						nameAsArtistTitle = body.nameAsArtistTitle === true;
 					}
 
 					if (preserveMetadata && !isMp3Format(job.downloadFilename)) {
@@ -870,9 +894,14 @@ const server = Bun.serve({
 					}
 
 					if (job.outputFormat === 'original' || preserveMetadata) {
-						jobStore.update(jobId, {
-							outputFilename: job.downloadFilename,
-						});
+						let outputFilename = job.downloadFilename;
+						if (nameAsArtistTitle) {
+							outputFilename = await renameDownloadFile(
+								job.downloadFilename,
+								artistTitleFilename(metadata.artist, metadata.title),
+							);
+						}
+						jobStore.update(jobId, { outputFilename });
 						jobStore.updateProgress(
 							jobId,
 							'ready',
@@ -883,7 +912,7 @@ const server = Bun.serve({
 						);
 						return jsonResponse({
 							success: true,
-							outputFilename: job.downloadFilename,
+							outputFilename,
 						});
 					}
 
@@ -917,7 +946,13 @@ const server = Bun.serve({
 						'always',
 					);
 
-					const outputFilename = outputPath.split('/').pop() || outputPath;
+					let outputFilename = basename(outputPath);
+					if (nameAsArtistTitle) {
+						outputFilename = await renameDownloadFile(
+							outputFilename,
+							artistTitleFilename(metadata.artist, metadata.title),
+						);
+					}
 					jobStore.update(jobId, { outputFilename });
 
 					jobStore.updateProgress(

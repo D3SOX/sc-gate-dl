@@ -523,7 +523,7 @@
 	display: grid;
 	grid-template-columns: auto 1fr;
 	gap: var(--space-xl);
-	margin-bottom: var(--space-xl);
+	margin-bottom: 0;
 }
 
 .existing-metadata {
@@ -625,11 +625,12 @@
 	display: flex;
 	flex-direction: column;
 	gap: var(--space-md);
+	width: 160px;
 }
 
 .artwork-preview {
-	width: 160px;
-	height: 160px;
+	width: 100%;
+	aspect-ratio: 1;
 	border-radius: 8px;
 	overflow: hidden;
 	background: var(--bg-elevated);
@@ -653,7 +654,8 @@
 }
 
 .artwork-upload {
-	display: flex;
+	display: block;
+	width: 100%;
 	cursor: pointer;
 }
 
@@ -661,19 +663,52 @@
 	display: none;
 }
 
-.artwork-upload span {
+.artwork-upload span,
+.btn-artwork-action {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	width: 100%;
+	box-sizing: border-box;
 	padding: var(--space-sm) var(--space-md);
 	background: var(--bg-elevated);
 	border: 1px solid var(--border-subtle);
 	border-radius: 6px;
+	font-family: var(--font-display);
 	font-size: 0.85rem;
+	font-weight: 500;
+	line-height: 1.25;
 	color: var(--text-secondary);
 	transition: all var(--transition-fast);
 }
 
-.artwork-upload:hover span {
+.artwork-upload:hover span,
+.btn-artwork-action:hover:not(:disabled) {
 	border-color: var(--neon-cyan);
 	color: var(--neon-cyan);
+}
+
+.btn-artwork-action {
+	cursor: pointer;
+}
+
+.btn-artwork-action:disabled {
+	opacity: 0.6;
+	cursor: not-allowed;
+}
+
+.btn-auto-cleanup {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	width: 100%;
+	box-sizing: border-box;
+	padding: var(--space-sm) var(--space-md);
+	border-width: 1px;
+	border-radius: 6px;
+	font-size: 0.85rem;
+	font-weight: 500;
+	line-height: 1.25;
 }
 
 .fields-section {
@@ -731,6 +766,22 @@
 .btn-reset-field:disabled {
 	opacity: 0.6;
 	cursor: not-allowed;
+}
+
+.filename-preview {
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-md);
+	margin-top: var(--space-md);
+	margin-bottom: var(--space-xl);
+	padding-top: var(--space-md);
+	border-top: 1px solid var(--border-subtle);
+}
+
+.filename-preview-input {
+	width: 100%;
+	opacity: 0.85;
+	cursor: default;
 }
 
 /* Complete container */
