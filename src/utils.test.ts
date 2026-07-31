@@ -126,16 +126,19 @@ describe('previewProcessedFilename', () => {
 		).toBe('Artist - Title.mp3');
 	});
 
-	test('converts lossless extensions to mp3 when not renaming', () => {
+	test('converts lossless and lossy containers to mp3 when not renaming', () => {
 		expect(
 			previewProcessedFilename('song.flac', { nameAsArtistTitle: false }),
 		).toBe('song.mp3');
 		expect(
 			previewProcessedFilename('song.aiff', { nameAsArtistTitle: false }),
 		).toBe('song.mp3');
+		expect(
+			previewProcessedFilename('song.m4a', { nameAsArtistTitle: false }),
+		).toBe('song.mp3');
 	});
 
-	test('keeps non-lossless filenames unchanged when not renaming', () => {
+	test('keeps mp3 filenames unchanged when not renaming', () => {
 		expect(
 			previewProcessedFilename('song.mp3', { nameAsArtistTitle: false }),
 		).toBe('song.mp3');

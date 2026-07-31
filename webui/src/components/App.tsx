@@ -142,13 +142,18 @@ function artistTitleFilename(artist?: string, title?: string): string {
 	return `${safeArtist} - ${safeTitle}.mp3`;
 }
 
-function isLosslessFilename(filename: string): boolean {
+function needsMp3Conversion(filename: string): boolean {
 	const lower = filename.toLowerCase();
 	return (
 		lower.endsWith('.wav') ||
 		lower.endsWith('.aiff') ||
 		lower.endsWith('.aif') ||
-		lower.endsWith('.flac')
+		lower.endsWith('.flac') ||
+		lower.endsWith('.m4a') ||
+		lower.endsWith('.aac') ||
+		lower.endsWith('.ogg') ||
+		lower.endsWith('.opus') ||
+		lower.endsWith('.webm')
 	);
 }
 
@@ -164,12 +169,11 @@ function previewProcessedFilename(
 	if (options.nameAsArtistTitle) {
 		return artistTitleFilename(options.artist, options.title);
 	}
-	if (isLosslessFilename(downloadFilename)) {
-		return downloadFilename
-			.replace(/\.wav$/i, '.mp3')
-			.replace(/\.aiff$/i, '.mp3')
-			.replace(/\.aif$/i, '.mp3')
-			.replace(/\.flac$/i, '.mp3');
+	if (needsMp3Conversion(downloadFilename)) {
+		return downloadFilename.replace(
+			/\.(wav|aiff|aif|flac|m4a|aac|ogg|opus|webm)$/i,
+			'.mp3',
+		);
 	}
 	return downloadFilename;
 }

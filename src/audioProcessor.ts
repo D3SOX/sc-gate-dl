@@ -7,8 +7,9 @@ import {
 	getDefaultMetadata,
 	isLosslessFormat,
 	isMp3Format,
-	losslessToMp3Filename,
+	needsMp3Conversion,
 	REPO_URL,
+	toMp3Filename,
 } from './utils';
 
 export class AudioProcessor {
@@ -158,28 +159,30 @@ export class AudioProcessor {
 		}
 
 		try {
-			// if it is a WAV, AIFF, or FLAC, we convert it to MP3
-			if (isLosslessFormat(filename)) {
-				const outputPath = await this.convertLosslessToMp3(
+			// Convert non-MP3 audio (lossless or lossy containers like m4a) to MP3.
+			if (needsMp3Conversion(filename)) {
+				const outputPath = await this.convertToMp3(
 					inputPath,
 					artworkPath,
 					metadata,
 					filename,
 				);
 
-				// ask if you want to remove the lossless file
-				let removeLosslessFile = true;
-				if (losslessHandling === 'prompt') {
-					removeLosslessFile = await confirm({
-						message: 'Do you want to remove the lossless file now?',
-						default: true,
-					});
-				} else if (losslessHandling === 'always') {
-					removeLosslessFile = true;
-				} else if (losslessHandling === 'never') {
-					removeLosslessFile = false;
+				// ask if you want to remove the source file (only prompt for lossless)
+				let removeSourceFile = true;
+				if (isLosslessFormat(filename)) {
+					if (losslessHandling === 'prompt') {
+						removeSourceFile = await confirm({
+							message: 'Do you want to remove the lossless file now?',
+							default: true,
+						});
+					} else if (losslessHandling === 'always') {
+						removeSourceFile = true;
+					} else if (losslessHandling === 'never') {
+						removeSourceFile = false;
+					}
 				}
-				if (removeLosslessFile) {
+				if (removeSourceFile) {
 					await Bun.file(inputPath).unlink();
 					console.log(`✓ Removed ${inputPath}`);
 				}
@@ -210,13 +213,71 @@ export class AudioProcessor {
 		}
 	}
 
-	private async convertLosslessToMp3(
+	/** Probe audio bitrate in kbps; null when unknown. */
+	private async probeAudioBitrateKbps(
+		inputPath: string,
+	): Promise<number | null> {
+		try {
+			const { stdout } = await execa(this.ffprobeBin, [
+				'-v',
+				'quiet',
+				'-print_format',
+				'json',
+				'-show_format',
+				'-show_streams',
+				inputPath,
+			]);
+
+			const probeData = JSON.parse(stdout) as {
+				format?: { bit_rate?: string };
+				streams?: Array<{ codec_type?: string; bit_rate?: string }>;
+			};
+
+			const audioStream = probeData.streams?.find(
+				(stream) => stream.codec_type === 'audio',
+			);
+			const raw =
+				audioStream?.bit_rate || probeData.format?.bit_rate || undefined;
+			if (!raw) return null;
+
+			const bps = Number(raw);
+			if (!Number.isFinite(bps) || bps <= 0) return null;
+			return Math.round(bps / 1000);
+		} catch (error) {
+			console.warn(
+				`Failed to probe audio bitrate: ${error instanceof Error ? error.message : String(error)}`,
+			);
+			return null;
+		}
+	}
+
+	/**
+	 * Target MP3 bitrate: lossless → 320; lossy → source rate (capped at 320).
+	 * Never upscales a 128k stream to fake 320.
+	 */
+	private async resolveMp3BitrateKbps(
+		inputPath: string,
+		filename: string,
+	): Promise<number> {
+		if (isLosslessFormat(filename)) {
+			return 320;
+		}
+
+		const probed = await this.probeAudioBitrateKbps(inputPath);
+		if (probed == null) {
+			return 192;
+		}
+		return Math.min(320, Math.max(32, probed));
+	}
+
+	private async convertToMp3(
 		inputPath: string,
 		artworkPath: string,
 		metadata: Metadata,
 		filename: string,
 	): Promise<string> {
-		const outputPath = join('./downloads', losslessToMp3Filename(filename));
+		const outputPath = join('./downloads', toMp3Filename(filename));
+		const bitrateKbps = await this.resolveMp3BitrateKbps(inputPath, filename);
 
 		const args: string[] = [
 			'-i',
@@ -228,7 +289,7 @@ export class AudioProcessor {
 			'-c:a',
 			'libmp3lame',
 			'-b:a',
-			'320k',
+			`${bitrateKbps}k`,
 			'-id3v2_version',
 			'3',
 			'-map',
@@ -256,7 +317,7 @@ export class AudioProcessor {
 
 		args.push('-y', outputPath);
 
-		console.log('Converting Lossless to MP3 (320kbps)...');
+		console.log(`Converting to MP3 (${bitrateKbps}kbps)...`);
 		await execa(this.ffmpegBin, args);
 		console.log(`✓ Converted to ${outputPath}`);
 		return outputPath;
