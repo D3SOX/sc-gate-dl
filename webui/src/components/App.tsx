@@ -932,7 +932,7 @@ export default function App() {
 				<p>
 					Built for personal use &middot;{' '}
 					<a
-						href="https://github.com/D3SOX/hypeddit-soundcloud-downloader"
+						href="https://github.com/D3SOX/sc-gate-dl"
 						target="_blank"
 						rel="noopener noreferrer"
 					>

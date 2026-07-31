@@ -26,8 +26,8 @@ Download and tag SoundCloud tracks unlocked via Hypeddit, Droploud, GateRush, Do
 Clone the repository
 
 ```bash
-git clone https://github.com/D3SOX/hypeddit-soundcloud-downloader
-cd hypeddit-soundcloud-downloader
+git clone https://github.com/D3SOX/sc-gate-dl
+cd sc-gate-dl
 ```
 
 Install dependencies

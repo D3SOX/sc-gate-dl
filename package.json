@@ -5,7 +5,7 @@
 	"private": true,
 	"repository": {
 		"type": "git",
-		"url": "https://github.com/D3SOX/hypeddit-soundcloud-downloader"
+		"url": "https://github.com/D3SOX/sc-gate-dl"
 	},
 	"author": {
 		"name": "D3SOX",
