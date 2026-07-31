@@ -618,6 +618,15 @@
 @media (max-width: 600px) {
 	.metadata-grid {
 		grid-template-columns: 1fr;
+		justify-items: center;
+	}
+
+	.artwork-section {
+		margin-inline: auto;
+	}
+
+	.fields-section {
+		width: 100%;
 	}
 }
 
