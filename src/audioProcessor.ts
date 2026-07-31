@@ -145,19 +145,17 @@ export class AudioProcessor {
 					filename,
 				);
 
-				// ask if you want to remove the source file (only prompt for lossless)
+				// ask if you want to remove the source file
 				let removeSourceFile = true;
-				if (isLosslessFormat(filename)) {
-					if (losslessHandling === 'prompt') {
-						removeSourceFile = await confirm({
-							message: 'Do you want to remove the lossless file now?',
-							default: true,
-						});
-					} else if (losslessHandling === 'always') {
-						removeSourceFile = true;
-					} else if (losslessHandling === 'never') {
-						removeSourceFile = false;
-					}
+				if (losslessHandling === 'prompt') {
+					removeSourceFile = await confirm({
+						message: `Do you want to remove the ${isLosslessFormat(filename) ? 'lossless' : 'source'} file now?`,
+						default: true,
+					});
+				} else if (losslessHandling === 'always') {
+					removeSourceFile = true;
+				} else if (losslessHandling === 'never') {
+					removeSourceFile = false;
 				}
 				if (removeSourceFile) {
 					await Bun.file(inputPath).unlink();

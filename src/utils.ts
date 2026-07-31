@@ -123,15 +123,23 @@ export async function loadCookies(filename: string): Promise<CookieData[]> {
 /**
  * Convert EditThisCookie-style JSON cookies to Netscape/Mozilla cookie file
  * text (required by yt-dlp `--cookies`).
+ * Returns null when no usable cookie records remain.
  */
-export function cookiesToNetscape(cookies: LocalCookieData[]): string {
+export function cookiesToNetscape(cookies: unknown): string | null {
+	if (!Array.isArray(cookies) || cookies.length === 0) {
+		return null;
+	}
+
 	const lines = ['# Netscape HTTP Cookie File'];
-	for (const cookie of cookies) {
-		const domain = cookie.domain || '';
+	for (const entry of cookies) {
+		if (!isValidLocalCookie(entry)) {
+			continue;
+		}
+		const domain = entry.domain;
 		const includeSubdomains = domain.startsWith('.') ? 'TRUE' : 'FALSE';
-		const path = cookie.path || '/';
-		const secure = cookie.secure ? 'TRUE' : 'FALSE';
-		const expires = Math.floor(cookie.expirationDate ?? 0);
+		const path = entry.path || '/';
+		const secure = entry.secure ? 'TRUE' : 'FALSE';
+		const expires = Math.floor(entry.expirationDate ?? 0);
 		lines.push(
 			[
 				domain,
@@ -139,12 +147,31 @@ export function cookiesToNetscape(cookies: LocalCookieData[]): string {
 				path,
 				secure,
 				String(expires),
-				cookie.name,
-				cookie.value,
+				entry.name,
+				entry.value,
 			].join('\t'),
 		);
 	}
+
+	// Header only — nothing valid to serialize.
+	if (lines.length === 1) {
+		return null;
+	}
 	return `${lines.join('\n')}\n`;
+}
+
+function isValidLocalCookie(entry: unknown): entry is LocalCookieData {
+	if (entry === null || typeof entry !== 'object') {
+		return false;
+	}
+	const cookie = entry as Record<string, unknown>;
+	return (
+		typeof cookie.domain === 'string' &&
+		cookie.domain.length > 0 &&
+		typeof cookie.name === 'string' &&
+		cookie.name.length > 0 &&
+		typeof cookie.value === 'string'
+	);
 }
 
 /** Write `soundcloud-cookies.json` as a Netscape cookie file for yt-dlp. */
@@ -156,14 +183,14 @@ export async function writeSoundcloudNetscapeCookies(
 	if (!(await file.exists())) {
 		return null;
 	}
-	let cookies: LocalCookieData[];
+	let parsed: unknown;
 	try {
-		const parsed: unknown = JSON.parse(await file.text());
-		if (!Array.isArray(parsed) || parsed.length === 0) {
-			return null;
-		}
-		cookies = parsed as LocalCookieData[];
+		parsed = JSON.parse(await file.text());
 	} catch {
+		return null;
+	}
+	const netscape = cookiesToNetscape(parsed);
+	if (!netscape) {
 		return null;
 	}
 	const dest =
@@ -172,7 +199,7 @@ export async function writeSoundcloudNetscapeCookies(
 			tmpdir(),
 			`sc-gate-dl-cookies-${process.pid}-${crypto.randomUUID()}.txt`,
 		);
-	await Bun.write(dest, cookiesToNetscape(cookies), { mode: 0o600 });
+	await Bun.write(dest, netscape, { mode: 0o600 });
 	return dest;
 }
 

@@ -64,6 +64,21 @@ describe('writeSoundcloudNetscapeCookies', () => {
 			await rm(dir, { recursive: true, force: true });
 		}
 	});
+
+	test('returns null when every cookie record is malformed', async () => {
+		const dir = await mkdtemp(join(tmpdir(), 'sc-gate-dl-test-'));
+		const jsonPath = join(dir, 'cookies.json');
+		try {
+			await writeFile(
+				jsonPath,
+				JSON.stringify([null, {}, { name: 'x' }]),
+				'utf8',
+			);
+			expect(await writeSoundcloudNetscapeCookies(jsonPath)).toBeNull();
+		} finally {
+			await rm(dir, { recursive: true, force: true });
+		}
+	});
 });
 
 describe('cookiesToNetscape', () => {
@@ -85,11 +100,23 @@ describe('cookiesToNetscape', () => {
 				secure: false,
 			},
 		]);
-		expect(text.startsWith('# Netscape HTTP Cookie File\n')).toBe(true);
+		expect(text).not.toBeNull();
+		expect(text?.startsWith('# Netscape HTTP Cookie File\n')).toBe(true);
 		expect(text).toContain(
 			'soundcloud.com\tFALSE\t/\tTRUE\t1700000000\toauth_token\ttok',
 		);
 		expect(text).toContain('.soundcloud.com\tTRUE\t/\tFALSE\t0\tdatadome\tdd');
+	});
+
+	test('returns null for null entries and empty objects', () => {
+		expect(cookiesToNetscape([null, {}])).toBeNull();
+		expect(
+			cookiesToNetscape([
+				null,
+				{},
+				{ name: 'oauth_token', value: 'tok', domain: 'soundcloud.com' },
+			]),
+		).toContain('oauth_token\ttok');
 	});
 });
 
@@ -112,6 +139,12 @@ describe('artistTitleFilename', () => {
 			'Unknown Artist - Unknown Title.wav',
 		);
 		expect(artistTitleFilename('A', 'B', 'flac')).toBe('A - B.flac');
+	});
+
+	test('falls back when artist/title are only invalid filename characters', () => {
+		expect(artistTitleFilename('<>:"/\\|?*', '<>:"/\\|?*')).toBe(
+			'Unknown Artist - Unknown Title.mp3',
+		);
 	});
 });
 
