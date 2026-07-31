@@ -21,6 +21,7 @@ class JobStore {
 			hypedditUrl: null,
 			headless: process.env.BROWSER_HEADLESS !== 'false',
 			outputFormat,
+			cancelled: false,
 			track: null,
 			defaultMetadata: null,
 			existingMetadata: null,
@@ -46,6 +47,20 @@ class JobStore {
 	 */
 	get(id: string): Job | undefined {
 		return this.jobs.get(id);
+	}
+
+	/** True when another job already claims this downloads/ filename. */
+	isFilenameOwnedByOtherJob(filename: string, excludeJobId: string): boolean {
+		for (const job of this.jobs.values()) {
+			if (job.id === excludeJobId) continue;
+			if (
+				job.downloadFilename === filename ||
+				job.outputFilename === filename
+			) {
+				return true;
+			}
+		}
+		return false;
 	}
 
 	/**
@@ -108,6 +123,37 @@ class JobStore {
 		job.updatedAt = new Date();
 
 		this.notifyListeners(id, job.progress);
+	}
+
+	isCancelled(id: string): boolean {
+		return this.jobs.get(id)?.cancelled === true;
+	}
+
+	/**
+	 * Mark a job cancelled and notify listeners. Caller closes the browser.
+	 */
+	cancel(id: string, message = 'Download cancelled'): Job | undefined {
+		const job = this.jobs.get(id);
+		if (!job) return undefined;
+
+		job.cancelled = true;
+		job.error = null;
+		job.progress = {
+			stage: 'cancelled',
+			message,
+			percent: job.progress.percent,
+		};
+		job.updatedAt = new Date();
+		this.notifyListeners(id, job.progress);
+		return job;
+	}
+
+	/**
+	 * Clear cancelled flag when restarting a job (e.g. after error).
+	 */
+	clearCancelled(id: string): void {
+		const job = this.jobs.get(id);
+		if (job) job.cancelled = false;
 	}
 
 	/**

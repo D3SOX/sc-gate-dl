@@ -1,3 +1,6 @@
+import crypto from 'node:crypto';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { lookpath } from 'find-bin';
 import type { CookieData } from 'puppeteer';
 import type { SoundcloudTrack } from 'soundcloud.ts';
@@ -115,6 +118,89 @@ export async function loadCookies(filename: string): Promise<CookieData[]> {
 
 		return puppeteerCookie;
 	});
+}
+
+/**
+ * Convert EditThisCookie-style JSON cookies to Netscape/Mozilla cookie file
+ * text (required by yt-dlp `--cookies`).
+ * Returns null when no usable cookie records remain.
+ */
+export function cookiesToNetscape(cookies: unknown): string | null {
+	if (!Array.isArray(cookies) || cookies.length === 0) {
+		return null;
+	}
+
+	const lines = ['# Netscape HTTP Cookie File'];
+	for (const entry of cookies) {
+		if (!isValidLocalCookie(entry)) {
+			continue;
+		}
+		const domain = entry.domain;
+		const includeSubdomains = domain.startsWith('.') ? 'TRUE' : 'FALSE';
+		const path = entry.path || '/';
+		const secure = entry.secure ? 'TRUE' : 'FALSE';
+		const expires = Math.floor(entry.expirationDate ?? 0);
+		lines.push(
+			[
+				domain,
+				includeSubdomains,
+				path,
+				secure,
+				String(expires),
+				entry.name,
+				entry.value,
+			].join('\t'),
+		);
+	}
+
+	// Header only — nothing valid to serialize.
+	if (lines.length === 1) {
+		return null;
+	}
+	return `${lines.join('\n')}\n`;
+}
+
+function isValidLocalCookie(entry: unknown): entry is LocalCookieData {
+	if (entry === null || typeof entry !== 'object') {
+		return false;
+	}
+	const cookie = entry as Record<string, unknown>;
+	return (
+		typeof cookie.domain === 'string' &&
+		cookie.domain.length > 0 &&
+		typeof cookie.name === 'string' &&
+		cookie.name.length > 0 &&
+		typeof cookie.value === 'string'
+	);
+}
+
+/** Write `soundcloud-cookies.json` as a Netscape cookie file for yt-dlp. */
+export async function writeSoundcloudNetscapeCookies(
+	jsonPath = 'soundcloud-cookies.json',
+	outPath?: string,
+): Promise<string | null> {
+	const file = Bun.file(jsonPath);
+	if (!(await file.exists())) {
+		return null;
+	}
+	let parsed: unknown;
+	try {
+		parsed = JSON.parse(await file.text());
+	} catch {
+		return null;
+	}
+	const netscape = cookiesToNetscape(parsed);
+	if (!netscape) {
+		return null;
+	}
+	const dest =
+		outPath ??
+		join(
+			tmpdir(),
+			`sc-gate-dl-cookies-${process.pid}-${crypto.randomUUID()}.txt`,
+		);
+	await Bun.write(dest, netscape, { mode: 0o600 });
+	return dest;
 }
 
 export function isSoundcloudUrl(value: string): boolean {
@@ -339,24 +425,91 @@ export function getDefaultMetadata(track: SoundcloudTrack): Metadata {
 	};
 }
 
-export function isLosslessFormat(filename: string): boolean {
+const LOSSLESS_EXTENSIONS = ['.wav', '.aiff', '.aif', '.flac'] as const;
+/** Lossy containers we still re-encode to MP3 (bitrate chosen from the source). */
+const LOSSY_TO_MP3_EXTENSIONS = [
+	'.m4a',
+	'.aac',
+	'.ogg',
+	'.opus',
+	'.webm',
+] as const;
+const MP3_CONVERTIBLE_EXTENSIONS = [
+	...LOSSLESS_EXTENSIONS,
+	...LOSSY_TO_MP3_EXTENSIONS,
+] as const;
+const MP3_CONVERTIBLE_EXT_PATTERN = new RegExp(
+	`\\.(${MP3_CONVERTIBLE_EXTENSIONS.map((ext) => ext.slice(1)).join('|')})$`,
+	'i',
+);
+
+function hasExtension(
+	filename: string,
+	extensions: readonly string[],
+): boolean {
 	const lower = filename.toLowerCase();
-	return (
-		lower.endsWith('.wav') ||
-		lower.endsWith('.aiff') ||
-		lower.endsWith('.aif') ||
-		lower.endsWith('.flac')
-	);
+	return extensions.some((ext) => lower.endsWith(ext));
+}
+
+export function isLosslessFormat(filename: string): boolean {
+	return hasExtension(filename, LOSSLESS_EXTENSIONS);
 }
 
 export function isMp3Format(filename: string): boolean {
 	return filename.toLowerCase().endsWith('.mp3');
 }
 
+/** True when the file must be re-encoded to MP3 for the MP3 output path. */
+export function needsMp3Conversion(filename: string): boolean {
+	return (
+		isLosslessFormat(filename) ||
+		hasExtension(filename, LOSSY_TO_MP3_EXTENSIONS)
+	);
+}
+
+export function toMp3Filename(filename: string): string {
+	return filename.replace(MP3_CONVERTIBLE_EXT_PATTERN, '.mp3');
+}
+
+/** @deprecated Prefer toMp3Filename */
 export function losslessToMp3Filename(filename: string): string {
-	return filename
-		.replace(/\.wav$/i, '.mp3')
-		.replace(/\.aiff$/i, '.mp3')
-		.replace(/\.aif$/i, '.mp3')
-		.replace(/\.flac$/i, '.mp3');
+	return toMp3Filename(filename);
+}
+
+/** Strip characters that are unsafe or awkward in filenames. */
+export function sanitizeFilenamePart(value: string): string {
+	return value
+		.replace(/[<>:"/\\|?*]/g, '')
+		.replace(/\s+/g, ' ')
+		.trim();
+}
+
+/** `Artist - Title` (+ extension) from metadata fields. */
+export function artistTitleFilename(
+	artist?: string,
+	title?: string,
+	extension = '.mp3',
+): string {
+	const safeArtist = sanitizeFilenamePart(artist || '') || 'Unknown Artist';
+	const safeTitle = sanitizeFilenamePart(title || '') || 'Unknown Title';
+	const ext = extension.startsWith('.') ? extension : `.${extension}`;
+	return `${safeArtist} - ${safeTitle}${ext}`;
+}
+
+/** Predicted output name for the metadata step (always ends as MP3). */
+export function previewProcessedFilename(
+	downloadFilename: string,
+	options: {
+		nameAsArtistTitle: boolean;
+		artist?: string;
+		title?: string;
+	},
+): string {
+	if (options.nameAsArtistTitle) {
+		return artistTitleFilename(options.artist, options.title, '.mp3');
+	}
+	if (needsMp3Conversion(downloadFilename)) {
+		return toMp3Filename(downloadFilename);
+	}
+	return downloadFilename;
 }

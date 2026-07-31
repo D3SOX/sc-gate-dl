@@ -1,8 +1,10 @@
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { cp, mkdir, rm } from 'node:fs/promises';
-import { basename, join } from 'node:path';
+import { basename, extname, join } from 'node:path';
 import type { SoundcloudTrack } from 'soundcloud.ts';
 import { AudioProcessor } from './audioProcessor';
 import { DownloadgaterDownloader } from './downloadgater';
+import { renameDownloadFileExclusive } from './downloadRename';
 import { DroploudDownloader } from './droploud';
 import { GaterushDownloader } from './gaterush';
 import { HypedditDownloader } from './hypeddit';
@@ -11,6 +13,7 @@ import { jobStore } from './jobStore';
 import { SoundcloudClient } from './soundcloud';
 import type { Job, Metadata, OutputFormat } from './types';
 import {
+	artistTitleFilename,
 	extractGateUrl,
 	getDefaultMetadata,
 	getFfmpegBin,
@@ -50,6 +53,27 @@ const HYPEDDIT_EMAIL = getOptionalEnv('HYPEDDIT_EMAIL');
 
 const soundcloudClient = new SoundcloudClient();
 const audioProcessor = new AudioProcessor(ffmpegBin, ffprobeBin);
+
+async function renameDownloadFile(
+	jobId: string,
+	currentFilename: string,
+	desiredFilename: string,
+): Promise<string> {
+	return renameDownloadFileExclusive({
+		downloadsDir: './downloads',
+		jobId,
+		currentFilename,
+		desiredFilename,
+		isOwnedByOtherJob: (filename, excludeJobId) =>
+			jobStore.isFilenameOwnedByOtherJob(filename, excludeJobId),
+		claimFilenames: (id, filename) => {
+			jobStore.update(id, {
+				outputFilename: filename,
+				downloadFilename: filename,
+			});
+		},
+	});
+}
 
 type AnyDownloader = {
 	close(): Promise<void>;
@@ -164,13 +188,22 @@ async function runDownloadProcess(jobId: string): Promise<void> {
 	}
 	const { url: downloadSourceUrl, provider } = resolved;
 
+	const throwIfCancelled = () => {
+		if (jobStore.isCancelled(jobId)) {
+			throw new Error('Download cancelled');
+		}
+	};
+
 	try {
 		const emitProgress = (
 			stage: Job['progress']['stage'],
 			message: string,
 			percent: number,
 			extra?: Partial<Job['progress']>,
-		) => jobStore.updateProgress(jobId, stage, message, percent, extra);
+		) => {
+			if (jobStore.isCancelled(jobId)) return;
+			jobStore.updateProgress(jobId, stage, message, percent, extra);
+		};
 
 		const gateConfigBase = {
 			name: HYPEDDIT_NAME,
@@ -180,8 +213,14 @@ async function runDownloadProcess(jobId: string): Promise<void> {
 		};
 
 		const prepareBrowserConfig = async () => {
+			throwIfCancelled();
 			const userDataDir = await prepareJobUserDataDir(jobId);
 			jobProfileDirs.set(jobId, userDataDir);
+			if (jobStore.isCancelled(jobId)) {
+				jobProfileDirs.delete(jobId);
+				await rm(userDataDir, { recursive: true, force: true });
+				throw new Error('Download cancelled');
+			}
 			return { ...gateConfigBase, userDataDir };
 		};
 
@@ -197,6 +236,7 @@ async function runDownloadProcess(jobId: string): Promise<void> {
 				{ browserless: true },
 			);
 			const ytDlpDownloader = new YtDlpDownloader(sourceLabel);
+			activeDownloaders.set(jobId, ytDlpDownloader);
 			ytDlpDownloader.setProgressCallback(emitProgress);
 			downloadFilename = await ytDlpDownloader.downloadAudio(
 				downloadSourceUrl,
@@ -204,6 +244,7 @@ async function runDownloadProcess(jobId: string): Promise<void> {
 					matchTitle: job.track?.title,
 				},
 			);
+			throwIfCancelled();
 		} else if (provider === 'droploud') {
 			jobStore.updateProgress(
 				jobId,
@@ -217,6 +258,7 @@ async function runDownloadProcess(jobId: string): Promise<void> {
 			activeDownloaders.set(jobId, droploudDownloader);
 			droploudDownloader.setProgressCallback(emitProgress);
 			await droploudDownloader.initialize();
+			throwIfCancelled();
 			jobStore.updateProgress(
 				jobId,
 				'handling_gates',
@@ -225,7 +267,7 @@ async function runDownloadProcess(jobId: string): Promise<void> {
 			);
 			downloadFilename =
 				await droploudDownloader.downloadAudio(downloadSourceUrl);
-			await closeJobDownloader(jobId);
+			throwIfCancelled();
 		} else if (provider === 'gaterush') {
 			jobStore.updateProgress(
 				jobId,
@@ -239,6 +281,7 @@ async function runDownloadProcess(jobId: string): Promise<void> {
 			activeDownloaders.set(jobId, gaterushDownloader);
 			gaterushDownloader.setProgressCallback(emitProgress);
 			await gaterushDownloader.initialize();
+			throwIfCancelled();
 			jobStore.updateProgress(
 				jobId,
 				'handling_gates',
@@ -247,7 +290,7 @@ async function runDownloadProcess(jobId: string): Promise<void> {
 			);
 			downloadFilename =
 				await gaterushDownloader.downloadAudio(downloadSourceUrl);
-			await closeJobDownloader(jobId);
+			throwIfCancelled();
 		} else if (provider === 'downloadgater') {
 			jobStore.updateProgress(
 				jobId,
@@ -261,6 +304,7 @@ async function runDownloadProcess(jobId: string): Promise<void> {
 			activeDownloaders.set(jobId, downloadgaterDownloader);
 			downloadgaterDownloader.setProgressCallback(emitProgress);
 			await downloadgaterDownloader.initialize();
+			throwIfCancelled();
 			jobStore.updateProgress(
 				jobId,
 				'handling_gates',
@@ -269,7 +313,7 @@ async function runDownloadProcess(jobId: string): Promise<void> {
 			);
 			downloadFilename =
 				await downloadgaterDownloader.downloadAudio(downloadSourceUrl);
-			await closeJobDownloader(jobId);
+			throwIfCancelled();
 		} else {
 			// Hypeddit: always try plain HTTP first (email + social skip gates).
 			jobStore.updateProgress(
@@ -282,12 +326,14 @@ async function runDownloadProcess(jobId: string): Promise<void> {
 				gateConfigBase,
 				emitProgress,
 			);
+			activeDownloaders.set(jobId, httpDownloader);
 			downloadFilename = await httpDownloader.tryDownload(downloadSourceUrl);
+			throwIfCancelled();
 
-			// Always try HTTP first. Open a browser only when the user checked
-			// “Show browser window” (headful) and the gate needs real verification
-			// (e.g. Spotify). Headless stays fully browserless for Hypeddit.
-			if (!downloadFilename && !job.headless) {
+			// Always try HTTP first. Fall back to the browser (headless or
+			// headful per job setting) when the gate needs real verification
+			// (e.g. Spotify).
+			if (!downloadFilename) {
 				jobStore.updateProgress(
 					jobId,
 					'initializing_browser',
@@ -301,6 +347,7 @@ async function runDownloadProcess(jobId: string): Promise<void> {
 				activeDownloaders.set(jobId, hypedditDownloader);
 				hypedditDownloader.setProgressCallback(emitProgress);
 				await hypedditDownloader.initialize();
+				throwIfCancelled();
 
 				jobStore.updateProgress(
 					jobId,
@@ -311,14 +358,12 @@ async function runDownloadProcess(jobId: string): Promise<void> {
 
 				downloadFilename =
 					await hypedditDownloader.downloadAudio(downloadSourceUrl);
-				await closeJobDownloader(jobId);
-			} else if (!downloadFilename && job.headless) {
-				jobStore.setError(
-					jobId,
-					'This Hypeddit gate needs a browser (e.g. Spotify). Enable “Show browser window (headful)” and retry.',
-				);
-				return;
+				throwIfCancelled();
 			}
+		}
+
+		if (jobStore.isCancelled(jobId)) {
+			return;
 		}
 
 		if (!downloadFilename) {
@@ -340,6 +385,8 @@ async function runDownloadProcess(jobId: string): Promise<void> {
 			);
 			jobStore.update(jobId, { existingMetadata: existingMetadata ?? {} });
 		}
+
+		throwIfCancelled();
 
 		jobStore.updateProgress(
 			jobId,
@@ -363,25 +410,60 @@ async function runDownloadProcess(jobId: string): Promise<void> {
 			}
 		}
 
+		if (jobStore.isCancelled(jobId)) {
+			return;
+		}
+
 		jobStore.updateProgress(jobId, 'ready', 'Ready for metadata editing', 100);
 	} catch (error) {
-		await closeJobDownloader(jobId);
+		if (jobStore.isCancelled(jobId)) {
+			// Progress already set to cancelled by the cancel endpoint (or below).
+			if (jobStore.get(jobId)?.progress.stage !== 'cancelled') {
+				jobStore.cancel(jobId);
+			}
+			return;
+		}
 		const message =
 			error instanceof Error ? error.message : 'Unknown error occurred';
 		jobStore.setError(jobId, message);
+	} finally {
+		await closeJobDownloader(jobId);
 	}
 }
 
-const corsHeaders: Record<string, string> = {
-	'Access-Control-Allow-Origin': '*',
-	'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
-	'Access-Control-Allow-Headers': 'Content-Type, Authorization',
-};
+const ALLOWED_ORIGINS = new Set([
+	'https://soundcloud.com',
+	'https://www.soundcloud.com',
+	'https://m.soundcloud.com',
+	'http://localhost:4321',
+	'http://127.0.0.1:4321',
+	'http://localhost:3000',
+	'http://127.0.0.1:3000',
+]);
+
+const requestAls = new AsyncLocalStorage<Request>();
+
+function corsHeaders(): Record<string, string> {
+	const req = requestAls.getStore();
+	const origin = req?.headers.get('Origin');
+	const headers: Record<string, string> = {
+		'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
+		'Access-Control-Allow-Headers':
+			'Content-Type, Authorization, Access-Control-Request-Private-Network',
+		// Chrome Private Network Access: allow soundcloud.com → localhost:3000 (userscript)
+		'Access-Control-Allow-Private-Network': 'true',
+		Vary: 'Origin',
+	};
+	if (origin && ALLOWED_ORIGINS.has(origin)) {
+		headers['Access-Control-Allow-Origin'] = origin;
+	}
+	return headers;
+}
 
 function jsonResponse(data: unknown, options?: { status?: number }): Response {
 	return Response.json(data, {
 		status: options?.status || 200,
-		headers: corsHeaders,
+		headers: corsHeaders(),
 	});
 }
 
@@ -390,14 +472,14 @@ function fileResponse(
 	headers: Record<string, string>,
 ): Response {
 	return new Response(body, {
-		headers: { ...corsHeaders, ...headers },
+		headers: { ...corsHeaders(), ...headers },
 	});
 }
 
 function sseResponse(stream: ReadableStream): Response {
 	return new Response(stream, {
 		headers: {
-			...corsHeaders,
+			...corsHeaders(),
 			'Content-Type': 'text/event-stream',
 			'Cache-Control': 'no-cache',
 			Connection: 'keep-alive',
@@ -405,22 +487,49 @@ function sseResponse(stream: ReadableStream): Response {
 	});
 }
 
+type RouteHandler = (req: Request) => Response | Promise<Response>;
+
+function wrapRouteHandler(handler: RouteHandler): RouteHandler {
+	return (req) => requestAls.run(req, () => handler(req));
+}
+
+function wrapRoutes<T extends Record<string, unknown>>(routes: T): T {
+	const wrapped: Record<string, unknown> = {};
+	for (const [path, handler] of Object.entries(routes)) {
+		if (typeof handler === 'function') {
+			wrapped[path] = wrapRouteHandler(handler as RouteHandler);
+		} else if (handler && typeof handler === 'object') {
+			const methodHandlers: Record<string, unknown> = {};
+			for (const [method, fn] of Object.entries(
+				handler as Record<string, unknown>,
+			)) {
+				methodHandlers[method] =
+					typeof fn === 'function' ? wrapRouteHandler(fn as RouteHandler) : fn;
+			}
+			wrapped[path] = methodHandlers;
+		} else {
+			wrapped[path] = handler;
+		}
+	}
+	return wrapped as T;
+}
+
 const server = Bun.serve({
 	port: 3000,
 	// Increase idle timeout for long-running operations (browser automation, downloads)
 	idleTimeout: 255, // ~4 minutes (max allowed)
-	routes: {
+	routes: wrapRoutes({
 		// CORS preflight handler for all routes
 		'/*': {
 			OPTIONS: () =>
 				new Response(null, {
 					status: 204,
-					headers: corsHeaders,
+					headers: corsHeaders(),
 				}),
 		},
 		'/': () =>
 			new Response('sc-gate-dl API is running!', {
-				headers: corsHeaders,
+				headers: corsHeaders(),
 			}),
 
 		'/api/soundcloud/cleanup': {
@@ -646,13 +755,16 @@ const server = Bun.serve({
 					if (
 						job.progress.stage !== 'pending' &&
 						job.progress.stage !== 'waiting_hypeddit' &&
-						job.progress.stage !== 'error'
+						job.progress.stage !== 'error' &&
+						job.progress.stage !== 'cancelled'
 					) {
 						return jsonResponse(
 							{ error: 'Job is already in progress or completed' },
 							{ status: 400 },
 						);
 					}
+
+					jobStore.clearCancelled(jobId);
 
 					try {
 						const body = (await req.json()) as { headless?: boolean };
@@ -677,87 +789,134 @@ const server = Bun.serve({
 			},
 		},
 
+		'/api/job/:id/cancel': {
+			POST: async (req) => {
+				try {
+					const jobId = req.params.id;
+					const job = jobStore.get(jobId);
+
+					if (!job) {
+						return jsonResponse({ error: 'Job not found' }, { status: 404 });
+					}
+
+					const stage = job.progress.stage;
+					if (stage === 'ready' || stage === 'cancelled') {
+						jobStore.cancel(jobId);
+						await closeJobDownloader(jobId);
+						return jsonResponse({ success: true, message: 'Cancelled' });
+					}
+
+					jobStore.cancel(jobId, 'Cancelling download…');
+					// Close CloakBrowser / job profile so Chromium exits cleanly
+					await closeJobDownloader(jobId);
+					jobStore.cancel(jobId, 'Download cancelled');
+
+					return jsonResponse({ success: true, message: 'Download cancelled' });
+				} catch (error) {
+					return jsonResponse(
+						{
+							error: error instanceof Error ? error.message : 'Unknown error',
+						},
+						{ status: 500 },
+					);
+				}
+			},
+		},
+
 		'/api/job/:id/events': {
 			GET: (req) => {
-				const jobId = req.params.id;
-				const job = jobStore.get(jobId);
+				try {
+					const jobId = req.params.id;
+					const job = jobStore.get(jobId);
 
-				if (!job) {
-					return jsonResponse({ error: 'Job not found' }, { status: 404 });
-				}
+					if (!job) {
+						return jsonResponse({ error: 'Job not found' }, { status: 404 });
+					}
 
-				const stream = new ReadableStream({
-					start(controller) {
-						const encoder = new TextEncoder();
-						let cleanedUp = false;
-						let unsubscribe: (() => void) | null = null;
-						let heartbeat: ReturnType<typeof setInterval> | null = null;
+					const stream = new ReadableStream({
+						start(controller) {
+							const encoder = new TextEncoder();
+							let cleanedUp = false;
+							let unsubscribe: (() => void) | null = null;
+							let heartbeat: ReturnType<typeof setInterval> | null = null;
 
-						const cleanup = () => {
-							if (cleanedUp) return;
-							cleanedUp = true;
-							if (heartbeat !== null) {
-								clearInterval(heartbeat);
-								heartbeat = null;
-							}
-							unsubscribe?.();
-							unsubscribe = null;
-						};
+							const cleanup = () => {
+								if (cleanedUp) return;
+								cleanedUp = true;
+								if (heartbeat !== null) {
+									clearInterval(heartbeat);
+									heartbeat = null;
+								}
+								unsubscribe?.();
+								unsubscribe = null;
+							};
 
-						const closeStream = () => {
-							cleanup();
-							try {
-								controller.close();
-							} catch {
-								// Already closed
-							}
-						};
-
-						const safeEnqueue = (chunk: string): boolean => {
-							if (cleanedUp) return false;
-							try {
-								controller.enqueue(encoder.encode(chunk));
-								return true;
-							} catch {
+							const closeStream = () => {
 								cleanup();
-								return false;
-							}
-						};
+								try {
+									controller.close();
+								} catch {
+									// Already closed
+								}
+							};
 
-						if (!safeEnqueue(`data: ${JSON.stringify(job.progress)}\n\n`)) {
-							return;
-						}
+							const safeEnqueue = (chunk: string): boolean => {
+								if (cleanedUp) return false;
+								try {
+									controller.enqueue(encoder.encode(chunk));
+									return true;
+								} catch {
+									cleanup();
+									return false;
+								}
+							};
 
-						// Keep the SSE connection alive during long silent stretches
-						// (e.g. yt-dlp downloads up to 10 minutes with no progress events).
-						// Bun closes idle connections after idleTimeout (~255s).
-						heartbeat = setInterval(() => {
-							safeEnqueue(': keepalive\n\n');
-						}, 30_000);
-
-						unsubscribe = jobStore.subscribe(jobId, (progress) => {
-							if (!safeEnqueue(`data: ${JSON.stringify(progress)}\n\n`)) {
+							if (!safeEnqueue(`data: ${JSON.stringify(job.progress)}\n\n`)) {
 								return;
 							}
 
-							if (progress.stage === 'ready' || progress.stage === 'error') {
+							// Keep the SSE connection alive during long silent stretches
+							// (e.g. yt-dlp downloads up to 10 minutes with no progress events).
+							// Bun closes idle connections after idleTimeout (~255s).
+							heartbeat = setInterval(() => {
+								safeEnqueue(': keepalive\n\n');
+							}, 30_000);
+
+							unsubscribe = jobStore.subscribe(jobId, (progress) => {
+								if (!safeEnqueue(`data: ${JSON.stringify(progress)}\n\n`)) {
+									return;
+								}
+
+								if (
+									progress.stage === 'ready' ||
+									progress.stage === 'error' ||
+									progress.stage === 'cancelled'
+								) {
+									setTimeout(closeStream, 100);
+								}
+							});
+
+							// subscribe() does not replay — close if the job is already done.
+							if (
+								job.progress.stage === 'ready' ||
+								job.progress.stage === 'error' ||
+								job.progress.stage === 'cancelled'
+							) {
 								setTimeout(closeStream, 100);
 							}
-						});
 
-						// subscribe() does not replay — close if the job is already done.
-						if (
-							job.progress.stage === 'ready' ||
-							job.progress.stage === 'error'
-						) {
-							setTimeout(closeStream, 100);
-						}
+							req.signal.addEventListener('abort', closeStream);
+						},
+					});
 
-						req.signal.addEventListener('abort', closeStream);
-					},
-				});
-
-				return sseResponse(stream);
+					return sseResponse(stream);
+				} catch (error) {
+					console.error('SSE setup failed:', error);
+					return jsonResponse(
+						{ error: 'Failed to open event stream' },
+						{ status: 500 },
+					);
+				}
 			},
 		},
 
@@ -823,7 +982,7 @@ const server = Bun.serve({
 						return jsonResponse({ error: 'Job not found' }, { status: 404 });
 					}
 
-					if (!job.downloadFilename) {
+					if (!job.downloadFilename && !job.outputFilename) {
 						return jsonResponse(
 							{ error: 'No downloaded file available' },
 							{ status: 400 },
@@ -833,6 +992,7 @@ const server = Bun.serve({
 					const contentType = req.headers.get('content-type') || '';
 					let metadata: Metadata;
 					let preserveMetadata = false;
+					let nameAsArtistTitle = false;
 					let customArtwork: { buffer: ArrayBuffer; fileName: string } | null =
 						null;
 
@@ -845,6 +1005,7 @@ const server = Bun.serve({
 							genre: formData.get('genre')?.toString() || undefined,
 						};
 						preserveMetadata = formData.get('preserveMetadata') === 'true';
+						nameAsArtistTitle = formData.get('nameAsArtistTitle') === 'true';
 
 						const artworkFile = formData.get('artwork');
 						if (artworkFile instanceof File) {
@@ -856,6 +1017,7 @@ const server = Bun.serve({
 					} else {
 						const body = (await req.json()) as Metadata & {
 							preserveMetadata?: boolean;
+							nameAsArtistTitle?: boolean;
 						};
 						metadata = {
 							title: body.title,
@@ -864,9 +1026,19 @@ const server = Bun.serve({
 							genre: body.genre,
 						};
 						preserveMetadata = body.preserveMetadata === true;
+						nameAsArtistTitle = body.nameAsArtistTitle === true;
 					}
 
-					if (preserveMetadata && !isMp3Format(job.downloadFilename)) {
+					const sourceFilename =
+						job.outputFilename || job.downloadFilename || '';
+					if (!sourceFilename) {
+						return jsonResponse(
+							{ error: 'No downloaded file available' },
+							{ status: 400 },
+						);
+					}
+
+					if (preserveMetadata && !isMp3Format(sourceFilename)) {
 						return jsonResponse(
 							{
 								error: 'Existing metadata can only be preserved for MP3 files',
@@ -876,8 +1048,21 @@ const server = Bun.serve({
 					}
 
 					if (job.outputFormat === 'original' || preserveMetadata) {
+						let outputFilename = sourceFilename;
+						if (nameAsArtistTitle) {
+							outputFilename = await renameDownloadFile(
+								jobId,
+								sourceFilename,
+								artistTitleFilename(
+									metadata.artist,
+									metadata.title,
+									extname(sourceFilename) || '.mp3',
+								),
+							);
+						}
 						jobStore.update(jobId, {
-							outputFilename: job.downloadFilename,
+							outputFilename,
+							downloadFilename: outputFilename,
 						});
 						jobStore.updateProgress(
 							jobId,
@@ -889,7 +1074,7 @@ const server = Bun.serve({
 						);
 						return jsonResponse({
 							success: true,
-							outputFilename: job.downloadFilename,
+							outputFilename,
 						});
 					}
 
@@ -917,14 +1102,24 @@ const server = Bun.serve({
 					}
 
 					const outputPath = await audioProcessor.processAudio(
-						job.downloadFilename,
+						sourceFilename,
 						metadata,
 						artwork,
 						'always',
 					);
 
-					const outputFilename = outputPath.split('/').pop() || outputPath;
-					jobStore.update(jobId, { outputFilename });
+					let outputFilename = basename(outputPath);
+					if (nameAsArtistTitle) {
+						outputFilename = await renameDownloadFile(
+							jobId,
+							outputFilename,
+							artistTitleFilename(metadata.artist, metadata.title, '.mp3'),
+						);
+					}
+					jobStore.update(jobId, {
+						outputFilename,
+						downloadFilename: outputFilename,
+					});
 
 					jobStore.updateProgress(
 						jobId,
@@ -967,18 +1162,25 @@ const server = Bun.serve({
 
 				return new Response(file, {
 					headers: {
-						...corsHeaders,
+						...corsHeaders(),
 						'Content-Type': file.type || 'application/octet-stream',
 						'Content-Disposition': `attachment; filename="${filename}"`,
 					},
 				});
 			},
 		},
-	},
-	error: async (err) => {
+	}),
+	error: ((err: Error, request?: Request) => {
 		console.error('Server error:', err);
-		return jsonResponse({ error: 'Internal Server Error' }, { status: 500 });
-	},
+		const respond = () =>
+			jsonResponse({ error: 'Internal Server Error' }, { status: 500 });
+		// Bun may pass Request as a second runtime arg (typed API is 1-arg).
+		// Restore ALS so CORS uses the request Origin instead of *.
+		if (request instanceof Request) {
+			return requestAls.run(request, respond);
+		}
+		return respond();
+	}) as (err: Error) => Response | Promise<Response>,
 });
 
 let shuttingDown = false;

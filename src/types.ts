@@ -40,7 +40,8 @@ export type JobStage =
 	| 'downloading'
 	| 'processing_audio'
 	| 'ready'
-	| 'error';
+	| 'error'
+	| 'cancelled';
 
 export interface JobProgress {
 	stage: JobStage;
@@ -61,6 +62,8 @@ export interface Job {
 	/** Whether browser automation runs headless. Defaults to true. */
 	headless: boolean;
 	outputFormat: OutputFormat;
+	/** Set when the user cancels; download loop should stop and close the browser. */
+	cancelled: boolean;
 	track: {
 		title: string;
 		artworkUrl: string | null;

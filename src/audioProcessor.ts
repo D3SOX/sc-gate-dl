@@ -1,15 +1,31 @@
+import { existsSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import { confirm, input } from '@inquirer/prompts';
 import { execa } from 'execa';
 import type { SoundcloudTrack } from 'soundcloud.ts';
+import {
+	pickUniqueDownloadFilename,
+	withDownloadRenameLock,
+} from './downloadRename';
 import type { Metadata } from './types';
 import {
 	getDefaultMetadata,
 	isLosslessFormat,
 	isMp3Format,
-	losslessToMp3Filename,
+	needsMp3Conversion,
 	REPO_URL,
+	toMp3Filename,
 } from './utils';
+
+type FfprobeResult = {
+	format?: { tags?: Record<string, string>; bit_rate?: string };
+	streams?: Array<{
+		tags?: Record<string, string>;
+		codec_type?: string;
+		codec_name?: string;
+		bit_rate?: string;
+	}>;
+};
 
 export class AudioProcessor {
 	private ffmpegBin: string;
@@ -21,51 +37,34 @@ export class AudioProcessor {
 	}
 
 	async readMp3Metadata(inputPath: string): Promise<Metadata | null> {
-		try {
-			const { stdout } = await execa(this.ffprobeBin, [
-				'-v',
-				'quiet',
-				'-print_format',
-				'json',
-				'-show_format',
-				'-show_streams',
-				inputPath,
-			]);
-
-			const probeData = JSON.parse(stdout) as {
-				format?: {
-					tags?: Record<string, string>;
-				};
-				streams?: Array<{
-					tags?: Record<string, string>;
-				}>;
-			};
-
-			const tags =
-				probeData.format?.tags || probeData.streams?.[0]?.tags || null;
-
-			if (!tags) {
-				return null;
-			}
-
-			// MP3 metadata can be in different cases
-			const getTag = (key: string): string | undefined => {
-				return tags[key] || tags[key.toUpperCase()];
-			};
-
-			return {
-				title: getTag('title'),
-				artist: getTag('artist'),
-				album: getTag('album'),
-				genre: getTag('genre'),
-			};
-		} catch (error) {
-			// If ffprobe is not found or fails, return null to fall back to normal behavior
-			console.warn(
-				`Failed to read MP3 metadata: ${error instanceof Error ? error.message : String(error)}`,
-			);
+		const probeData = await this.runFfprobe(inputPath);
+		if (!probeData) {
 			return null;
 		}
+
+		const streamTags = (probeData.streams ?? [])
+			.filter((stream) => stream.codec_type === 'audio')
+			.map((stream) => stream.tags)
+			.filter((value): value is Record<string, string> => Boolean(value));
+		const tagSources = [...streamTags, probeData.format?.tags].filter(
+			(value): value is Record<string, string> => Boolean(value),
+		);
+		if (tagSources.length === 0) {
+			return null;
+		}
+		const tags = Object.assign({}, ...tagSources);
+
+		// MP3 metadata can be in different cases
+		const getTag = (key: string): string | undefined => {
+			return tags[key] || tags[key.toUpperCase()];
+		};
+
+		return {
+			title: getTag('title'),
+			artist: getTag('artist'),
+			album: getTag('album'),
+			genre: getTag('genre'),
+		};
 	}
 
 	async promptForMetadata(
@@ -158,28 +157,28 @@ export class AudioProcessor {
 		}
 
 		try {
-			// if it is a WAV, AIFF, or FLAC, we convert it to MP3
-			if (isLosslessFormat(filename)) {
-				const outputPath = await this.convertLosslessToMp3(
+			// Convert non-MP3 audio (lossless or lossy containers like m4a) to MP3.
+			if (needsMp3Conversion(filename)) {
+				const outputPath = await this.convertToMp3(
 					inputPath,
 					artworkPath,
 					metadata,
 					filename,
 				);
 
-				// ask if you want to remove the lossless file
-				let removeLosslessFile = true;
+				// ask if you want to remove the source file
+				let removeSourceFile = true;
 				if (losslessHandling === 'prompt') {
-					removeLosslessFile = await confirm({
-						message: 'Do you want to remove the lossless file now?',
+					removeSourceFile = await confirm({
+						message: `Do you want to remove the ${isLosslessFormat(filename) ? 'lossless' : 'source'} file now?`,
 						default: true,
 					});
 				} else if (losslessHandling === 'always') {
-					removeLosslessFile = true;
+					removeSourceFile = true;
 				} else if (losslessHandling === 'never') {
-					removeLosslessFile = false;
+					removeSourceFile = false;
 				}
-				if (removeLosslessFile) {
+				if (removeSourceFile) {
 					await Bun.file(inputPath).unlink();
 					console.log(`✓ Removed ${inputPath}`);
 				}
@@ -210,13 +209,109 @@ export class AudioProcessor {
 		}
 	}
 
-	private async convertLosslessToMp3(
+	private async runFfprobe(inputPath: string): Promise<FfprobeResult | null> {
+		try {
+			const { stdout } = await execa(this.ffprobeBin, [
+				'-v',
+				'quiet',
+				'-print_format',
+				'json',
+				'-show_format',
+				'-show_streams',
+				inputPath,
+			]);
+			return JSON.parse(stdout) as FfprobeResult;
+		} catch (error) {
+			console.warn(
+				`Failed to probe audio: ${error instanceof Error ? error.message : String(error)}`,
+			);
+			return null;
+		}
+	}
+
+	private parseBitrateKbps(raw: string | undefined): number | null {
+		if (!raw) return null;
+		const bps = Number(raw);
+		if (!Number.isFinite(bps) || bps <= 0) return null;
+		return Math.round(bps / 1000);
+	}
+
+	/** Probe audio bitrate (kbps) and codec; null bitrate when unknown. */
+	private async probeAudioStream(
+		inputPath: string,
+	): Promise<{ bitrateKbps: number | null; codecName: string | null }> {
+		const probeData = await this.runFfprobe(inputPath);
+		if (!probeData) {
+			return { bitrateKbps: null, codecName: null };
+		}
+
+		const audioStream = probeData.streams?.find(
+			(stream) => stream.codec_type === 'audio',
+		);
+		const bitrateKbps =
+			this.parseBitrateKbps(audioStream?.bit_rate) ??
+			this.parseBitrateKbps(probeData.format?.bit_rate);
+
+		return {
+			bitrateKbps,
+			codecName: audioStream?.codec_name ?? null,
+		};
+	}
+
+	/**
+	 * Target MP3 bitrate: lossless → 320; lossy → source rate (capped at 320).
+	 * Never upscales a 128k stream to fake 320.
+	 */
+	private async resolveMp3BitrateKbps(
+		inputPath: string,
+		filename: string,
+	): Promise<number> {
+		const probed = await this.probeAudioStream(inputPath);
+		const losslessCodec = probed.codecName?.toLowerCase() === 'alac';
+		if (isLosslessFormat(filename) || losslessCodec) {
+			return 320;
+		}
+
+		if (probed.bitrateKbps == null) {
+			return 192;
+		}
+		return Math.min(320, Math.max(32, probed.bitrateKbps));
+	}
+
+	/** Pick a free MP3 destination and reserve it on disk before FFmpeg runs. */
+	private async allocateMp3OutputPath(
+		inputPath: string,
+		filename: string,
+	): Promise<string> {
+		const downloadsDir = './downloads';
+		const desiredFilename = toMp3Filename(filename);
+		const currentFilename = basename(inputPath);
+
+		return withDownloadRenameLock(async () => {
+			const finalName = pickUniqueDownloadFilename({
+				desiredFilename,
+				currentFilename,
+				jobId: crypto.randomUUID(),
+				exists: (name) => existsSync(join(downloadsDir, name)),
+				isOwnedByOtherJob: () => false,
+			});
+			const outputPath = join(downloadsDir, finalName);
+			// Reserve the name so concurrent converts cannot pick the same path.
+			if (finalName !== currentFilename && !existsSync(outputPath)) {
+				await Bun.write(outputPath, new Uint8Array());
+			}
+			return outputPath;
+		});
+	}
+
+	private async convertToMp3(
 		inputPath: string,
 		artworkPath: string,
 		metadata: Metadata,
 		filename: string,
 	): Promise<string> {
-		const outputPath = join('./downloads', losslessToMp3Filename(filename));
+		const outputPath = await this.allocateMp3OutputPath(inputPath, filename);
+		const bitrateKbps = await this.resolveMp3BitrateKbps(inputPath, filename);
 
 		const args: string[] = [
 			'-i',
@@ -228,7 +323,7 @@ export class AudioProcessor {
 			'-c:a',
 			'libmp3lame',
 			'-b:a',
-			'320k',
+			`${bitrateKbps}k`,
 			'-id3v2_version',
 			'3',
 			'-map',
@@ -256,8 +351,18 @@ export class AudioProcessor {
 
 		args.push('-y', outputPath);
 
-		console.log('Converting Lossless to MP3 (320kbps)...');
-		await execa(this.ffmpegBin, args);
+		console.log(`Converting to MP3 (${bitrateKbps}kbps)...`);
+		try {
+			await execa(this.ffmpegBin, args);
+		} catch (error) {
+			// Drop the empty reservation if conversion failed.
+			if (existsSync(outputPath) && (await Bun.file(outputPath).size) === 0) {
+				await Bun.file(outputPath)
+					.unlink()
+					.catch(() => {});
+			}
+			throw error;
+		}
 		console.log(`✓ Converted to ${outputPath}`);
 		return outputPath;
 	}

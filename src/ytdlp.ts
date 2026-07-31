@@ -1,9 +1,13 @@
-import { mkdir } from 'node:fs/promises';
+import { mkdir, rm } from 'node:fs/promises';
 import { basename, join } from 'node:path';
 import { execa } from 'execa';
 import { lookpath } from 'find-bin';
 import type { JobProgress } from './types';
-import { isBandcampAlbumUrl } from './utils';
+import {
+	isBandcampAlbumUrl,
+	isSoundcloudUrl,
+	writeSoundcloudNetscapeCookies,
+} from './utils';
 
 type ProgressCallback = (
 	stage: JobProgress['stage'],
@@ -71,6 +75,9 @@ export function titleMatchScore(candidate: string, wanted: string): number {
  * Downloads audio via yt-dlp into ./downloads (Bandcamp, SoundCloud, …).
  * Browserless — no gate browser / SoundCloud session automation.
  *
+ * SoundCloud: when `soundcloud-cookies.json` is present, cookies are passed to
+ * yt-dlp so downloadable tracks can fetch the original upload (not just 128k).
+ *
  * Bandcamp album URLs: when `matchTitle` is set, resolves the best-matching
  * track on the album and downloads only that entry (avoids grabbing the whole
  * album and offering the wrong file).
@@ -78,6 +85,8 @@ export function titleMatchScore(candidate: string, wanted: string): number {
 export class YtDlpDownloader {
 	private progressCallback: ProgressCallback | null = null;
 	private sourceLabel: string;
+	private activeProcess: ReturnType<typeof execa> | null = null;
+	private closed = false;
 
 	constructor(sourceLabel = 'yt-dlp') {
 		this.sourceLabel = sourceLabel;
@@ -85,6 +94,36 @@ export class YtDlpDownloader {
 
 	setProgressCallback(callback: ProgressCallback) {
 		this.progressCallback = callback;
+	}
+
+	async close(): Promise<void> {
+		this.closed = true;
+		const running = this.activeProcess;
+		this.activeProcess = null;
+		running?.kill('SIGTERM');
+	}
+
+	private async runYtDlp(
+		ytDlpBin: string,
+		args: string[],
+		timeout: number,
+	): Promise<string> {
+		if (this.closed) {
+			throw new Error('yt-dlp downloader is closed');
+		}
+		const subprocess = execa(ytDlpBin, args, {
+			timeout,
+			killSignal: 'SIGTERM',
+		});
+		this.activeProcess = subprocess;
+		try {
+			const { stdout } = await subprocess;
+			return stdout;
+		} finally {
+			if (this.activeProcess === subprocess) {
+				this.activeProcess = null;
+			}
+		}
 	}
 
 	async downloadAudio(
@@ -117,23 +156,45 @@ export class YtDlpDownloader {
 		await mkdir(DOWNLOADS_DIR, { recursive: true });
 
 		const outputTemplate = join(DOWNLOADS_DIR, '%(title)s [%(id)s].%(ext)s');
+		const soundcloud = isSoundcloudUrl(downloadUrl);
+		// Prefer SoundCloud's original upload (`download`) when the track allows it.
+		// That format is only listed for registered users — pass cookies when available.
+		const format = soundcloud ? 'download/bestaudio/best' : 'bestaudio/best';
+		const args = [
+			'--no-mtime',
+			'--no-playlist',
+			'-f',
+			format,
+			'-o',
+			outputTemplate,
+			'--print',
+			'after_move:filepath',
+			'--no-warnings',
+		];
 
-		const { stdout } = await execa(
-			ytDlpBin,
-			[
-				'--no-mtime',
-				'--no-playlist',
-				'-f',
-				'bestaudio/best',
-				'-o',
-				outputTemplate,
-				'--print',
-				'after_move:filepath',
-				'--no-warnings',
-				downloadUrl,
-			],
-			{ timeout: YTDLP_DOWNLOAD_TIMEOUT_MS, killSignal: 'SIGTERM' },
-		);
+		let cookiesPath: string | null = null;
+		if (soundcloud) {
+			cookiesPath = await writeSoundcloudNetscapeCookies();
+			if (cookiesPath) {
+				args.push('--cookies', cookiesPath);
+				console.log(
+					`${this.sourceLabel}: using soundcloud-cookies.json for yt-dlp (original download if available)`,
+				);
+			} else {
+				console.warn(
+					`${this.sourceLabel}: no soundcloud-cookies.json — original SoundCloud downloads may be unavailable`,
+				);
+			}
+		}
+
+		args.push(downloadUrl);
+
+		let stdout: string;
+		try {
+			stdout = await this.runYtDlp(ytDlpBin, args, YTDLP_DOWNLOAD_TIMEOUT_MS);
+		} finally {
+			if (cookiesPath) await rm(cookiesPath, { force: true });
+		}
 
 		const filepaths = stdout
 			.trim()
@@ -195,10 +256,10 @@ export class YtDlpDownloader {
 			`${this.sourceLabel}: album URL — matching track “${matchTitle}”…`,
 		);
 
-		const { stdout } = await execa(
+		const stdout = await this.runYtDlp(
 			ytDlpBin,
 			['--flat-playlist', '-J', '--no-warnings', albumUrl],
-			{ timeout: YTDLP_METADATA_TIMEOUT_MS, killSignal: 'SIGTERM' },
+			YTDLP_METADATA_TIMEOUT_MS,
 		);
 
 		const data = JSON.parse(stdout) as {

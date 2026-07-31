@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Toaster, toast } from 'sonner';
 import './App.css';
 
@@ -44,6 +44,140 @@ interface JobState {
 
 const API_BASE = 'http://localhost:3000';
 
+const ALLOWED_HOST_ORIGINS = new Set([
+	'https://soundcloud.com',
+	'https://www.soundcloud.com',
+	'https://m.soundcloud.com',
+	'http://localhost:4321',
+	'http://127.0.0.1:4321',
+]);
+
+function notifyParent(
+	type: 'file-download' | 'new-download' | 'job' | 'cancelled' | 'ready',
+	payload?: { jobId?: string },
+) {
+	if (window.parent === window) return;
+	window.parent.postMessage({ source: 'sc-gate-dl', type, ...payload }, '*');
+}
+
+/** Promo fluff often glued onto SoundCloud / gate titles. */
+const PROMO_TAG =
+	String.raw`free\s*d(?:own)?l(?:oad)?s?|free[\s._-]*dl|freedl|out\s*now|premiere|exclusive`;
+
+function cleanPromoTags(value: string): string {
+	if (!value) return value;
+
+	let result = value;
+	result = result.replace(
+		new RegExp(String.raw`\s*[\[\(\{]\s*(?:${PROMO_TAG})\s*[\]\)\}]`, 'gi'),
+		' ',
+	);
+	result = result.replace(
+		new RegExp(
+			String.raw`(?:\s*[-–—|/·•]+\s*|\s+)(?:${PROMO_TAG})\s*$`,
+			'gi',
+		),
+		'',
+	);
+	result = result.replace(new RegExp(String.raw`(?:${PROMO_TAG})\s*$`, 'gi'), '');
+	result = result.replace(
+		new RegExp(
+			String.raw`^\s*(?:${PROMO_TAG})(?:\s*[-–—|/·•]+\s*|\s+)`,
+			'gi',
+		),
+		'',
+	);
+	result = result.replace(/\s{2,}/g, ' ');
+	result = result.replace(/^[\s\-–—|/·•]+|[\s\-–—|/·•]+$/g, '');
+	return result.trim();
+}
+
+/** Strip a leading/trailing `Artist - ` / ` - Artist` duplicate from the title. */
+function stripDuplicateArtistFromTitle(title: string, artist: string): string {
+	const trimmedArtist = artist.trim();
+	const trimmedTitle = title.trim();
+	if (!trimmedArtist || !trimmedTitle) return trimmedTitle;
+
+	const escaped = trimmedArtist.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+	return trimmedTitle
+		.replace(new RegExp(String.raw`^${escaped}\s*[-–—|:]\s*`, 'i'), '')
+		.replace(new RegExp(String.raw`\s*[-–—|:]\s*${escaped}$`, 'i'), '')
+		.trim();
+}
+
+function cleanMetadataFields(meta: Metadata): Metadata {
+	const artist = cleanPromoTags(meta.artist || '');
+	const title = stripDuplicateArtistFromTitle(
+		cleanPromoTags(meta.title || ''),
+		artist,
+	);
+	return {
+		title,
+		artist,
+		album: cleanPromoTags(meta.album || ''),
+		genre: cleanPromoTags(meta.genre || ''),
+	};
+}
+
+function metadataNeedsCleanup(meta: Metadata): boolean {
+	const cleaned = cleanMetadataFields(meta);
+	return (
+		(meta.title || '') !== (cleaned.title || '') ||
+		(meta.artist || '') !== (cleaned.artist || '') ||
+		(meta.album || '') !== (cleaned.album || '') ||
+		(meta.genre || '') !== (cleaned.genre || '')
+	);
+}
+
+function sanitizeFilenamePart(value: string): string {
+	return value
+		.replace(/[<>:"/\\|?*]/g, '')
+		.replace(/\s+/g, ' ')
+		.trim();
+}
+
+function artistTitleFilename(artist?: string, title?: string): string {
+	const safeArtist = sanitizeFilenamePart(artist || '') || 'Unknown Artist';
+	const safeTitle = sanitizeFilenamePart(title || '') || 'Unknown Title';
+	return `${safeArtist} - ${safeTitle}.mp3`;
+}
+
+function needsMp3Conversion(filename: string): boolean {
+	const lower = filename.toLowerCase();
+	return (
+		lower.endsWith('.wav') ||
+		lower.endsWith('.aiff') ||
+		lower.endsWith('.aif') ||
+		lower.endsWith('.flac') ||
+		lower.endsWith('.m4a') ||
+		lower.endsWith('.aac') ||
+		lower.endsWith('.ogg') ||
+		lower.endsWith('.opus') ||
+		lower.endsWith('.webm')
+	);
+}
+
+function previewProcessedFilename(
+	downloadFilename: string | null,
+	options: {
+		nameAsArtistTitle: boolean;
+		artist?: string;
+		title?: string;
+	},
+): string {
+	if (!downloadFilename) return '';
+	if (options.nameAsArtistTitle) {
+		return artistTitleFilename(options.artist, options.title);
+	}
+	if (needsMp3Conversion(downloadFilename)) {
+		return downloadFilename.replace(
+			/\.(wav|aiff|aif|flac|m4a|aac|ogg|opus|webm)$/i,
+			'.mp3',
+		);
+	}
+	return downloadFilename;
+}
+
 export default function App() {
 	const [step, setStep] = useState<Step>('url');
 	const [soundcloudUrl, setSoundcloudUrl] = useState('');
@@ -71,8 +205,11 @@ export default function App() {
 		genre: '',
 	});
 	const [customArtwork, setCustomArtwork] = useState<File | null>(null);
+	const [nameAsArtistTitle, setNameAsArtistTitle] = useState(false);
 	const [isLoading, setIsLoading] = useState(false);
 	const cleanupToastShownRef = useRef(false);
+	const autoStartedFromQueryRef = useRef(false);
+	const eventSourceRef = useRef<EventSource | null>(null);
 	const formatPercent = (value?: number) => Math.round(value ?? 0);
 
 	const showCleanupSoundcloudToast = useCallback(() => {
@@ -141,62 +278,266 @@ export default function App() {
 		});
 	}, []);
 
-	// Create job with SoundCloud URL
-	const handleSoundcloudSubmit = async (e: React.FormEvent) => {
-		e.preventDefault();
-		if (!soundcloudUrl.trim()) return;
+	// Start download process
+	const startDownload = useCallback(
+		async (jobId: string) => {
+			setStep('progress');
+			cleanupToastShownRef.current = false;
+			eventSourceRef.current?.close();
+			eventSourceRef.current = null;
+			notifyParent('job', { jobId });
 
-		setIsLoading(true);
-		setJob((prev) => ({ ...prev, error: null }));
+			try {
+				const response = await fetch(`${API_BASE}/api/job/${jobId}/start`, {
+					method: 'POST',
+					headers: { 'Content-Type': 'application/json' },
+					body: JSON.stringify({ headless: !headfulMode }),
+				});
+
+				if (!response.ok) {
+					const data = await response.json();
+					throw new Error(data.error || 'Failed to start download');
+				}
+
+				// Connect to SSE for progress updates
+				const eventSource = new EventSource(
+					`${API_BASE}/api/job/${jobId}/events`,
+				);
+				eventSourceRef.current = eventSource;
+
+				eventSource.onmessage = (event) => {
+					const progress: JobProgress = JSON.parse(event.data);
+					setJob((prev) => ({ ...prev, progress }));
+
+					// Browserless downloads never touch the SoundCloud account, so there
+					// is nothing to clean up afterwards.
+					if (
+						progress.stage === 'downloading' &&
+						(progress.downloadBytes || progress.totalBytes) &&
+						!progress.browserless &&
+						!cleanupToastShownRef.current
+					) {
+						showCleanupSoundcloudToast();
+						cleanupToastShownRef.current = true;
+					}
+
+					if (progress.stage === 'ready') {
+						eventSource.close();
+						eventSourceRef.current = null;
+						notifyParent('ready');
+						fetch(`${API_BASE}/api/job/${jobId}`)
+							.then((res) => res.json())
+							.then((data) => {
+								setJob((prev) => ({
+									...prev,
+									downloadFilename: data.downloadFilename,
+									outputFilename: data.outputFilename,
+									existingMetadata: data.existingMetadata,
+									outputFormat: data.outputFormat,
+								}));
+								setStep(
+									data.outputFormat === 'original' ? 'complete' : 'metadata',
+								);
+							})
+							.catch((err) => {
+								setJob((prev) => ({
+									...prev,
+									error:
+										err instanceof Error ? err.message : 'Failed to load job',
+								}));
+							});
+					} else if (progress.stage === 'error') {
+						eventSource.close();
+						eventSourceRef.current = null;
+						setJob((prev) => ({ ...prev, error: progress.message }));
+					} else if (progress.stage === 'cancelled') {
+						eventSource.close();
+						eventSourceRef.current = null;
+						setJob((prev) => ({
+							...prev,
+							progress,
+							error: null,
+						}));
+						setStep('url');
+						notifyParent('cancelled');
+					}
+				};
+
+				eventSource.onerror = () => {
+					if (eventSource.readyState === EventSource.CONNECTING) return;
+					eventSource.close();
+					if (eventSourceRef.current === eventSource) {
+						eventSourceRef.current = null;
+					}
+					setJob((prev) => ({
+						...prev,
+						error: 'Lost connection to download progress',
+					}));
+				};
+			} catch (err) {
+				setJob((prev) => ({
+					...prev,
+					error: err instanceof Error ? err.message : 'Unknown error',
+				}));
+			}
+		},
+		[headfulMode, showCleanupSoundcloudToast],
+	);
+
+	const cancelDownload = useCallback(async () => {
+		const jobId = job.jobId;
+		if (!jobId) return;
 
 		try {
-			const response = await fetch(`${API_BASE}/api/job`, {
+			const response = await fetch(`${API_BASE}/api/job/${jobId}/cancel`, {
 				method: 'POST',
-				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({
-					soundcloudUrl,
-					skipAutomaticHypedditFetch,
-					outputFormat,
-				}),
 			});
-
-			const data = await response.json();
-
 			if (!response.ok) {
-				throw new Error(data.error || 'Failed to create job');
-			}
-
-			setJob({
-				...job,
-				jobId: data.jobId,
-				track: data.track,
-				hypedditUrl: data.hypedditUrl,
-				defaultMetadata: data.defaultMetadata,
-				existingMetadata: null,
-				outputFormat,
-				error: null,
-			});
-
-			// Pre-fill metadata
-			if (data.defaultMetadata) {
-				setMetadata(data.defaultMetadata);
-			}
-
-			if (skipAutomaticHypedditFetch || data.needsHypedditUrl) {
-				setStep('hypeddit');
-			} else {
-				// Auto-start download
-				startDownload(data.jobId);
+				const data = await response.json().catch(() => ({}));
+				setJob((prev) => ({
+					...prev,
+					error:
+						(data as { error?: string }).error || 'Failed to cancel download',
+				}));
+				return;
 			}
 		} catch (err) {
 			setJob((prev) => ({
 				...prev,
-				error: err instanceof Error ? err.message : 'Unknown error',
+				error:
+					err instanceof Error ? err.message : 'Failed to cancel download',
 			}));
-		} finally {
-			setIsLoading(false);
+			return;
 		}
+
+		eventSourceRef.current?.close();
+		eventSourceRef.current = null;
+
+		setJob((prev) => ({
+			...prev,
+			progress: {
+				stage: 'cancelled',
+				message: 'Download cancelled',
+				percent: prev.progress?.percent ?? 0,
+			},
+			error: null,
+		}));
+		setStep('url');
+		notifyParent('cancelled');
+	}, [job.jobId]);
+
+	// Parent userscript panel X → cancel in-progress job
+	useEffect(() => {
+		const onMessage = (event: MessageEvent) => {
+			if (!ALLOWED_HOST_ORIGINS.has(event.origin)) return;
+			const data = event.data;
+			if (!data || data.source !== 'sc-gate-dl-host') return;
+			if (data.type === 'cancel') {
+				void cancelDownload();
+			}
+		};
+		window.addEventListener('message', onMessage);
+		return () => window.removeEventListener('message', onMessage);
+	}, [cancelDownload]);
+
+	const createJob = useCallback(
+		async (url: string, formatOverride?: OutputFormat) => {
+			const trimmed = url.trim();
+			if (!trimmed) return;
+
+			const format = formatOverride ?? outputFormat;
+
+			setIsLoading(true);
+			setJob((prev) => ({ ...prev, error: null }));
+
+			try {
+				const response = await fetch(`${API_BASE}/api/job`, {
+					method: 'POST',
+					headers: { 'Content-Type': 'application/json' },
+					body: JSON.stringify({
+						soundcloudUrl: trimmed,
+						skipAutomaticHypedditFetch,
+						outputFormat: format,
+					}),
+				});
+
+				const data = await response.json();
+
+				if (!response.ok) {
+					throw new Error(data.error || 'Failed to create job');
+				}
+
+				setJob((prev) => ({
+					...prev,
+					jobId: data.jobId,
+					track: data.track,
+					hypedditUrl: data.hypedditUrl,
+					defaultMetadata: data.defaultMetadata,
+					existingMetadata: null,
+					outputFormat: format,
+					error: null,
+				}));
+
+				if (data.defaultMetadata) {
+					setMetadata(data.defaultMetadata);
+				}
+
+				if (skipAutomaticHypedditFetch || data.needsHypedditUrl) {
+					setStep('hypeddit');
+				} else {
+					startDownload(data.jobId);
+				}
+			} catch (err) {
+				setJob((prev) => ({
+					...prev,
+					error: err instanceof Error ? err.message : 'Unknown error',
+				}));
+			} finally {
+				setIsLoading(false);
+			}
+		},
+		[skipAutomaticHypedditFetch, outputFormat, startDownload],
+	);
+
+	// Create job with SoundCloud URL
+	const handleSoundcloudSubmit = (e: React.FormEvent) => {
+		e.preventDefault();
+		void createJob(soundcloudUrl);
 	};
+
+	// Userscript / deep-link: ?url=&outputFormat= pre-fills and starts a job
+	useEffect(() => {
+		if (autoStartedFromQueryRef.current) return;
+		const params = new URLSearchParams(window.location.search);
+		let queryUrl = params.get('url') || params.get('soundcloudUrl');
+		if (!queryUrl) return;
+		autoStartedFromQueryRef.current = true;
+
+		// New SC listen layout may pass /n/artist/track — normalize to /artist/track
+		try {
+			const parsed = new URL(queryUrl);
+			const parts = parsed.pathname.split('/').filter(Boolean);
+			if (parts[0] === 'n' && parts.length >= 3) {
+				parsed.pathname = `/${parts[1]}/${parts[2]}`;
+				parsed.search = '';
+				parsed.hash = '';
+				queryUrl = parsed.toString();
+			}
+		} catch {
+			// keep queryUrl as-is
+		}
+
+		const formatParam = params.get('outputFormat');
+		const format: OutputFormat | undefined =
+			formatParam === 'original' || formatParam === 'mp3-320'
+				? formatParam
+				: undefined;
+		if (format) {
+			setOutputFormat(format);
+		}
+		setSoundcloudUrl(queryUrl);
+		void createJob(queryUrl, format);
+	}, [createJob]);
 
 	// Set Hypeddit URL and start download
 	const handleHypedditSubmit = async (e: React.FormEvent) => {
@@ -268,87 +609,6 @@ export default function App() {
 		}
 	};
 
-	// Start download process
-	const startDownload = useCallback(
-		async (jobId: string) => {
-			setStep('progress');
-			cleanupToastShownRef.current = false;
-
-			try {
-				const response = await fetch(`${API_BASE}/api/job/${jobId}/start`, {
-					method: 'POST',
-					headers: { 'Content-Type': 'application/json' },
-					body: JSON.stringify({ headless: !headfulMode }),
-				});
-
-				if (!response.ok) {
-					const data = await response.json();
-					throw new Error(data.error || 'Failed to start download');
-				}
-
-				// Connect to SSE for progress updates
-				const eventSource = new EventSource(
-					`${API_BASE}/api/job/${jobId}/events`,
-				);
-
-				eventSource.onmessage = (event) => {
-					const progress: JobProgress = JSON.parse(event.data);
-					setJob((prev) => ({ ...prev, progress }));
-
-					// Browserless downloads never touch the SoundCloud account, so there
-					// is nothing to clean up afterwards.
-					if (
-						progress.stage === 'downloading' &&
-						(progress.downloadBytes || progress.totalBytes) &&
-						!progress.browserless &&
-						!cleanupToastShownRef.current
-					) {
-						showCleanupSoundcloudToast();
-						cleanupToastShownRef.current = true;
-					}
-
-					if (progress.stage === 'ready') {
-						eventSource.close();
-						fetch(`${API_BASE}/api/job/${jobId}`)
-							.then((res) => res.json())
-							.then((data) => {
-								setJob((prev) => ({
-									...prev,
-									downloadFilename: data.downloadFilename,
-									outputFilename: data.outputFilename,
-									existingMetadata: data.existingMetadata,
-									outputFormat: data.outputFormat,
-								}));
-								setStep(
-									data.outputFormat === 'original' ? 'complete' : 'metadata',
-								);
-							})
-							.catch((err) => {
-								setJob((prev) => ({
-									...prev,
-									error:
-										err instanceof Error ? err.message : 'Failed to load job',
-								}));
-							});
-					} else if (progress.stage === 'error') {
-						eventSource.close();
-						setJob((prev) => ({ ...prev, error: progress.message }));
-					}
-				};
-
-				eventSource.onerror = () => {
-					eventSource.close();
-				};
-			} catch (err) {
-				setJob((prev) => ({
-					...prev,
-					error: err instanceof Error ? err.message : 'Unknown error',
-				}));
-			}
-		},
-		[headfulMode, showCleanupSoundcloudToast],
-	);
-
 	// Process metadata and finalize
 	const processMetadata = async (preserveMetadata = false) => {
 		if (!job.jobId) return;
@@ -362,7 +622,14 @@ export default function App() {
 				response = await fetch(`${API_BASE}/api/job/${job.jobId}/metadata`, {
 					method: 'POST',
 					headers: { 'Content-Type': 'application/json' },
-					body: JSON.stringify({ preserveMetadata: true }),
+					body: JSON.stringify({
+						preserveMetadata: true,
+						nameAsArtistTitle,
+						title: metadata.title,
+						artist: metadata.artist,
+						album: metadata.album,
+						genre: metadata.genre,
+					}),
 				});
 			} else if (customArtwork) {
 				const formData = new FormData();
@@ -370,6 +637,7 @@ export default function App() {
 				formData.append('artist', metadata.artist || '');
 				formData.append('album', metadata.album || '');
 				formData.append('genre', metadata.genre || '');
+				formData.append('nameAsArtistTitle', String(nameAsArtistTitle));
 				formData.append('artwork', customArtwork);
 
 				response = await fetch(`${API_BASE}/api/job/${job.jobId}/metadata`, {
@@ -380,7 +648,7 @@ export default function App() {
 				response = await fetch(`${API_BASE}/api/job/${job.jobId}/metadata`, {
 					method: 'POST',
 					headers: { 'Content-Type': 'application/json' },
-					body: JSON.stringify(metadata),
+					body: JSON.stringify({ ...metadata, nameAsArtistTitle }),
 				});
 			}
 
@@ -407,8 +675,36 @@ export default function App() {
 		void processMetadata();
 	};
 
+	const defaultMetadataValues: Metadata = job.defaultMetadata ?? {
+		title: '',
+		artist: '',
+		album: '',
+		genre: '',
+	};
+	const canCleanupMetadata = metadataNeedsCleanup(metadata);
+	const outputFilenamePreview = previewProcessedFilename(job.downloadFilename, {
+		nameAsArtistTitle,
+		artist: metadata.artist,
+		title: metadata.title,
+	});
+	const existingTagRows = (
+		[
+			{ key: 'title', label: 'Title' },
+			{ key: 'artist', label: 'Artist' },
+			{ key: 'album', label: 'Album' },
+			{ key: 'genre', label: 'Genre' },
+		] as const
+	)
+		.map(({ key, label }) => ({
+			key,
+			label,
+			existingValue: job.existingMetadata?.[key]?.trim() || '',
+		}))
+		.filter(({ existingValue }) => existingValue);
+
 	// Reset and start over
 	const handleReset = () => {
+		notifyParent('new-download');
 		setSoundcloudUrl('');
 		setHypedditUrlInput('');
 		setSkipAutomaticHypedditFetch(false);
@@ -427,6 +723,7 @@ export default function App() {
 		});
 		setMetadata({ title: '', artist: '', album: '', genre: '' });
 		setCustomArtwork(null);
+		setNameAsArtistTitle(false);
 		setStep('url');
 	};
 
@@ -729,6 +1026,13 @@ export default function App() {
 									</span>
 								)}
 						</div>
+						<button
+							type="button"
+							className="btn-secondary btn-cancel-download"
+							onClick={() => void cancelDownload()}
+						>
+							Cancel download
+						</button>
 					</div>
 				)}
 
@@ -738,44 +1042,63 @@ export default function App() {
 						onSubmit={handleMetadataSubmit}
 						className="form metadata-form animate-slide-up"
 					>
-						{job.existingMetadata && (
+						{existingTagRows.length > 0 ? (
 							<div className="existing-metadata">
 								<div>
 									<h3>Existing MP3 Metadata</h3>
 									<p>
-										Copy these values into the form, or keep the file unchanged.
+										Copy a tag into the form, or keep the file’s tags unchanged
+										for the whole download.
 									</p>
 								</div>
-								<dl>
-									<dt>Title</dt>
-									<dd>{job.existingMetadata.title || 'Not set'}</dd>
-									<dt>Artist</dt>
-									<dd>{job.existingMetadata.artist || 'Not set'}</dd>
-									<dt>Album</dt>
-									<dd>{job.existingMetadata.album || 'Not set'}</dd>
-									<dt>Genre</dt>
-									<dd>{job.existingMetadata.genre || 'Not set'}</dd>
-								</dl>
-								<div className="existing-metadata-actions">
-									<button
-										type="button"
-										className="btn-secondary"
-										disabled={isLoading}
-										onClick={() => setMetadata(job.existingMetadata || {})}
-									>
-										Use Existing Values
-									</button>
-									<button
-										type="button"
-										className="btn-secondary"
-										disabled={isLoading}
-										onClick={() => void processMetadata(true)}
-									>
-										Leave Metadata As-Is
-									</button>
-								</div>
+								<ul className="existing-metadata-list">
+									{existingTagRows.map(({ key, label, existingValue }) => (
+										<li key={key} className="existing-metadata-row">
+											<span className="existing-metadata-label">{label}</span>
+											<span className="existing-metadata-value">
+												{existingValue}
+											</span>
+											<button
+												type="button"
+												className="btn-copy-existing"
+												disabled={isLoading}
+												title={`Copy ${label.toLowerCase()} into the form`}
+												aria-label={`Copy ${label.toLowerCase()} into the form`}
+												onClick={() =>
+													setMetadata((prev) => ({
+														...prev,
+														[key]: existingValue,
+													}))
+												}
+											>
+												<svg
+													viewBox="0 0 24 24"
+													width="14"
+													height="14"
+													aria-hidden="true"
+													fill="none"
+													stroke="currentColor"
+													strokeWidth="2"
+													strokeLinecap="round"
+													strokeLinejoin="round"
+												>
+													<rect x="9" y="9" width="13" height="13" rx="2" />
+													<path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+												</svg>
+											</button>
+										</li>
+									))}
+								</ul>
+								<button
+									type="button"
+									className="btn-secondary"
+									disabled={isLoading}
+									onClick={() => void processMetadata(true)}
+								>
+									Use this metadata as-is
+								</button>
 							</div>
-						)}
+						) : null}
 						<div className="metadata-grid">
 							<div className="artwork-section">
 								<div className="artwork-preview">
@@ -797,75 +1120,133 @@ export default function App() {
 									<input
 										type="file"
 										accept="image/*"
+										disabled={isLoading}
 										onChange={(e) =>
 											setCustomArtwork(e.target.files?.[0] || null)
 										}
 									/>
 									<span>Change Artwork</span>
 								</label>
+								{canCleanupMetadata ? (
+									<button
+										type="button"
+										className="btn-secondary btn-auto-cleanup"
+										disabled={isLoading}
+										title="Remove promo tags like [FREE DL] and duplicate Artist - / - Artist from the title"
+										onClick={() =>
+											setMetadata((prev) => cleanMetadataFields(prev))
+										}
+									>
+										Auto-Cleanup
+									</button>
+								) : null}
 							</div>
 
 							<div className="fields-section">
-								<div className="form-group">
-									<label htmlFor="meta-title">Title</label>
-									<input
-										id="meta-title"
-										type="text"
-										value={metadata.title || ''}
-										onChange={(e) =>
-											setMetadata((prev) => ({
-												...prev,
-												title: e.target.value,
-											}))
-										}
-										placeholder="Track title"
-									/>
-								</div>
-								<div className="form-group">
-									<label htmlFor="meta-artist">Artist</label>
-									<input
-										id="meta-artist"
-										type="text"
-										value={metadata.artist || ''}
-										onChange={(e) =>
-											setMetadata((prev) => ({
-												...prev,
-												artist: e.target.value,
-											}))
-										}
-										placeholder="Artist name"
-									/>
-								</div>
-								<div className="form-group">
-									<label htmlFor="meta-album">Album</label>
-									<input
-										id="meta-album"
-										type="text"
-										value={metadata.album || ''}
-										onChange={(e) =>
-											setMetadata((prev) => ({
-												...prev,
-												album: e.target.value,
-											}))
-										}
-										placeholder="Album name"
-									/>
-								</div>
-								<div className="form-group">
-									<label htmlFor="meta-genre">Genre</label>
-									<input
-										id="meta-genre"
-										type="text"
-										value={metadata.genre || ''}
-										onChange={(e) =>
-											setMetadata((prev) => ({
-												...prev,
-												genre: e.target.value,
-											}))
-										}
-										placeholder="Genre"
-									/>
-								</div>
+								{(
+									[
+										{
+											key: 'title',
+											label: 'Title',
+											placeholder: 'Track title',
+										},
+										{
+											key: 'artist',
+											label: 'Artist',
+											placeholder: 'Artist name',
+										},
+										{
+											key: 'album',
+											label: 'Album',
+											placeholder: 'Album name',
+										},
+										{
+											key: 'genre',
+											label: 'Genre',
+											placeholder: 'Genre',
+										},
+									] as const
+								).map(({ key, label, placeholder }) => {
+									const currentValue = metadata[key] || '';
+									const defaultValue = defaultMetadataValues[key] || '';
+									const isDirty = currentValue !== defaultValue;
+									return (
+										<div className="form-group" key={key}>
+											<label htmlFor={`meta-${key}`}>{label}</label>
+											<div
+												className={`field-with-reset${isDirty ? ' has-reset' : ''}`}
+											>
+												<input
+													id={`meta-${key}`}
+													type="text"
+													value={currentValue}
+													disabled={isLoading}
+													onChange={(e) =>
+														setMetadata((prev) => ({
+															...prev,
+															[key]: e.target.value,
+														}))
+													}
+													placeholder={placeholder}
+												/>
+												{isDirty ? (
+													<button
+														type="button"
+														className="btn-reset-field"
+														disabled={isLoading}
+														title={`Reset ${label.toLowerCase()} to default`}
+														aria-label={`Reset ${label.toLowerCase()} to default`}
+														onClick={() =>
+															setMetadata((prev) => ({
+																...prev,
+																[key]: defaultValue,
+															}))
+														}
+													>
+														<svg
+															viewBox="0 0 24 24"
+															width="14"
+															height="14"
+															aria-hidden="true"
+															fill="none"
+															stroke="currentColor"
+															strokeWidth="2"
+															strokeLinecap="round"
+															strokeLinejoin="round"
+														>
+															<path d="M3 12a9 9 0 1 0 3-6.7" />
+															<path d="M3 4v5h5" />
+														</svg>
+													</button>
+												) : null}
+											</div>
+										</div>
+									);
+								})}
+							</div>
+						</div>
+
+						<div className="filename-preview">
+							<label className="checkbox-row" htmlFor="name-as-artist-title">
+								<input
+									id="name-as-artist-title"
+									type="checkbox"
+									checked={nameAsArtistTitle}
+									disabled={isLoading}
+									onChange={(e) => setNameAsArtistTitle(e.target.checked)}
+								/>
+								<span>Name file as ARTIST - TITLE</span>
+							</label>
+							<div className="form-group">
+								<label htmlFor="output-filename-preview">Filename</label>
+								<input
+									id="output-filename-preview"
+									type="text"
+									className="filename-preview-input mono"
+									value={outputFilenamePreview}
+									disabled
+									readOnly
+								/>
 							</div>
 						</div>
 
@@ -895,6 +1276,7 @@ export default function App() {
 								href={`${API_BASE}/api/job/${job.jobId}/file`}
 								download
 								className="btn-primary"
+								onClick={() => notifyParent('file-download')}
 							>
 								{job.outputFormat === 'original'
 									? 'Download Original'
