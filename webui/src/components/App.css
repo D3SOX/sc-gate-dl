@@ -561,7 +561,7 @@
 
 .existing-metadata dd {
 	color: var(--text-primary);
-	word-break: break-word;
+	overflow-wrap: anywhere;
 	user-select: text;
 }
 
