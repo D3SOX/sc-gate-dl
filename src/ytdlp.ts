@@ -86,6 +86,7 @@ export class YtDlpDownloader {
 	private progressCallback: ProgressCallback | null = null;
 	private sourceLabel: string;
 	private activeProcess: ReturnType<typeof execa> | null = null;
+	private closed = false;
 
 	constructor(sourceLabel = 'yt-dlp') {
 		this.sourceLabel = sourceLabel;
@@ -96,6 +97,7 @@ export class YtDlpDownloader {
 	}
 
 	async close(): Promise<void> {
+		this.closed = true;
 		const running = this.activeProcess;
 		this.activeProcess = null;
 		running?.kill('SIGTERM');
@@ -106,16 +108,19 @@ export class YtDlpDownloader {
 		args: string[],
 		timeout: number,
 	): Promise<string> {
-		const process = execa(ytDlpBin, args, {
+		if (this.closed) {
+			throw new Error('yt-dlp downloader is closed');
+		}
+		const subprocess = execa(ytDlpBin, args, {
 			timeout,
 			killSignal: 'SIGTERM',
 		});
-		this.activeProcess = process;
+		this.activeProcess = subprocess;
 		try {
-			const { stdout } = await process;
+			const { stdout } = await subprocess;
 			return stdout;
 		} finally {
-			if (this.activeProcess === process) {
+			if (this.activeProcess === subprocess) {
 				this.activeProcess = null;
 			}
 		}

@@ -432,7 +432,7 @@
 
 	function isPanelBusy() {
 		const panel = document.getElementById(PANEL_ID);
-		return Boolean(panel && !panel.hidden);
+		return Boolean(panel && !panel.hidden && panel.dataset.jobId);
 	}
 
 	function hideTooltip() {

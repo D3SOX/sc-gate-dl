@@ -1,3 +1,4 @@
+import { rename, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { ProgressCallback } from './hypeddit';
 import type { HypedditConfig } from './types';
@@ -265,35 +266,51 @@ export class HypedditHttpDownloader {
 			'download';
 
 		const totalBytes = Number(response.headers.get('content-length')) || 0;
-		const writer = Bun.file(join('./downloads', filename)).writer();
+		const destPath = join('./downloads', filename);
+		const tempPath = `${destPath}.${crypto.randomUUID()}.part`;
+		const writer = Bun.file(tempPath).writer();
 		let receivedBytes = 0;
 		let lastEmit = 0;
+		let succeeded = false;
 
-		if (response.body) {
-			const reader = response.body.getReader();
-			while (true) {
-				const { done, value: chunk } = await reader.read();
-				if (done) {
-					break;
-				}
-				writer.write(chunk);
-				receivedBytes += chunk.byteLength;
+		try {
+			if (response.body) {
+				const reader = response.body.getReader();
+				while (true) {
+					const { done, value: chunk } = await reader.read();
+					if (done) {
+						break;
+					}
+					writer.write(chunk);
+					receivedBytes += chunk.byteLength;
 
-				// throttle progress events to avoid flooding the SSE stream
-				const now = Date.now();
-				if (now - lastEmit > 250 && totalBytes > 0) {
-					lastEmit = now;
-					const downloadPercent = receivedBytes / totalBytes;
-					this.progressCallback?.(
-						'downloading',
-						`Downloading... ${(receivedBytes / 1024 / 1024).toFixed(1)} / ${(totalBytes / 1024 / 1024).toFixed(1)} MB`,
-						76 + downloadPercent * 8,
-						{ downloadBytes: receivedBytes, totalBytes, browserless: true },
-					);
+					// throttle progress events to avoid flooding the SSE stream
+					const now = Date.now();
+					if (now - lastEmit > 250 && totalBytes > 0) {
+						lastEmit = now;
+						const downloadPercent = receivedBytes / totalBytes;
+						this.progressCallback?.(
+							'downloading',
+							`Downloading... ${(receivedBytes / 1024 / 1024).toFixed(1)} / ${(totalBytes / 1024 / 1024).toFixed(1)} MB`,
+							76 + downloadPercent * 8,
+							{ downloadBytes: receivedBytes, totalBytes, browserless: true },
+						);
+					}
 				}
 			}
+			await writer.end();
+			await rename(tempPath, destPath);
+			succeeded = true;
+		} finally {
+			if (!succeeded) {
+				try {
+					await writer.end();
+				} catch {
+					// Writer may already be closed or never flushed.
+				}
+				await rm(tempPath, { force: true }).catch(() => {});
+			}
 		}
-		await writer.end();
 
 		console.log(`Browserless: downloaded ${filename}`);
 		this.progressCallback?.('downloading', 'Download complete', 85);
