@@ -19,6 +19,7 @@ class JobStore {
 			id,
 			soundcloudUrl,
 			hypedditUrl: null,
+			headless: process.env.BROWSER_HEADLESS !== 'false',
 			track: null,
 			defaultMetadata: null,
 			progress: {

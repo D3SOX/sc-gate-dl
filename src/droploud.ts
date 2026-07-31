@@ -637,8 +637,8 @@ export class DroploudDownloader {
 	}
 
 	/**
-	 * Manual Droploud repost step: open track URL, ensure a repost via API, then
-	 * fall back to clicking Repost in the SoundCloud UI if engagement PUTs fail.
+	 * Manual Droploud repost step: open the track in a full-size tab (Droploud's
+	 * window.open popup often never mounts `.soundActions`), then click Repost.
 	 */
 	private async performSoundcloudManualActions(
 		popup: Page,
@@ -648,137 +648,946 @@ export class DroploudDownloader {
 
 		const deadline = Date.now() + 25_000;
 		while (Date.now() < deadline) {
-			if (popup.isClosed()) return;
-			const url = popup.url();
+			const live = await this.resolveSoundcloudPage(popup);
+			if (!live) {
+				await timeout(200);
+				continue;
+			}
+			popup = live;
+			const url = live.url();
 			if (
 				url.includes('soundcloud.com') &&
 				url !== 'about:blank' &&
-				!url.includes('/web-auth')
+				!url.includes('/web-auth') &&
+				!url.includes('captcha-delivery.com')
 			) {
 				break;
 			}
 			await timeout(200);
 		}
 
-		const trackUrl = popup.url();
+		let page = popup;
+		let trackUrl = '';
+		try {
+			trackUrl = page.url();
+		} catch {
+			const live = await this.resolveSoundcloudPage(page);
+			if (live && !live.isClosed()) {
+				page = live;
+				trackUrl = live.url();
+			}
+		}
 		if (!trackUrl.includes('soundcloud.com')) {
 			throw new Error('SoundCloud popup never navigated to a track URL.');
 		}
 
+		// Stay on Droploud's SoundCloud window — do not open a second tab or strip
+		// login cookies (that logged the session out).
 		try {
-			const soundcloud = new SoundcloudClient();
-			await soundcloud.repostTrack(trackUrl);
-			console.log('Droploud: SoundCloud repost ensured via API.');
-		} catch (error) {
-			const message = error instanceof Error ? error.message : String(error);
-			console.warn(
-				`Droploud: API repost failed (${message.slice(0, 180)}); trying browser UI…`,
-			);
-			await this.repostTrackInBrowser(popup);
-			console.log('Droploud: SoundCloud repost ensured via browser UI.');
-		}
-		await timeout(500);
-	}
-
-	/** Click SoundCloud's track-page Repost control (trusted UI path). */
-	private async repostTrackInBrowser(page: Page) {
-		try {
-			await page.bringToFront();
+			await page.setViewport({ width: 1440, height: 900 });
 		} catch {
-			// ignore
+			// popup may not allow resize; continue anyway
 		}
+		await page.bringToFront().catch(() => {});
+		console.log(`Droploud: SoundCloud Repost on existing tab (${trackUrl})…`);
 
-		const findRepostHandle = async () => {
-			const handles = await page.$$('button');
-			for (const handle of handles) {
-				const meta = await handle.evaluate((btn) => {
-					const text = (btn.textContent || '').trim();
-					const aria = btn.getAttribute('aria-label') || '';
-					const title = btn.title || '';
-					const pressed = btn.getAttribute('aria-pressed');
-					const label = `${aria} ${text} ${title}`;
-					return {
-						text,
-						aria,
-						pressed,
-						isRepost:
-							/^repost$/i.test(text) ||
-							/^repost$/i.test(aria) ||
-							(/^repost/i.test(label) && !/unrepost|reposted/i.test(label)),
-						already:
-							/unrepost|reposted/i.test(label) ||
-							(pressed === 'true' && /repost/i.test(label)),
-					};
-				});
-				if (meta.already) {
-					await handle.dispose();
-					return 'already' as const;
+		const soundcloud = new SoundcloudClient();
+		const alreadyReposted = async (target: Page) => {
+			if (!target.isClosed()) {
+				if (await this.pageLooksReposted(target).catch(() => false)) {
+					return 'ui' as const;
 				}
-				if (meta.isRepost) return handle;
-				await handle.dispose();
+			}
+			try {
+				if (await soundcloud.isTrackReposted(trackUrl)) return 'api' as const;
+			} catch {
+				// logged inside isTrackReposted
 			}
 			return null;
 		};
 
-		const started = Date.now();
-		let target: Awaited<ReturnType<typeof findRepostHandle>> = null;
-		while (Date.now() - started < 20_000) {
-			target = await findRepostHandle();
-			if (target) break;
-			await timeout(300);
-		}
-
-		if (target === 'already') {
-			console.log('Droploud: track already looks reposted in the browser.');
+		const already = await alreadyReposted(page);
+		if (already) {
+			console.log(`Droploud: SoundCloud track already reposted (${already}).`);
 			return;
 		}
-		if (!target) {
-			throw new Error(
-				'SoundCloud Repost button not found. Is the account logged in (Initialize Logins)?',
+
+		const loggedIn = await page
+			.evaluate(
+				() =>
+					!!document.querySelector('a[href="/you/library"]') &&
+					!(document.body?.innerText || '').includes(
+						'Sign in or create an account',
+					),
+			)
+			.catch(() => false);
+		if (!loggedIn) {
+			console.warn(
+				'Droploud: SoundCloud tab does not look logged in — GraphQL/UI repost will likely fail. Re-run Initialize Logins.',
 			);
 		}
 
-		await target.click({ delay: 40 });
-		await target.dispose();
-
-		// Some layouts open a menu; confirm "Repost to profile" / plain Repost.
-		await timeout(600);
-		const menuHandles = await page.$$('button, [role="menuitem"], a');
-		for (const handle of menuHandles) {
-			const text = await handle.evaluate((el) => (el.textContent || '').trim());
-			if (
-				/^repost( to (your )?profile)?$/i.test(text) ||
-				/^repost track$/i.test(text)
-			) {
-				await handle.click({ delay: 40 });
-				await handle.dispose();
-				break;
-			}
-			await handle.dispose();
+		// Prefer webi GraphQL (same mutation the real Repost button fires).
+		if (await this.repostViaPageFetch(page, trackUrl)) {
+			console.log('Droploud: SoundCloud repost ensured via GraphQL.');
+			await timeout(500);
+			return;
 		}
 
-		await page
-			.waitForFunction(
-				() => {
-					const buttons = Array.from(document.querySelectorAll('button'));
-					return buttons.some((btn) => {
-						const label =
-							`${btn.getAttribute('aria-label') || ''} ${btn.textContent || ''} ${btn.title || ''}`.toLowerCase();
-						return (
-							/unrepost|reposted/i.test(label) ||
-							(btn.getAttribute('aria-pressed') === 'true' &&
-								/repost/i.test(label))
-						);
-					});
-				},
-				{ timeout: 15_000 },
-			)
-			.catch(() => {
-				// Soft-ok: Droploud verify-repost API is the real check.
-				console.warn(
-					'Droploud: browser Repost click did not show a clear Reposted state; continuing for Droploud verify.',
+		const uiError = await this.repostTrackInBrowser(page)
+			.then(() => null)
+			.catch((error: unknown) => error);
+
+		if (!uiError) {
+			const confirmed = await alreadyReposted(page);
+			if (confirmed) {
+				console.log(
+					`Droploud: SoundCloud repost ensured via browser UI (${confirmed}).`,
 				);
+				await timeout(500);
+				return;
+			}
+			console.warn(
+				'Droploud: browser Repost click finished but repost not confirmed; trying API…',
+			);
+		}
+
+		const uiMessage =
+			uiError instanceof Error
+				? uiError.message
+				: uiError
+					? String(uiError)
+					: 'repost not confirmed after UI click';
+		const closed = /track tab closed|Target closed|Session closed/i.test(
+			uiMessage,
+		);
+		console.warn(
+			`Droploud: browser Repost UI failed (${uiMessage.slice(0, 160)}); trying API GraphQL…`,
+		);
+
+		try {
+			await soundcloud.repostTrack(trackUrl);
+			console.log('Droploud: SoundCloud repost ensured via API GraphQL.');
+			return;
+		} catch (apiError) {
+			console.warn(
+				`Droploud: API GraphQL/PUT repost failed (${apiError instanceof Error ? apiError.message.slice(0, 160) : String(apiError)})`,
+			);
+		}
+
+		const after = await alreadyReposted(page);
+		if (after) {
+			console.log(
+				`Droploud: SoundCloud repost confirmed after attempts (${after}).`,
+			);
+			return;
+		}
+
+		if (!this.config.headless && !closed && !page.isClosed()) {
+			console.log(
+				'Droploud: waiting up to 2 minutes for manual Repost / captcha solve…',
+			);
+			const manualDeadline = Date.now() + 120_000;
+			let nextApiCheck = 0;
+			while (Date.now() < manualDeadline) {
+				if (page.isClosed()) break;
+				await this.handlePossibleCaptcha(page).catch(() => false);
+				if (await this.repostViaPageFetch(page, trackUrl)) {
+					console.log(
+						'Droploud: SoundCloud repost ensured via GraphQL during manual wait.',
+					);
+					return;
+				}
+				if (
+					!page.isClosed() &&
+					(await this.pageLooksReposted(page).catch(() => false))
+				) {
+					console.log(
+						'Droploud: SoundCloud repost confirmed after manual UI (ui).',
+					);
+					return;
+				}
+				if (Date.now() >= nextApiCheck) {
+					nextApiCheck = Date.now() + 15_000;
+					try {
+						if (await soundcloud.isTrackReposted(trackUrl)) {
+							console.log(
+								'Droploud: SoundCloud repost confirmed after manual UI (api).',
+							);
+							return;
+						}
+					} catch {
+						// logged inside isTrackReposted
+					}
+				}
+				await this.tryClickRepostButton(page).catch(() => null);
+				await timeout(1_000);
+			}
+		}
+
+		if (closed) {
+			console.warn(
+				'Droploud: SoundCloud tab closed during repost; continuing so Droploud can verify.',
+			);
+			return;
+		}
+
+		const finalCheck = await alreadyReposted(page);
+		if (finalCheck) {
+			console.log(`Droploud: SoundCloud repost confirmed (${finalCheck}).`);
+			return;
+		}
+
+		throw new Error(
+			`SoundCloud repost failed (${uiMessage.slice(0, 180)}). Stay logged in on SoundCloud (Initialize Logins), complete Repost + captcha if shown, then retry.`,
+		);
+	}
+
+	/** Prefer a live SoundCloud (or DataDome) tab — popups can swap/navigate. */
+	private async resolveSoundcloudPage(
+		preferred?: Page,
+	): Promise<Page | undefined> {
+		if (preferred && !preferred.isClosed()) {
+			try {
+				const url = preferred.url();
+				if (
+					url.includes('soundcloud.com') ||
+					url.includes('captcha-delivery.com')
+				) {
+					return preferred;
+				}
+			} catch {
+				// fall through
+			}
+		}
+		return this.findSoundcloudTrackPage();
+	}
+
+	private async findSoundcloudTrackPage(): Promise<Page | undefined> {
+		const pages = (await this.browser.pages(true)).filter((p) => !p.isClosed());
+		const scored: { page: Page; score: number }[] = [];
+		for (const candidate of pages) {
+			try {
+				const url = candidate.url();
+				if (url === 'about:blank') continue;
+				if (url.includes('captcha-delivery.com')) {
+					scored.push({ page: candidate, score: 1 });
+				} else if (
+					url.includes('soundcloud.com') &&
+					!url.includes('/web-auth')
+				) {
+					const trackLike = /soundcloud\.com\/[^/]+\/[^/?#]+/.test(url);
+					scored.push({ page: candidate, score: trackLike ? 3 : 2 });
+				}
+			} catch {
+				// ignore
+			}
+		}
+		scored.sort((a, b) => b.score - a.score);
+		return scored[0]?.page;
+	}
+
+	private async pageLooksReposted(page: Page): Promise<boolean> {
+		if (page.isClosed()) return false;
+		return page.evaluate(() => {
+			const classic = document.querySelector('button.sc-button-repost');
+			if (
+				classic?.classList.contains('sc-button-selected') ||
+				classic?.getAttribute('aria-pressed') === 'true'
+			) {
+				return true;
+			}
+			return Array.from(
+				document.querySelectorAll('button, [role="button"]'),
+			).some((btn) => {
+				const label =
+					`${btn.getAttribute('aria-label') || ''} ${btn.textContent || ''} ${btn.getAttribute('title') || ''} ${(btn as HTMLElement).title || ''}`.toLowerCase();
+				if (
+					/unrepost|unpost|delete\s*repost|reposted|edit\s*repost/i.test(label)
+				)
+					return true;
+				if (
+					/repost/i.test(label) &&
+					(btn.classList.contains('sc-button-selected') ||
+						btn.getAttribute('aria-pressed') === 'true')
+				) {
+					return true;
+				}
+				return false;
 			});
+		});
+	}
+
+	/** Click the track Repost control if present. Returns status. */
+	private async tryClickRepostButton(
+		page: Page,
+	): Promise<'clicked' | 'already' | 'missing'> {
+		if (page.isClosed()) return 'missing';
+
+		const classicHandle = await page.$(Selectors.SOUNDCLOUD_REPOST_BUTTON);
+		if (classicHandle) {
+			const already = await classicHandle.evaluate(
+				(btn) =>
+					btn.classList.contains('sc-button-selected') ||
+					btn.getAttribute('aria-pressed') === 'true',
+			);
+			if (already) {
+				await classicHandle.dispose();
+				return 'already';
+			}
+			await classicHandle.evaluate((el) =>
+				el.scrollIntoView({ block: 'center', inline: 'center' }),
+			);
+			await classicHandle.click({ delay: 40 });
+			await classicHandle.dispose();
+
+			await timeout(600);
+			// Caption overlay after a successful webi/classic repost
+			const overlayClosed = await page.evaluate(() => {
+				const close = document.querySelector(
+					'.repostOverlay__closeButton',
+				) as HTMLElement | null;
+				if (close) {
+					close.click();
+					return true;
+				}
+				return false;
+			});
+			if (overlayClosed) return 'clicked';
+
+			await page.evaluate(() => {
+				for (const el of Array.from(
+					document.querySelectorAll(
+						'button, [role="menuitem"], a, .sc-button-dropdown, .repostDialog button',
+					),
+				)) {
+					const text = (el.textContent || '').replace(/\s+/g, ' ').trim();
+					if (
+						/^repost( to (your )?profile)?$/i.test(text) ||
+						/^repost track$/i.test(text) ||
+						/^reposten$/i.test(text) ||
+						/repost(en)?\s+(auf|to)\s+(dein|your|mein)/i.test(text) ||
+						/^republier$/i.test(text)
+					) {
+						(el as HTMLElement).click();
+						return;
+					}
+				}
+			});
+			return 'clicked';
+		}
+
+		return page.evaluate(() => {
+			const isAlready = (btn: Element) => {
+				const label =
+					`${btn.getAttribute('aria-label') || ''} ${btn.textContent || ''} ${btn.getAttribute('title') || ''} ${(btn as HTMLElement).title || ''}`.toLowerCase();
+				return (
+					btn.classList.contains('sc-button-selected') ||
+					/unrepost|unpost|reposted|delete\s*repost|edit\s*repost|rückgängig|entfernen/i.test(
+						label,
+					) ||
+					btn.getAttribute('aria-pressed') === 'true'
+				);
+			};
+
+			const mui = document.querySelector<HTMLElement>(
+				'button[aria-label="Repost"], button[title="Repost"], [title="Repost"] > button',
+			);
+			if (mui) {
+				if (isAlready(mui)) return 'already' as const;
+				mui.scrollIntoView({ block: 'center', inline: 'center' });
+				mui.click();
+				return 'clicked' as const;
+			}
+
+			for (const btn of Array.from(
+				document.querySelectorAll('button, [role="button"]'),
+			)) {
+				const text = (btn.textContent || '').replace(/\s+/g, ' ').trim();
+				const aria = (btn.getAttribute('aria-label') || '').trim();
+				const title = (
+					btn.getAttribute('title') ||
+					(btn as HTMLElement).title ||
+					''
+				).trim();
+				const parentTitle = (
+					btn.parentElement?.getAttribute('title') || ''
+				).trim();
+				const cls =
+					typeof (btn as HTMLElement).className === 'string'
+						? (btn as HTMLElement).className
+						: '';
+				const parts = [aria, text, title, parentTitle].filter(Boolean);
+				const label = parts.join(' ');
+				const looksRepost =
+					cls.includes('sc-button-repost') ||
+					parts.some((p) =>
+						/^(repost|reposted|reposts|reposting|republier|reposten|erneut\s*posten)$/i.test(
+							p,
+						),
+					) ||
+					/^(repost|reposten|republier)\b/i.test(label);
+				if (!looksRepost) continue;
+				if (isAlready(btn)) return 'already' as const;
+				btn.scrollIntoView({ block: 'center', inline: 'center' });
+				(btn as HTMLElement).click();
+				return 'clicked' as const;
+			}
+			return 'missing' as const;
+		});
+	}
+
+	/**
+	 * Drag DataDome slider when visible. After solve, reload — SPA often stays
+	 * without `.soundActions` until a fresh navigation.
+	 * @returns true if a captcha was present and cleared
+	 */
+	private async handlePossibleCaptcha(page: Page): Promise<boolean> {
+		const visible = await page
+			.evaluate((sel) => {
+				const el = document.querySelector(sel) as HTMLElement | null;
+				if (!el) return false;
+				if (el.getClientRects().length === 0) return false;
+				const style = window.getComputedStyle(el);
+				if (style.display === 'none' || style.visibility === 'hidden') {
+					return false;
+				}
+				const rect = el.getBoundingClientRect();
+				return rect.width > 1 && rect.height > 1;
+			}, Selectors.SOUNDCLOUD_CAPTCHA_CONTAINER)
+			.catch(() => false);
+		if (!visible) return false;
+
+		const captchaIframe = await page.$(Selectors.SOUNDCLOUD_CAPTCHA_IFRAME);
+		if (!captchaIframe) {
+			console.log(
+				'Droploud: SoundCloud captcha visible; waiting for solve (no iframe yet)…',
+			);
+			await page
+				.waitForSelector(Selectors.SOUNDCLOUD_CAPTCHA_CONTAINER, {
+					hidden: true,
+					timeout: 120_000,
+				})
+				.catch(() => {});
+		} else {
+			console.log('Droploud: attempting DataDome slider solve…');
+			await timeout(1_500);
+			const frame = await captchaIframe.contentFrame();
+			if (!frame) {
+				await captchaIframe.dispose();
+				return false;
+			}
+
+			try {
+				await frame.waitForSelector(Selectors.SOUNDCLOUD_CAPTCHA_SLIDER, {
+					timeout: 20_000,
+				});
+			} catch {
+				await captchaIframe.dispose();
+				console.log(
+					'Droploud: captcha slider not ready; waiting for manual solve…',
+				);
+				await page
+					.waitForSelector(Selectors.SOUNDCLOUD_CAPTCHA_CONTAINER, {
+						hidden: true,
+						timeout: 120_000,
+					})
+					.catch(() => {});
+				await this.reloadTrackAfterCaptcha(page);
+				return true;
+			}
+
+			const slider = await frame.$(Selectors.SOUNDCLOUD_CAPTCHA_SLIDER);
+			const sliderTrack = await frame.$(Selectors.SOUNDCLOUD_CAPTCHA_TRACK);
+			const iframeBox = await captchaIframe.boundingBox();
+			const sliderBox = slider ? await slider.boundingBox() : null;
+			const trackBox = sliderTrack ? await sliderTrack.boundingBox() : null;
+			await slider?.dispose();
+			await sliderTrack?.dispose();
+			await captchaIframe.dispose();
+
+			if (iframeBox && sliderBox && trackBox) {
+				const startX = iframeBox.x + sliderBox.x + sliderBox.width / 2;
+				const startY = iframeBox.y + sliderBox.y + sliderBox.height / 2;
+				const endX =
+					iframeBox.x + trackBox.x + trackBox.width - sliderBox.width / 2;
+
+				await page.mouse.move(startX, startY);
+				await page.mouse.down();
+				await page.mouse.move(endX, startY, { steps: 25 });
+				await timeout(400);
+				await page.mouse.up();
+				console.log('Droploud: DataDome slider drag performed');
+			}
+
+			await page
+				.waitForSelector(Selectors.SOUNDCLOUD_CAPTCHA_CONTAINER, {
+					hidden: true,
+					timeout: 60_000,
+				})
+				.catch(() => {
+					console.warn(
+						'Droploud: captcha still visible after slider drag — solve it manually if needed.',
+					);
+				});
+		}
+
+		await this.reloadTrackAfterCaptcha(page);
+		return true;
+	}
+
+	private async reloadTrackAfterCaptcha(page: Page) {
+		if (page.isClosed()) return;
+		const url = page.url();
+		if (!url.includes('soundcloud.com')) return;
+		console.log(
+			'Droploud: captcha cleared — reloading track so engagement UI can mount…',
+		);
+		await page
+			.goto(url, { waitUntil: 'domcontentloaded', timeout: 45_000 })
+			.catch(() => page.reload({ waitUntil: 'domcontentloaded' }));
+		await timeout(1_500);
+		await this.dismissSoundcloudConsent(page);
+		await page
+			.waitForSelector(
+				`${Selectors.SOUNDCLOUD_REPOST_BUTTON}, ${Selectors.SOUNDCLOUD_SOUND_ACTIONS}`,
+				{ timeout: 25_000 },
+			)
+			.catch(() => {});
+	}
+
+	private isTransientPageError(error: unknown): boolean {
+		const message = error instanceof Error ? error.message : String(error);
+		return /detached Frame|Execution context was destroyed|Target closed|Session closed|frame was detached|Navigating frame was detached/i.test(
+			message,
+		);
+	}
+
+	/** Dismiss OneTrust preference center / banner so the engagement bar can mount. */
+	private async dismissSoundcloudConsent(page: Page) {
+		const clicked = await page
+			.evaluate(
+				(sels) => {
+					const pc = document.querySelector(sels.pc);
+					const banner = document.querySelector(sels.banner);
+					const pcOpen =
+						!!pc &&
+						!pc.classList.contains('ot-hide') &&
+						window.getComputedStyle(pc).display !== 'none';
+					const bannerOpen =
+						!!banner &&
+						!banner.classList.contains('ot-hide') &&
+						window.getComputedStyle(banner).display !== 'none' &&
+						(banner as HTMLElement).getBoundingClientRect().height > 1;
+
+					// Preference center open: force-click Allow All even if OT reports 0×0.
+					if (pcOpen) {
+						const allow = document.querySelector(
+							'#accept-recommended-btn-handler',
+						) as HTMLElement | null;
+						if (allow) {
+							allow.click();
+							return 'ot-pc-allow-all';
+						}
+						const confirm = document.querySelector(
+							'button.save-preference-btn-handler',
+						) as HTMLElement | null;
+						if (confirm) {
+							confirm.click();
+							return 'ot-pc-confirm';
+						}
+						const close = document.querySelector(
+							'#close-pc-btn-handler',
+						) as HTMLElement | null;
+						if (close) {
+							close.click();
+							return 'ot-pc-close';
+						}
+					}
+
+					if (bannerOpen) {
+						const accept = document.querySelector(
+							'#onetrust-accept-btn-handler',
+						) as HTMLElement | null;
+						if (accept) {
+							accept.click();
+							return 'ot-banner-accept';
+						}
+					}
+
+					const isVisible = (el: Element | null): el is HTMLElement => {
+						if (!el) return false;
+						const html = el as HTMLElement;
+						if (html.getClientRects().length === 0) return false;
+						const style = window.getComputedStyle(html);
+						if (style.display === 'none' || style.visibility === 'hidden') {
+							return false;
+						}
+						if (Number.parseFloat(style.opacity || '1') === 0) return false;
+						const rect = html.getBoundingClientRect();
+						return rect.width > 1 && rect.height > 1;
+					};
+
+					for (const sel of sels.accept.split(',')) {
+						const el = document.querySelector(sel.trim());
+						if (isVisible(el)) {
+							el.click();
+							return 'known';
+						}
+					}
+
+					const accept = Array.from(document.querySelectorAll('button')).find(
+						(btn) =>
+							isVisible(btn) &&
+							/^(allow\s*all|accept\s*(all|cookies)?|alle\s*akzeptieren|zustimmen|alles\s*erlauben|confirm\s*my\s*choices|reject\s*all)$/i.test(
+								(btn.textContent || '').replace(/\s+/g, ' ').trim(),
+							),
+					);
+					if (accept) {
+						accept.click();
+						return 'text';
+					}
+					return null;
+				},
+				{
+					accept: Selectors.SOUNDCLOUD_COOKIE_ACCEPT,
+					pc: Selectors.SOUNDCLOUD_COOKIE_PC,
+					banner: Selectors.SOUNDCLOUD_COOKIE_BANNER,
+				},
+			)
+			.catch(() => null);
+
+		if (clicked) {
+			console.log(`Droploud: dismissed SoundCloud consent (${clicked})`);
+			await page
+				.waitForFunction(
+					(pcSel) => {
+						const pc = document.querySelector(pcSel);
+						if (!pc) return true;
+						return (
+							pc.classList.contains('ot-hide') ||
+							window.getComputedStyle(pc).display === 'none'
+						);
+					},
+					{ timeout: 10_000 },
+					Selectors.SOUNDCLOUD_COOKIE_PC,
+				)
+				.catch(() => {});
+			await timeout(800);
+		}
+	}
+
+	/** Ensure the track engagement bar exists; reload once if consent blocked it. */
+	private async ensureSoundcloudEngagement(page: Page): Promise<Page> {
+		try {
+			await page.setViewport({ width: 1400, height: 900 });
+		} catch {
+			// ignore
+		}
+
+		await this.dismissSoundcloudConsent(page);
+
+		const ready = await page
+			.waitForSelector(
+				`${Selectors.SOUNDCLOUD_REPOST_BUTTON}, ${Selectors.SOUNDCLOUD_REPOST_BUTTON_MUI}, ${Selectors.SOUNDCLOUD_SOUND_ACTIONS}`,
+				{ timeout: 12_000 },
+			)
+			.then(() => true)
+			.catch(() => false);
+		if (ready) return page;
+
+		const url = page.url();
+		if (url.includes('soundcloud.com')) {
+			console.log('Droploud: engagement bar missing — reloading track page…');
+			await page.goto(url, {
+				waitUntil: 'domcontentloaded',
+				timeout: 30_000,
+			});
+			await timeout(1_000);
+			await this.dismissSoundcloudConsent(page);
+			await page
+				.waitForSelector(
+					`${Selectors.SOUNDCLOUD_REPOST_BUTTON}, ${Selectors.SOUNDCLOUD_REPOST_BUTTON_MUI}, ${Selectors.SOUNDCLOUD_SOUND_ACTIONS}`,
+					{ timeout: 20_000 },
+				)
+				.catch(() => {});
+		}
+		return page;
+	}
+
+	/**
+	 * In-page webi GraphQL repost (same mutation the MUI Repost button fires).
+	 */
+	private async repostViaPageFetch(
+		page: Page,
+		trackUrl?: string,
+	): Promise<boolean> {
+		let trackIdHint = '';
+		let oauthHint = process.env.SC_OAUTH_TOKEN?.trim() || '';
+		try {
+			const cookies = await loadCookies('soundcloud-cookies.json');
+			oauthHint =
+				cookies.find((c) => c.name === 'oauth_token')?.value || oauthHint;
+		} catch {
+			// optional
+		}
+		if (trackUrl) {
+			try {
+				const track = await new SoundcloudClient().getTrack(trackUrl);
+				trackIdHint = String(track.id);
+			} catch {
+				// page HTML may still have the urn
+			}
+		}
+
+		const result = await page
+			.evaluate(
+				async (hints) => {
+					const urnMatch =
+						document.body.innerHTML.match(/soundcloud:tracks:(\d+)/) ||
+						document.documentElement.innerHTML.match(/soundcloud:tracks:(\d+)/);
+					const trackId = urnMatch?.[1] || hints.trackIdHint;
+					if (!trackId) return { ok: false, reason: 'no-track-id' };
+
+					const clientId = (
+						document.cookie.match(/(?:^|;\s*)client_id=([^;]+)/)?.[1] ||
+						document.body.innerHTML.match(
+							/client_id["'=:\s]+([a-zA-Z0-9]{16,})/,
+						)?.[1] ||
+						'yNSW5UvBmb1A5j7qPUtIMuB9Itx3jsOC'
+					).trim();
+
+					const oauth =
+						document.cookie.match(/(?:^|;\s*)oauth_token=([^;]+)/)?.[1] ||
+						hints.oauthHint ||
+						'';
+					const datadome =
+						document.cookie.match(/(?:^|;\s*)datadome=([^;]+)/)?.[1] || '';
+
+					if (!oauth) {
+						return { ok: false, reason: 'no-oauth' };
+					}
+
+					const headers: Record<string, string> = {
+						accept: '*/*',
+						'content-type': 'application/json',
+						origin: 'https://soundcloud.com',
+						referer: location.href,
+						'apollographql-client-name': 'webi',
+						'apollographql-client-version': '0.1.0',
+						'app-locale': 'en',
+						Authorization: `OAuth ${oauth}`,
+					};
+					if (datadome) headers['x-datadome-clientid'] = datadome;
+
+					const res = await fetch(
+						`https://graph.soundcloud.com/graphql?client_id=${encodeURIComponent(clientId)}`,
+						{
+							method: 'POST',
+							credentials: 'include',
+							headers,
+							body: JSON.stringify({
+								query: `
+    mutation RepostTrack($trackUrn: ID!) {
+  repostTrack(trackRepost: {urn: $trackUrn}) {
+    __typename
+    ... on Repost {
+      caption
+    }
+    ... on TrackRepostFailedError {
+      errorMessage
+    }
+    ... on TrackRepostCaptionFailedError {
+      errorMessage
+    }
+  }
+}
+    `,
+								variables: { trackUrn: `soundcloud:tracks:${trackId}` },
+							}),
+						},
+					);
+					const body = await res.text();
+					if (!res.ok) {
+						return {
+							ok: false,
+							status: res.status,
+							reason: `http-${res.status}`,
+							body: body.slice(0, 160),
+						};
+					}
+					try {
+						const json = JSON.parse(body) as {
+							data?: {
+								repostTrack?: {
+									__typename?: string;
+									errorMessage?: string;
+								};
+							};
+						};
+						const typename = json.data?.repostTrack?.__typename || '';
+						if (typename === 'Repost' || typename === 'TrackRepost') {
+							return { ok: true, status: 200, reason: typename };
+						}
+						if (/FailedError$/i.test(typename)) {
+							return {
+								ok: false,
+								status: 200,
+								reason: json.data?.repostTrack?.errorMessage || typename,
+							};
+						}
+						if (typename) return { ok: true, status: 200, reason: typename };
+					} catch {
+						// ignore
+					}
+					return {
+						ok: false,
+						status: res.status,
+						reason: 'graphql-unexpected',
+						body: body.slice(0, 160),
+					};
+				},
+				{ trackIdHint, oauthHint },
+			)
+			.catch((error: unknown) => ({
+				ok: false as const,
+				reason:
+					error instanceof Error
+						? error.message.slice(0, 80)
+						: 'evaluate-failed',
+			}));
+
+		if (result?.ok) {
+			console.log(
+				`Droploud: SoundCloud repost via GraphQL (${'reason' in result ? result.reason : 'ok'})`,
+			);
+			return true;
+		}
+		console.warn(
+			`Droploud: in-page GraphQL repost failed (${'reason' in (result ?? {}) ? (result as { reason?: string }).reason : 'unknown'})`,
+		);
+		return false;
+	}
+
+	/**
+	 * Click Repost on the dedicated full-size track tab.
+	 */
+	private async repostTrackInBrowser(page: Page) {
+		const started = Date.now();
+		let ensured = false;
+		let fetchTried = false;
+
+		while (Date.now() - started < 60_000) {
+			if (page.isClosed()) {
+				throw new Error('SoundCloud track tab closed during repost.');
+			}
+
+			try {
+				await page.bringToFront().catch(() => {});
+
+				if (!ensured) {
+					page = await this.ensureSoundcloudEngagement(page);
+					ensured = true;
+				} else {
+					const solved = await this.handlePossibleCaptcha(page);
+					if (solved) {
+						// reloadTrackAfterCaptcha already ran — try click immediately
+						const afterCaptcha = await this.tryClickRepostButton(page);
+						if (afterCaptcha === 'already') {
+							console.log(
+								'Droploud: SoundCloud already reposted after captcha',
+							);
+							return;
+						}
+						if (afterCaptcha === 'clicked') {
+							await timeout(800);
+							await this.handlePossibleCaptcha(page);
+							if (await this.pageLooksReposted(page)) return;
+							if (await this.repostViaPageFetch(page, page.url())) return;
+						}
+					}
+					await this.dismissSoundcloudConsent(page);
+				}
+
+				if (await this.pageLooksReposted(page)) {
+					console.log('Droploud: track already looks reposted in the browser.');
+					return;
+				}
+
+				const action = await this.tryClickRepostButton(page);
+				if (action === 'already') {
+					console.log('Droploud: track already looks reposted in the browser.');
+					return;
+				}
+				if (action === 'clicked') {
+					console.log('Droploud: clicked SoundCloud Repost button');
+					await timeout(800);
+					const solved = await this.handlePossibleCaptcha(page);
+					if (solved) {
+						const again = await this.tryClickRepostButton(page);
+						if (again === 'already') {
+							console.log(
+								'Droploud: SoundCloud already reposted after post-click captcha',
+							);
+							return;
+						}
+					}
+					if (await this.pageLooksReposted(page)) return;
+					if (await this.repostViaPageFetch(page, page.url())) return;
+					console.warn(
+						'Droploud: browser Repost click did not confirm repost; retrying…',
+					);
+					await timeout(500);
+					continue;
+				}
+
+				// Still missing — try in-page GraphQL once, then keep waiting for UI.
+				if (!fetchTried) {
+					fetchTried = true;
+					if (await this.repostViaPageFetch(page, page.url())) return;
+				}
+			} catch (error) {
+				if (!this.isTransientPageError(error)) throw error;
+				console.warn(
+					`Droploud: transient page error during repost (${error instanceof Error ? error.message : String(error)}); retrying…`,
+				);
+				ensured = false;
+				await timeout(500);
+				continue;
+			}
+
+			await timeout(500);
+		}
+
+		const debug = await page
+			.evaluate(() => ({
+				url: location.href,
+				w: window.innerWidth,
+				h: window.innerHeight,
+				hasClassic: !!document.querySelector('button.sc-button-repost'),
+				hasSelected: !!document.querySelector(
+					'button.sc-button-repost.sc-button-selected',
+				),
+				hasSoundActions: !!document.querySelector(
+					'.soundActions, .listenEngagement__actions',
+				),
+				hasListen: !!document.querySelector(
+					'.l-listen-wrapper, .fullHero, .listenEngagement',
+				),
+				otPcOpen: (() => {
+					const pc = document.querySelector('#onetrust-pc-sdk');
+					return (
+						!!pc &&
+						!pc.classList.contains('ot-hide') &&
+						window.getComputedStyle(pc).display !== 'none'
+					);
+				})(),
+			}))
+			.catch(() => null);
+		console.warn('Droploud: Repost button debug', debug);
+		throw new Error(
+			'SoundCloud Repost button not found. Is the account logged in (Initialize Logins)?',
+		);
 	}
 
 	private async handleSoundcloudConnect(page: Page) {
@@ -950,12 +1759,24 @@ export class DroploudDownloader {
 			}
 
 			if (url.includes('soundcloud.com')) {
+				// Wait for the OAuth document to settle — early navigations can briefly
+				// show marketing/login copy before the session cookies apply.
 				const needsLogin = await oauthPage
-					.evaluate(() =>
-						/sign in or create an account/i.test(
-							document.body?.innerText || '',
-						),
-					)
+					.evaluate(async () => {
+						const loginRe = /sign in or create an account/i;
+						if (!loginRe.test(document.body?.innerText || '')) return false;
+						await new Promise((r) => setTimeout(r, 1_500));
+						const text = document.body?.innerText || '';
+						const hasApproval =
+							!!document.querySelector('button#submit_approval') ||
+							!!document.querySelector('button[name="accept"]') ||
+							Array.from(document.querySelectorAll('button')).some((btn) =>
+								/^(allow|accept|connect)$/i.test(
+									(btn.textContent || '').trim(),
+								),
+							);
+						return loginRe.test(text) && !hasApproval;
+					})
 					.catch(() => false);
 				if (needsLogin) {
 					throw new Error(
