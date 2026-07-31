@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { toast, Toaster } from 'sonner';
+import { useCallback, useRef, useState } from 'react';
+import { Toaster, toast } from 'sonner';
 import './App.css';
 
 type Step = 'url' | 'hypeddit' | 'progress' | 'metadata' | 'complete';
+type OutputFormat = 'original' | 'mp3-320';
 
 interface Metadata {
 	title?: string;
@@ -33,6 +34,8 @@ interface JobState {
 	track: TrackInfo | null;
 	hypedditUrl: string | null;
 	defaultMetadata: Metadata | null;
+	existingMetadata: Metadata | null;
+	outputFormat: OutputFormat;
 	progress: JobProgress | null;
 	downloadFilename: string | null;
 	outputFilename: string | null;
@@ -45,13 +48,17 @@ export default function App() {
 	const [step, setStep] = useState<Step>('url');
 	const [soundcloudUrl, setSoundcloudUrl] = useState('');
 	const [hypedditUrlInput, setHypedditUrlInput] = useState('');
-	const [skipAutomaticHypedditFetch, setSkipAutomaticHypedditFetch] = useState(false);
+	const [skipAutomaticHypedditFetch, setSkipAutomaticHypedditFetch] =
+		useState(false);
 	const [headfulMode, setHeadfulMode] = useState(false);
+	const [outputFormat, setOutputFormat] = useState<OutputFormat>('mp3-320');
 	const [job, setJob] = useState<JobState>({
 		jobId: null,
 		track: null,
 		hypedditUrl: null,
 		defaultMetadata: null,
+		existingMetadata: null,
+		outputFormat: 'mp3-320',
 		progress: null,
 		downloadFilename: null,
 		outputFilename: null,
@@ -85,26 +92,35 @@ export default function App() {
 						const data = await response.json();
 
 						if (!response.ok) {
-							throw new Error(data.error || 'Failed to cleanup SoundCloud account');
+							throw new Error(
+								data.error || 'Failed to cleanup SoundCloud account',
+							);
 						}
 
 						const parts: string[] = [];
 						if (data.unfollowed > 0) {
-							parts.push(`${data.unfollowed} unfollow${data.unfollowed === 1 ? '' : 's'}`);
+							parts.push(
+								`${data.unfollowed} unfollow${data.unfollowed === 1 ? '' : 's'}`,
+							);
 						}
 						if (data.unliked > 0) {
-							parts.push(`${data.unliked} unlike${data.unliked === 1 ? '' : 's'}`);
+							parts.push(
+								`${data.unliked} unlike${data.unliked === 1 ? '' : 's'}`,
+							);
 						}
 						if (data.deletedComments > 0) {
-							parts.push(`${data.deletedComments} comment${data.deletedComments === 1 ? '' : 's'} deleted`);
+							parts.push(
+								`${data.deletedComments} comment${data.deletedComments === 1 ? '' : 's'} deleted`,
+							);
 						}
 						if (data.deletedReposts > 0) {
-							parts.push(`${data.deletedReposts} repost${data.deletedReposts === 1 ? '' : 's'} deleted`);
+							parts.push(
+								`${data.deletedReposts} repost${data.deletedReposts === 1 ? '' : 's'} deleted`,
+							);
 						}
 
-						const description = parts.length > 0
-							? parts.join(', ')
-							: 'No items to clean up.';
+						const description =
+							parts.length > 0 ? parts.join(', ') : 'No items to clean up.';
 
 						toast.success('SoundCloud account cleanup completed.', {
 							id: toastId,
@@ -140,6 +156,7 @@ export default function App() {
 				body: JSON.stringify({
 					soundcloudUrl,
 					skipAutomaticHypedditFetch,
+					outputFormat,
 				}),
 			});
 
@@ -155,6 +172,8 @@ export default function App() {
 				track: data.track,
 				hypedditUrl: data.hypedditUrl,
 				defaultMetadata: data.defaultMetadata,
+				existingMetadata: null,
+				outputFormat,
 				error: null,
 			});
 
@@ -250,65 +269,88 @@ export default function App() {
 	};
 
 	// Start download process
-	const startDownload = useCallback(async (jobId: string) => {
-		setStep('progress');
-		cleanupToastShownRef.current = false;
+	const startDownload = useCallback(
+		async (jobId: string) => {
+			setStep('progress');
+			cleanupToastShownRef.current = false;
 
-		try {
-			const response = await fetch(`${API_BASE}/api/job/${jobId}/start`, {
-				method: 'POST',
-				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ headless: !headfulMode }),
-			});
+			try {
+				const response = await fetch(`${API_BASE}/api/job/${jobId}/start`, {
+					method: 'POST',
+					headers: { 'Content-Type': 'application/json' },
+					body: JSON.stringify({ headless: !headfulMode }),
+				});
 
-			if (!response.ok) {
-				const data = await response.json();
-				throw new Error(data.error || 'Failed to start download');
+				if (!response.ok) {
+					const data = await response.json();
+					throw new Error(data.error || 'Failed to start download');
+				}
+
+				// Connect to SSE for progress updates
+				const eventSource = new EventSource(
+					`${API_BASE}/api/job/${jobId}/events`,
+				);
+
+				eventSource.onmessage = (event) => {
+					const progress: JobProgress = JSON.parse(event.data);
+					setJob((prev) => ({ ...prev, progress }));
+
+					// Browserless downloads never touch the SoundCloud account, so there
+					// is nothing to clean up afterwards.
+					if (
+						progress.stage === 'downloading' &&
+						(progress.downloadBytes || progress.totalBytes) &&
+						!progress.browserless &&
+						!cleanupToastShownRef.current
+					) {
+						showCleanupSoundcloudToast();
+						cleanupToastShownRef.current = true;
+					}
+
+					if (progress.stage === 'ready') {
+						eventSource.close();
+						fetch(`${API_BASE}/api/job/${jobId}`)
+							.then((res) => res.json())
+							.then((data) => {
+								setJob((prev) => ({
+									...prev,
+									downloadFilename: data.downloadFilename,
+									outputFilename: data.outputFilename,
+									existingMetadata: data.existingMetadata,
+									outputFormat: data.outputFormat,
+								}));
+								setStep(
+									data.outputFormat === 'original' ? 'complete' : 'metadata',
+								);
+							})
+							.catch((err) => {
+								setJob((prev) => ({
+									...prev,
+									error:
+										err instanceof Error ? err.message : 'Failed to load job',
+								}));
+							});
+					} else if (progress.stage === 'error') {
+						eventSource.close();
+						setJob((prev) => ({ ...prev, error: progress.message }));
+					}
+				};
+
+				eventSource.onerror = () => {
+					eventSource.close();
+				};
+			} catch (err) {
+				setJob((prev) => ({
+					...prev,
+					error: err instanceof Error ? err.message : 'Unknown error',
+				}));
 			}
-
-			// Connect to SSE for progress updates
-			const eventSource = new EventSource(
-				`${API_BASE}/api/job/${jobId}/events`,
-			);
-
-			eventSource.onmessage = (event) => {
-				const progress: JobProgress = JSON.parse(event.data);
-				setJob((prev) => ({ ...prev, progress }));
-
-				// Browserless downloads never touch the SoundCloud account, so there
-				// is nothing to clean up afterwards.
-				if (progress.stage === 'downloading' &&
-					(progress.downloadBytes || progress.totalBytes) &&
-					!progress.browserless &&
-					!cleanupToastShownRef.current
-				) {
-					showCleanupSoundcloudToast();
-					cleanupToastShownRef.current = true;
-				}
-
-				if (progress.stage === 'ready') {
-					eventSource.close();
-					setStep('metadata');
-				} else if (progress.stage === 'error') {
-					eventSource.close();
-					setJob((prev) => ({ ...prev, error: progress.message }));
-				}
-			};
-
-			eventSource.onerror = () => {
-				eventSource.close();
-			};
-		} catch (err) {
-			setJob((prev) => ({
-				...prev,
-				error: err instanceof Error ? err.message : 'Unknown error',
-			}));
-		}
-	}, [headfulMode, showCleanupSoundcloudToast]);
+		},
+		[headfulMode, showCleanupSoundcloudToast],
+	);
 
 	// Process metadata and finalize
-	const handleMetadataSubmit = async (e: React.FormEvent) => {
-		e.preventDefault();
+	const processMetadata = async (preserveMetadata = false) => {
 		if (!job.jobId) return;
 
 		setIsLoading(true);
@@ -316,7 +358,13 @@ export default function App() {
 		try {
 			let response: Response;
 
-			if (customArtwork) {
+			if (preserveMetadata) {
+				response = await fetch(`${API_BASE}/api/job/${job.jobId}/metadata`, {
+					method: 'POST',
+					headers: { 'Content-Type': 'application/json' },
+					body: JSON.stringify({ preserveMetadata: true }),
+				});
+			} else if (customArtwork) {
 				const formData = new FormData();
 				formData.append('title', metadata.title || '');
 				formData.append('artist', metadata.artist || '');
@@ -354,6 +402,11 @@ export default function App() {
 		}
 	};
 
+	const handleMetadataSubmit = (e: React.FormEvent) => {
+		e.preventDefault();
+		void processMetadata();
+	};
+
 	// Reset and start over
 	const handleReset = () => {
 		setSoundcloudUrl('');
@@ -365,6 +418,8 @@ export default function App() {
 			track: null,
 			hypedditUrl: null,
 			defaultMetadata: null,
+			existingMetadata: null,
+			outputFormat,
 			progress: null,
 			downloadFilename: null,
 			outputFilename: null,
@@ -377,7 +432,8 @@ export default function App() {
 
 	const handleInitializeLogins = async () => {
 		toast('Initialize logins?', {
-			description: 'This will open a browser window (non-headless) to initialize SoundCloud and Spotify logins. You may need to solve a captcha if the built-in solver fails.',
+			description:
+				'This will open a browser window (non-headless) to initialize SoundCloud and Spotify logins. You may need to solve a captcha if the built-in solver fails.',
 			closeButton: false,
 			duration: Infinity,
 			action: {
@@ -413,20 +469,6 @@ export default function App() {
 		});
 	};
 
-	// Refresh job state (for metadata step)
-	useEffect(() => {
-		if (step === 'metadata' && job.jobId) {
-			fetch(`${API_BASE}/api/job/${job.jobId}`)
-				.then((res) => res.json())
-				.then((data) => {
-					setJob((prev) => ({
-						...prev,
-						downloadFilename: data.downloadFilename,
-					}));
-				});
-		}
-	}, [step, job.jobId]);
-
 	return (
 		<div className="app">
 			<Toaster richColors closeButton theme="dark" />
@@ -435,32 +477,45 @@ export default function App() {
 					<span className="logo-icon">&#9654;</span>
 					<h1>sc-gate-dl</h1>
 				</div>
-				<p className="tagline">Download & tag SoundCloud tracks from Hypeddit, Droploud, GateRush, DownloadGater, or Bandcamp</p>
+				<p className="tagline">
+					Download & tag SoundCloud tracks from Hypeddit, Droploud, GateRush,
+					DownloadGater, or Bandcamp
+				</p>
 			</header>
 
 			{/* Step indicator */}
 			<div className="steps">
-				<div className={`step ${step === 'url' ? 'active' : ''} ${['hypeddit', 'progress', 'metadata', 'complete'].includes(step) ? 'completed' : ''}`}>
+				<div
+					className={`step ${step === 'url' ? 'active' : ''} ${['hypeddit', 'progress', 'metadata', 'complete'].includes(step) ? 'completed' : ''}`}
+				>
 					<span className="step-number">1</span>
 					<span className="step-label">SoundCloud</span>
 				</div>
 				<div className="step-connector" />
-				<div className={`step ${step === 'hypeddit' ? 'active' : ''} ${['progress', 'metadata', 'complete'].includes(step) ? 'completed' : ''}`}>
+				<div
+					className={`step ${step === 'hypeddit' ? 'active' : ''} ${['progress', 'metadata', 'complete'].includes(step) ? 'completed' : ''}`}
+				>
 					<span className="step-number">2</span>
 					<span className="step-label">Gate</span>
 				</div>
 				<div className="step-connector" />
-				<div className={`step ${step === 'progress' ? 'active' : ''} ${['metadata', 'complete'].includes(step) ? 'completed' : ''}`}>
+				<div
+					className={`step ${step === 'progress' ? 'active' : ''} ${['metadata', 'complete'].includes(step) ? 'completed' : ''}`}
+				>
 					<span className="step-number">3</span>
 					<span className="step-label">Download</span>
 				</div>
 				<div className="step-connector" />
-				<div className={`step ${step === 'metadata' ? 'active' : ''} ${step === 'complete' ? 'completed' : ''}`}>
+				<div
+					className={`step ${step === 'metadata' ? 'active' : ''} ${step === 'complete' ? 'completed' : ''}`}
+				>
 					<span className="step-number">4</span>
 					<span className="step-label">Metadata</span>
 				</div>
 				<div className="step-connector" />
-				<div className={`step ${step === 'complete' ? 'active completed' : ''}`}>
+				<div
+					className={`step ${step === 'complete' ? 'active completed' : ''}`}
+				>
 					<span className="step-number">5</span>
 					<span className="step-label">Done</span>
 				</div>
@@ -471,7 +526,10 @@ export default function App() {
 				<div className="error-banner">
 					<span className="error-icon">!</span>
 					<span>{job.error}</span>
-					<button type="button" onClick={() => setJob((prev) => ({ ...prev, error: null }))}>
+					<button
+						type="button"
+						onClick={() => setJob((prev) => ({ ...prev, error: null }))}
+					>
 						Dismiss
 					</button>
 				</div>
@@ -481,7 +539,10 @@ export default function App() {
 			{job.track && step !== 'url' && (
 				<div className="track-preview">
 					<img
-						src={(job.track.artworkUrl || job.track.user.avatarUrl).replace('large', 't300x300')}
+						src={(job.track.artworkUrl || job.track.user.avatarUrl).replace(
+							'large',
+							't300x300',
+						)}
 						alt="Track artwork"
 						className="track-artwork"
 					/>
@@ -496,7 +557,10 @@ export default function App() {
 			<div className="content">
 				{/* Step 1: SoundCloud URL */}
 				{step === 'url' && (
-					<form onSubmit={handleSoundcloudSubmit} className="form animate-slide-up">
+					<form
+						onSubmit={handleSoundcloudSubmit}
+						className="form animate-slide-up"
+					>
 						<div className="form-group">
 							<label htmlFor="soundcloud-url">SoundCloud Track URL</label>
 							<input
@@ -511,26 +575,46 @@ export default function App() {
 								disabled={isLoading}
 							/>
 						</div>
-						<label className="checkbox-row" htmlFor="skip-hypeddit-fetch">
-							<input
-								id="skip-hypeddit-fetch"
-								type="checkbox"
-								checked={skipAutomaticHypedditFetch}
-								onChange={(e) => setSkipAutomaticHypedditFetch(e.target.checked)}
-								disabled={isLoading}
-							/>
-							<span>Skip automatic gate link fetching</span>
-						</label>
-						<label className="checkbox-row" htmlFor="headful-mode">
-							<input
-								id="headful-mode"
-								type="checkbox"
-								checked={headfulMode}
-								onChange={(e) => setHeadfulMode(e.target.checked)}
-								disabled={isLoading}
-							/>
-							<span>Show browser window (headful)</span>
-						</label>
+						<div className="url-settings">
+							<div className="form-group url-settings-format">
+								<label htmlFor="output-format">Output Format</label>
+								<select
+									id="output-format"
+									value={outputFormat}
+									onChange={(e) =>
+										setOutputFormat(e.target.value as OutputFormat)
+									}
+									disabled={isLoading}
+								>
+									<option value="mp3-320">MP3 320 kbps</option>
+									<option value="original">Original file</option>
+								</select>
+							</div>
+							<div className="checkbox-settings">
+								<label className="checkbox-row" htmlFor="skip-hypeddit-fetch">
+									<input
+										id="skip-hypeddit-fetch"
+										type="checkbox"
+										checked={skipAutomaticHypedditFetch}
+										onChange={(e) =>
+											setSkipAutomaticHypedditFetch(e.target.checked)
+										}
+										disabled={isLoading}
+									/>
+									<span>Skip automatic gate link fetching</span>
+								</label>
+								<label className="checkbox-row" htmlFor="headful-mode">
+									<input
+										id="headful-mode"
+										type="checkbox"
+										checked={headfulMode}
+										onChange={(e) => setHeadfulMode(e.target.checked)}
+										disabled={isLoading}
+									/>
+									<span>Show browser window (headful)</span>
+								</label>
+							</div>
+						</div>
 						<button type="submit" className="btn-primary" disabled={isLoading}>
 							{isLoading ? (
 								<>
@@ -580,7 +664,11 @@ export default function App() {
 								/>
 								<span>Show browser window (headful)</span>
 							</label>
-							<button type="submit" className="btn-primary" disabled={isLoading}>
+							<button
+								type="submit"
+								className="btn-primary"
+								disabled={isLoading}
+							>
 								{isLoading ? (
 									<>
 										<span className="spinner" />
@@ -616,9 +704,13 @@ export default function App() {
 				{step === 'progress' && (
 					<div className="progress-container animate-slide-up">
 						<div className="progress-stage">
-							<span className="stage-label">{job.progress?.message || 'Initializing...'}</span>
+							<span className="stage-label">
+								{job.progress?.message || 'Initializing...'}
+							</span>
 							{job.progress?.currentGate && (
-								<span className="gate-badge">{job.progress.currentGate.toUpperCase()}</span>
+								<span className="gate-badge">
+									{job.progress.currentGate.toUpperCase()}
+								</span>
 							)}
 						</div>
 						<div className="progress-bar">
@@ -642,7 +734,48 @@ export default function App() {
 
 				{/* Step 4: Metadata */}
 				{step === 'metadata' && (
-					<form onSubmit={handleMetadataSubmit} className="form metadata-form animate-slide-up">
+					<form
+						onSubmit={handleMetadataSubmit}
+						className="form metadata-form animate-slide-up"
+					>
+						{job.existingMetadata && (
+							<div className="existing-metadata">
+								<div>
+									<h3>Existing MP3 Metadata</h3>
+									<p>
+										Copy these values into the form, or keep the file unchanged.
+									</p>
+								</div>
+								<dl>
+									<dt>Title</dt>
+									<dd>{job.existingMetadata.title || 'Not set'}</dd>
+									<dt>Artist</dt>
+									<dd>{job.existingMetadata.artist || 'Not set'}</dd>
+									<dt>Album</dt>
+									<dd>{job.existingMetadata.album || 'Not set'}</dd>
+									<dt>Genre</dt>
+									<dd>{job.existingMetadata.genre || 'Not set'}</dd>
+								</dl>
+								<div className="existing-metadata-actions">
+									<button
+										type="button"
+										className="btn-secondary"
+										disabled={isLoading}
+										onClick={() => setMetadata(job.existingMetadata || {})}
+									>
+										Use Existing Values
+									</button>
+									<button
+										type="button"
+										className="btn-secondary"
+										disabled={isLoading}
+										onClick={() => void processMetadata(true)}
+									>
+										Leave Metadata As-Is
+									</button>
+								</div>
+							</div>
+						)}
 						<div className="metadata-grid">
 							<div className="artwork-section">
 								<div className="artwork-preview">
@@ -664,7 +797,9 @@ export default function App() {
 									<input
 										type="file"
 										accept="image/*"
-										onChange={(e) => setCustomArtwork(e.target.files?.[0] || null)}
+										onChange={(e) =>
+											setCustomArtwork(e.target.files?.[0] || null)
+										}
 									/>
 									<span>Change Artwork</span>
 								</label>
@@ -678,7 +813,10 @@ export default function App() {
 										type="text"
 										value={metadata.title || ''}
 										onChange={(e) =>
-											setMetadata((prev) => ({ ...prev, title: e.target.value }))
+											setMetadata((prev) => ({
+												...prev,
+												title: e.target.value,
+											}))
 										}
 										placeholder="Track title"
 									/>
@@ -690,7 +828,10 @@ export default function App() {
 										type="text"
 										value={metadata.artist || ''}
 										onChange={(e) =>
-											setMetadata((prev) => ({ ...prev, artist: e.target.value }))
+											setMetadata((prev) => ({
+												...prev,
+												artist: e.target.value,
+											}))
 										}
 										placeholder="Artist name"
 									/>
@@ -702,7 +843,10 @@ export default function App() {
 										type="text"
 										value={metadata.album || ''}
 										onChange={(e) =>
-											setMetadata((prev) => ({ ...prev, album: e.target.value }))
+											setMetadata((prev) => ({
+												...prev,
+												album: e.target.value,
+											}))
 										}
 										placeholder="Album name"
 									/>
@@ -714,7 +858,10 @@ export default function App() {
 										type="text"
 										value={metadata.genre || ''}
 										onChange={(e) =>
-											setMetadata((prev) => ({ ...prev, genre: e.target.value }))
+											setMetadata((prev) => ({
+												...prev,
+												genre: e.target.value,
+											}))
 										}
 										placeholder="Genre"
 									/>
@@ -740,16 +887,24 @@ export default function App() {
 					<div className="complete-container animate-slide-up">
 						<div className="success-icon">&#10003;</div>
 						<h2>Download Ready!</h2>
-						<p className="filename mono">{job.outputFilename || job.downloadFilename}</p>
+						<p className="filename mono">
+							{job.outputFilename || job.downloadFilename}
+						</p>
 						<div className="complete-actions">
 							<a
 								href={`${API_BASE}/api/job/${job.jobId}/file`}
 								download
 								className="btn-primary"
 							>
-								Download MP3
+								{job.outputFormat === 'original'
+									? 'Download Original'
+									: 'Download MP3'}
 							</a>
-							<button type="button" onClick={handleReset} className="btn-secondary">
+							<button
+								type="button"
+								onClick={handleReset}
+								className="btn-secondary"
+							>
 								Start New Download
 							</button>
 						</div>
@@ -777,7 +932,7 @@ export default function App() {
 				<p>
 					Built for personal use &middot;{' '}
 					<a
-						href="https://github.com/D3SOX/hypeddit-soundcloud-downloader"
+						href="https://github.com/D3SOX/sc-gate-dl"
 						target="_blank"
 						rel="noopener noreferrer"
 					>

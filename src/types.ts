@@ -27,6 +27,8 @@ export interface Metadata {
 	genre?: string;
 }
 
+export type OutputFormat = 'original' | 'mp3-320';
+
 // Job system types for Web UI
 export type JobStage =
 	| 'pending'
@@ -58,6 +60,7 @@ export interface Job {
 	hypedditUrl: string | null;
 	/** Whether browser automation runs headless. Defaults to true. */
 	headless: boolean;
+	outputFormat: OutputFormat;
 	track: {
 		title: string;
 		artworkUrl: string | null;
@@ -75,6 +78,7 @@ export interface Job {
 		genre?: string;
 	} | null;
 	defaultMetadata: Metadata | null;
+	existingMetadata: Metadata | null;
 	progress: JobProgress;
 	downloadFilename: string | null;
 	outputFilename: string | null;

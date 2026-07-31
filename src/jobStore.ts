@@ -1,4 +1,4 @@
-import type { Job, JobProgress, JobStage } from './types';
+import type { Job, JobProgress, JobStage, OutputFormat } from './types';
 
 type ProgressListener = (progress: JobProgress) => void;
 
@@ -12,7 +12,7 @@ class JobStore {
 	/**
 	 * Creates a new job and returns its ID
 	 */
-	create(soundcloudUrl: string): Job {
+	create(soundcloudUrl: string, outputFormat: OutputFormat): Job {
 		const id = crypto.randomUUID();
 		const now = new Date();
 		const job: Job = {
@@ -20,8 +20,10 @@ class JobStore {
 			soundcloudUrl,
 			hypedditUrl: null,
 			headless: process.env.BROWSER_HEADLESS !== 'false',
+			outputFormat,
 			track: null,
 			defaultMetadata: null,
+			existingMetadata: null,
 			progress: {
 				stage: 'pending',
 				message: 'Job created',

@@ -9,12 +9,13 @@ import { HypedditDownloader } from './hypeddit';
 import { HypedditHttpDownloader } from './hypedditHttp';
 import { jobStore } from './jobStore';
 import { SoundcloudClient } from './soundcloud';
-import type { Job, Metadata } from './types';
+import type { Job, Metadata, OutputFormat } from './types';
 import {
 	extractGateUrl,
 	getDefaultMetadata,
 	getFfmpegBin,
 	getFfprobeBin,
+	isMp3Format,
 	resolveGateProviderUrl,
 	validateGateUrl,
 	validateSoundcloudUrl,
@@ -327,6 +328,19 @@ async function runDownloadProcess(jobId: string): Promise<void> {
 
 		jobStore.update(jobId, { downloadFilename });
 
+		if (job.outputFormat === 'original') {
+			jobStore.update(jobId, { outputFilename: downloadFilename });
+			jobStore.updateProgress(jobId, 'ready', 'Original file ready', 100);
+			return;
+		}
+
+		if (isMp3Format(downloadFilename)) {
+			const existingMetadata = await audioProcessor.readMp3Metadata(
+				join('./downloads', downloadFilename),
+			);
+			jobStore.update(jobId, { existingMetadata: existingMetadata ?? {} });
+		}
+
 		jobStore.updateProgress(
 			jobId,
 			'processing_audio',
@@ -336,11 +350,17 @@ async function runDownloadProcess(jobId: string): Promise<void> {
 
 		const artworkFetchUrl = job.track?.artworkUrl || job.track?.user.avatarUrl;
 		if (artworkFetchUrl) {
-			const artwork = await soundcloudClient.fetchArtwork(artworkFetchUrl);
-			jobStore.update(jobId, {
-				artworkBuffer: artwork.buffer,
-				artworkFileName: artwork.fileName,
-			});
+			try {
+				const artwork = await soundcloudClient.fetchArtwork(artworkFetchUrl);
+				jobStore.update(jobId, {
+					artworkBuffer: artwork.buffer,
+					artworkFileName: artwork.fileName,
+				});
+			} catch (error) {
+				console.warn(
+					`Failed to fetch artwork: ${error instanceof Error ? error.message : String(error)}`,
+				);
+			}
 		}
 
 		jobStore.updateProgress(jobId, 'ready', 'Ready for metadata editing', 100);
@@ -461,10 +481,12 @@ const server = Bun.serve({
 			POST: async (req) => {
 				try {
 					const body = await req.json();
-					const { soundcloudUrl, skipAutomaticHypedditFetch } = body as {
-						soundcloudUrl?: string;
-						skipAutomaticHypedditFetch?: boolean;
-					};
+					const { soundcloudUrl, skipAutomaticHypedditFetch, outputFormat } =
+						body as {
+							soundcloudUrl?: string;
+							skipAutomaticHypedditFetch?: boolean;
+							outputFormat?: OutputFormat;
+						};
 
 					if (!soundcloudUrl) {
 						return jsonResponse(
@@ -478,7 +500,18 @@ const server = Bun.serve({
 						return jsonResponse({ error: validation }, { status: 400 });
 					}
 
-					const job = jobStore.create(soundcloudUrl);
+					if (
+						outputFormat !== undefined &&
+						outputFormat !== 'original' &&
+						outputFormat !== 'mp3-320'
+					) {
+						return jsonResponse(
+							{ error: 'outputFormat must be "original" or "mp3-320"' },
+							{ status: 400 },
+						);
+					}
+
+					const job = jobStore.create(soundcloudUrl, outputFormat ?? 'mp3-320');
 					jobStore.updateProgress(
 						job.id,
 						'fetching_track',
@@ -535,6 +568,7 @@ const server = Bun.serve({
 						track: updatedJob.track,
 						hypedditUrl: updatedJob.hypedditUrl,
 						defaultMetadata: updatedJob.defaultMetadata,
+						outputFormat: updatedJob.outputFormat,
 						needsHypedditUrl: !hypedditUrl,
 					});
 				} catch (error) {
@@ -742,8 +776,11 @@ const server = Bun.serve({
 					hypedditUrl: job.hypedditUrl,
 					track: job.track,
 					defaultMetadata: job.defaultMetadata,
+					existingMetadata: job.existingMetadata,
+					outputFormat: job.outputFormat,
 					progress: job.progress,
 					downloadFilename: job.downloadFilename,
+					outputFilename: job.outputFilename,
 					hasArtwork: !!job.artworkBuffer,
 					error: job.error,
 				});
@@ -795,6 +832,7 @@ const server = Bun.serve({
 
 					const contentType = req.headers.get('content-type') || '';
 					let metadata: Metadata;
+					let preserveMetadata = false;
 					let customArtwork: { buffer: ArrayBuffer; fileName: string } | null =
 						null;
 
@@ -806,6 +844,7 @@ const server = Bun.serve({
 							album: formData.get('album')?.toString() || undefined,
 							genre: formData.get('genre')?.toString() || undefined,
 						};
+						preserveMetadata = formData.get('preserveMetadata') === 'true';
 
 						const artworkFile = formData.get('artwork');
 						if (artworkFile instanceof File) {
@@ -815,8 +854,43 @@ const server = Bun.serve({
 							};
 						}
 					} else {
-						const body = await req.json();
-						metadata = body as Metadata;
+						const body = (await req.json()) as Metadata & {
+							preserveMetadata?: boolean;
+						};
+						metadata = {
+							title: body.title,
+							artist: body.artist,
+							album: body.album,
+							genre: body.genre,
+						};
+						preserveMetadata = body.preserveMetadata === true;
+					}
+
+					if (preserveMetadata && !isMp3Format(job.downloadFilename)) {
+						return jsonResponse(
+							{
+								error: 'Existing metadata can only be preserved for MP3 files',
+							},
+							{ status: 400 },
+						);
+					}
+
+					if (job.outputFormat === 'original' || preserveMetadata) {
+						jobStore.update(jobId, {
+							outputFilename: job.downloadFilename,
+						});
+						jobStore.updateProgress(
+							jobId,
+							'ready',
+							job.outputFormat === 'original'
+								? 'Original file ready'
+								: 'Existing MP3 metadata preserved',
+							100,
+						);
+						return jsonResponse({
+							success: true,
+							outputFilename: job.downloadFilename,
+						});
 					}
 
 					jobStore.updateProgress(
@@ -889,11 +963,12 @@ const server = Bun.serve({
 				}
 
 				const filePath = join('./downloads', filename);
+				const file = Bun.file(filePath);
 
-				return new Response(Bun.file(filePath), {
+				return new Response(file, {
 					headers: {
 						...corsHeaders,
-						'Content-Type': 'audio/mpeg',
+						'Content-Type': file.type || 'application/octet-stream',
 						'Content-Disposition': `attachment; filename="${filename}"`,
 					},
 				});
