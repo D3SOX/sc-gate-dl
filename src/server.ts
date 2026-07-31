@@ -245,6 +245,41 @@ async function runDownloadProcess(jobId: string): Promise<void> {
 				downloadSourceUrl,
 				{
 					matchTitle: job.track?.title,
+					onAlbumMatchFailed: async (error) => {
+						throwIfCancelled();
+						jobStore.update(jobId, {
+							bandcampAlbumTracks: error.tracks,
+							error: null,
+						});
+						const message = error.matchTitle
+							? `Could not match “${error.matchTitle}” — pick a Bandcamp track`
+							: 'Pick a track from the Bandcamp album';
+						jobStore.updateProgress(
+							jobId,
+							'waiting_bandcamp_track',
+							message,
+							45,
+							{
+								browserless: true,
+								bandcampAlbumTracks: error.tracks,
+							},
+						);
+						const selectedUrl =
+							await jobStore.waitForBandcampTrackSelection(jobId);
+						throwIfCancelled();
+						if (!selectedUrl) {
+							throw new Error('Download cancelled');
+						}
+						jobStore.update(jobId, { bandcampAlbumTracks: null });
+						jobStore.updateProgress(
+							jobId,
+							'downloading',
+							`Downloading from ${sourceLabel} via yt-dlp...`,
+							50,
+							{ browserless: true },
+						);
+						return selectedUrl;
+					},
 				},
 			);
 			throwIfCancelled();
@@ -755,6 +790,69 @@ const server = Bun.serve({
 			},
 		},
 
+		'/api/job/:id/bandcamp-track': {
+			POST: async (req) => {
+				try {
+					const jobId = req.params.id;
+					const job = jobStore.get(jobId);
+
+					if (!job) {
+						return jsonResponse({ error: 'Job not found' }, { status: 404 });
+					}
+
+					if (job.progress.stage !== 'waiting_bandcamp_track') {
+						return jsonResponse(
+							{ error: 'Job is not waiting for a Bandcamp track selection' },
+							{ status: 400 },
+						);
+					}
+
+					const body = await req.json();
+					const { trackUrl } = body as { trackUrl?: string };
+
+					if (!trackUrl || typeof trackUrl !== 'string') {
+						return jsonResponse(
+							{ error: 'trackUrl is required' },
+							{ status: 400 },
+						);
+					}
+
+					const allowed = job.bandcampAlbumTracks ?? [];
+					const match = allowed.find((t) => t.url === trackUrl);
+					if (!match) {
+						return jsonResponse(
+							{ error: 'trackUrl is not one of the listed album tracks' },
+							{ status: 400 },
+						);
+					}
+
+					const resolved = jobStore.resolveBandcampTrackSelection(
+						jobId,
+						match.url,
+					);
+					if (!resolved) {
+						return jsonResponse(
+							{ error: 'No pending Bandcamp track selection' },
+							{ status: 409 },
+						);
+					}
+
+					return jsonResponse({
+						success: true,
+						trackUrl: match.url,
+						title: match.title,
+					});
+				} catch (error) {
+					return jsonResponse(
+						{
+							error: error instanceof Error ? error.message : 'Unknown error',
+						},
+						{ status: 500 },
+					);
+				}
+			},
+		},
+
 		'/api/job/:id/start': {
 			POST: async (req) => {
 				try {
@@ -950,6 +1048,7 @@ const server = Bun.serve({
 					id: job.id,
 					soundcloudUrl: job.soundcloudUrl,
 					hypedditUrl: job.hypedditUrl,
+					bandcampAlbumTracks: job.bandcampAlbumTracks,
 					track: job.track,
 					defaultMetadata: job.defaultMetadata,
 					existingMetadata: job.existingMetadata,

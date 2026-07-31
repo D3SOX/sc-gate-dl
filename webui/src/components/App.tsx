@@ -27,6 +27,13 @@ interface JobProgress {
 	downloadBytes?: number;
 	totalBytes?: number;
 	browserless?: boolean;
+	bandcampAlbumTracks?: BandcampAlbumTrackChoice[];
+}
+
+interface BandcampAlbumTrackChoice {
+	title: string;
+	url: string;
+	score: number;
 }
 
 interface JobState {
@@ -346,6 +353,12 @@ export default function App() {
 										err instanceof Error ? err.message : 'Failed to load job',
 								}));
 							});
+					} else if (progress.stage === 'waiting_bandcamp_track') {
+						setJob((prev) => ({
+							...prev,
+							progress,
+							error: null,
+						}));
 					} else if (progress.stage === 'error') {
 						eventSource.close();
 						eventSourceRef.current = null;
@@ -599,6 +612,35 @@ export default function App() {
 
 			setJob((prev) => ({ ...prev, hypedditUrl: soundcloudUrl }));
 			startDownload(job.jobId);
+		} catch (err) {
+			setJob((prev) => ({
+				...prev,
+				error: err instanceof Error ? err.message : 'Unknown error',
+			}));
+		} finally {
+			setIsLoading(false);
+		}
+	};
+
+	const handleBandcampTrackSelect = async (trackUrl: string) => {
+		if (!job.jobId) return;
+
+		setIsLoading(true);
+		setJob((prev) => ({ ...prev, error: null }));
+
+		try {
+			const response = await fetch(
+				`${API_BASE}/api/job/${job.jobId}/bandcamp-track`,
+				{
+					method: 'POST',
+					headers: { 'Content-Type': 'application/json' },
+					body: JSON.stringify({ trackUrl }),
+				},
+			);
+			const data = await response.json();
+			if (!response.ok) {
+				throw new Error(data.error || 'Failed to select Bandcamp track');
+			}
 		} catch (err) {
 			setJob((prev) => ({
 				...prev,
@@ -1000,39 +1042,81 @@ export default function App() {
 				{/* Step 3: Progress */}
 				{step === 'progress' && (
 					<div className="progress-container animate-slide-up">
-						<div className="progress-stage">
-							<span className="stage-label">
-								{job.progress?.message || 'Initializing...'}
-							</span>
-							{job.progress?.currentGate && (
-								<span className="gate-badge">
-									{job.progress.currentGate.toUpperCase()}
-								</span>
-							)}
-						</div>
-						<div className="progress-bar">
-							<div
-								className="progress-fill"
-								style={{ width: `${job.progress?.percent || 0}%` }}
-							/>
-						</div>
-						<div className="progress-stats">
-							<span>{formatPercent(job.progress?.percent)}%</span>
-							{job.progress?.downloadBytes !== undefined &&
-								job.progress?.totalBytes !== undefined && (
-									<span>
-										{(job.progress.downloadBytes / 1024 / 1024).toFixed(1)} /{' '}
-										{(job.progress.totalBytes / 1024 / 1024).toFixed(1)} MB
+						{job.progress?.stage === 'waiting_bandcamp_track' ? (
+							<div className="bandcamp-track-picker">
+								<div className="notice">
+									<span className="notice-icon">i</span>
+									<p>
+										{job.progress.message ||
+											'Could not auto-match a Bandcamp album track. Pick one to download.'}
+									</p>
+								</div>
+								<ul className="bandcamp-track-list">
+									{(job.progress.bandcampAlbumTracks ?? []).map((track) => (
+										<li key={track.url}>
+											<button
+												type="button"
+												className="bandcamp-track-option"
+												disabled={isLoading}
+												onClick={() => void handleBandcampTrackSelect(track.url)}
+											>
+												<span className="bandcamp-track-title">{track.title}</span>
+												{track.score > 0 ? (
+													<span className="bandcamp-track-score">
+														{Math.round(track.score * 100)}% match
+													</span>
+												) : null}
+											</button>
+										</li>
+									))}
+								</ul>
+								<button
+									type="button"
+									className="btn-secondary btn-cancel-download"
+									onClick={() => void cancelDownload()}
+									disabled={isLoading}
+								>
+									Cancel download
+								</button>
+							</div>
+						) : (
+							<>
+								<div className="progress-stage">
+									<span className="stage-label">
+										{job.progress?.message || 'Initializing...'}
 									</span>
-								)}
-						</div>
-						<button
-							type="button"
-							className="btn-secondary btn-cancel-download"
-							onClick={() => void cancelDownload()}
-						>
-							Cancel download
-						</button>
+									{job.progress?.currentGate && (
+										<span className="gate-badge">
+											{job.progress.currentGate.toUpperCase()}
+										</span>
+									)}
+								</div>
+								<div className="progress-bar">
+									<div
+										className="progress-fill"
+										style={{ width: `${job.progress?.percent || 0}%` }}
+									/>
+								</div>
+								<div className="progress-stats">
+									<span>{formatPercent(job.progress?.percent)}%</span>
+									{job.progress?.downloadBytes !== undefined &&
+										job.progress?.totalBytes !== undefined && (
+											<span>
+												{(job.progress.downloadBytes / 1024 / 1024).toFixed(1)}{' '}
+												/{' '}
+												{(job.progress.totalBytes / 1024 / 1024).toFixed(1)} MB
+											</span>
+										)}
+								</div>
+								<button
+									type="button"
+									className="btn-secondary btn-cancel-download"
+									onClick={() => void cancelDownload()}
+								>
+									Cancel download
+								</button>
+							</>
+						)}
 					</div>
 				)}
 

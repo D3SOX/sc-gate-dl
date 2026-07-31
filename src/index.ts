@@ -148,6 +148,21 @@ try {
 		const ytDlpDownloader = new YtDlpDownloader(sourceLabel);
 		downloadFilename = await ytDlpDownloader.downloadAudio(gateUrl, {
 			matchTitle: track.title,
+			onAlbumMatchFailed: async (error) => {
+				const selected = await select({
+					message: error.matchTitle
+						? `Could not match “${error.matchTitle}”. Pick a Bandcamp album track:`
+						: 'Pick a track from the Bandcamp album:',
+					choices: error.tracks.map((t) => ({
+						name:
+							t.score > 0
+								? `${t.title} (${Math.round(t.score * 100)}% match)`
+								: t.title,
+						value: t.url,
+					})),
+				});
+				return selected;
+			},
 		});
 	} else if (gate.provider === 'direct') {
 		const directDownloader = new DirectDownloader();

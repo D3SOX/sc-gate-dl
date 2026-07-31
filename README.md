@@ -190,7 +190,7 @@ Panel size/position is remembered in `localStorage` (`sc-gate-dl-panel-geom`).
 
 Droploud, GateRush, and DownloadGater gates are handled via their own downloaders with similar email / social unlock flows.
 
-**Bandcamp / yt-dlp**: When a SoundCloud track’s purchase URL (or description) points at Bandcamp instead of a gate, the file is downloaded with [yt-dlp](https://github.com/yt-dlp/yt-dlp) (browserless). For Bandcamp album links, the matching track is selected from the SoundCloud title. Traditional unlock gates still take priority if both are present. If no gate or Bandcamp URL is found, the CLI and Web UI can fall back to downloading the SoundCloud track itself via yt-dlp.
+**Bandcamp / yt-dlp**: When a SoundCloud track’s purchase URL (or description) points at Bandcamp instead of a gate, the file is downloaded with [yt-dlp](https://github.com/yt-dlp/yt-dlp) (browserless). For Bandcamp album links, the matching track is selected from the SoundCloud title; if auto-match fails, the CLI and Web UI let you pick a track from the album. Traditional unlock gates still take priority if both are present. If no gate or Bandcamp URL is found, the CLI and Web UI can fall back to downloading the SoundCloud track itself via yt-dlp.
 
 **Direct download**: Paste a file URL (Dropbox with `dl=1`, Google Drive file links, or any http(s) URL ending in a common audio/archive extension). The file is fetched browserlessly — useful when a gate is unsupported but you already have the download link.
 
