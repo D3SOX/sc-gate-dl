@@ -29,6 +29,7 @@
 .logo h1 {
 	font-size: 1.75rem;
 	font-weight: 700;
+	line-height: 1.4;
 	background: linear-gradient(135deg, var(--neon-orange), var(--neon-cyan));
 	background-clip: text;
 	-webkit-background-clip: text;
