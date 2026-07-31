@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         sc-gate-dl
 // @namespace    https://github.com/D3SOX/sc-gate-dl
-// @version      1.6.1
+// @version      1.7.0
 // @description  Open the sc-gate-dl Web UI in a floating panel next to SoundCloud store/buy links
 // @author       D3SOX
 // @match        https://soundcloud.com/*
@@ -26,12 +26,14 @@
 	const WEBUI_BASE_KEY = 'sc-gate-dl-webui-base';
 	const API_BASE_KEY = 'sc-gate-dl-api-base';
 	const PANEL_GEOM_KEY = 'sc-gate-dl-panel-geom';
+	const QUEUE_GEOM_KEY = 'sc-gate-dl-queue-geom';
 	const OUTPUT_FORMAT_KEY = 'sc-gate-dl-output-format';
 	const AUTO_CLOSE_KEY = 'sc-gate-dl-auto-close';
 	const DEFAULT_WEBUI_BASE = 'http://localhost:4321';
 	const BUTTON_ATTR = 'data-sc-gate-dl-btn';
 	const WRAP_ATTR = 'data-sc-gate-dl-wrap';
 	const PANEL_ID = 'sc-gate-dl-panel';
+	const QUEUE_ID = 'sc-gate-dl-queue';
 	const STYLE_ID = 'sc-gate-dl-styles';
 	const TOOLTIP_ID = 'sc-gate-dl-tooltip';
 	const TOOLTIP_LABEL = 'Download with sc-gate-dl';
@@ -44,6 +46,15 @@
 		right: 12,
 		top: 72,
 	};
+
+	const DEFAULT_QUEUE_GEOM = {
+		width: 280,
+		left: 12,
+		top: 12,
+	};
+
+	/** @type {{ url: string, label: string }[]} */
+	const downloadQueue = [];
 
 	const RESERVED_FIRST = new Set([
 		'you',
@@ -371,6 +382,59 @@
 		}
 	}
 
+	function loadQueueGeom() {
+		try {
+			const raw = localStorage.getItem(QUEUE_GEOM_KEY);
+			if (!raw) return null;
+			const parsed = JSON.parse(raw);
+			if (
+				typeof parsed?.left === 'number' &&
+				typeof parsed?.top === 'number' &&
+				typeof parsed?.width === 'number'
+			) {
+				return parsed;
+			}
+		} catch {
+			// ignore
+		}
+		return null;
+	}
+
+	function saveQueueGeom(el) {
+		try {
+			const rect = el.getBoundingClientRect();
+			localStorage.setItem(
+				QUEUE_GEOM_KEY,
+				JSON.stringify({
+					width: Math.round(rect.width),
+					left: Math.round(rect.left),
+					top: Math.round(rect.top),
+				}),
+			);
+		} catch {
+			// ignore
+		}
+	}
+
+	function trackLabelFromUrl(url) {
+		try {
+			const parts = new URL(url).pathname.split('/').filter(Boolean);
+			if (parts.length >= 2) {
+				const artist = decodeURIComponent(parts[0]).replace(/-/g, ' ');
+				const track = decodeURIComponent(parts[1]).replace(/-/g, ' ');
+				return `${artist} — ${track}`;
+			}
+		} catch {
+			// ignore
+		}
+		return url;
+	}
+
+	function isPanelBusy() {
+		const panel = document.getElementById(PANEL_ID);
+		return Boolean(panel && !panel.hidden);
+	}
+
 	function hideTooltip() {
 		document.getElementById(TOOLTIP_ID)?.remove();
 	}
@@ -559,6 +623,96 @@
 	background: #0f0f12;
 	min-height: 0;
 }
+
+/* Download queue — smaller floating window (default top-left) */
+#${QUEUE_ID} {
+	position: fixed;
+	z-index: 2147483645;
+	display: flex;
+	flex-direction: column;
+	box-sizing: border-box;
+	width: ${DEFAULT_QUEUE_GEOM.width}px;
+	max-width: calc(100vw - 16px);
+	max-height: min(360px, calc(100vh - 24px));
+	background: #0f0f12;
+	border-radius: 8px;
+	overflow: hidden;
+	box-shadow: 0 8px 28px rgba(0, 0, 0, 0.4);
+	border: 1px solid rgba(255, 255, 255, 0.12);
+}
+#${QUEUE_ID}[hidden] { display: none !important; }
+#${QUEUE_ID} .sc-gate-dl-toolbar {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 8px;
+	padding: 5px 6px 5px 10px;
+	background: #16161c;
+	border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+	color: #eee;
+	font: 600 11px/1.2 Interstate, "Lucida Grande", Arial, sans-serif;
+	cursor: move;
+	user-select: none;
+	flex-shrink: 0;
+	touch-action: none;
+}
+#${QUEUE_ID} .sc-gate-dl-toolbar button.sc-gate-dl-close {
+	appearance: none;
+	border: 0;
+	background: transparent;
+	color: #ccc;
+	font-size: 16px;
+	line-height: 1;
+	cursor: pointer;
+	padding: 2px 6px;
+}
+#${QUEUE_ID} .sc-gate-dl-toolbar button.sc-gate-dl-close:hover { color: #fff; }
+#${QUEUE_ID} .sc-gate-dl-queue-list {
+	list-style: none;
+	margin: 0;
+	padding: 4px 0;
+	overflow-y: auto;
+	flex: 1;
+	min-height: 0;
+}
+#${QUEUE_ID} .sc-gate-dl-queue-item {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	padding: 6px 8px 6px 10px;
+	color: #ddd;
+	font: 500 11px/1.3 Interstate, "Lucida Grande", Arial, sans-serif;
+	border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
+#${QUEUE_ID} .sc-gate-dl-queue-item:last-child { border-bottom: 0; }
+#${QUEUE_ID} .sc-gate-dl-queue-label {
+	flex: 1;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	appearance: none;
+	border: 0;
+	background: transparent;
+	color: inherit;
+	font: inherit;
+	text-align: left;
+	cursor: pointer;
+	padding: 0;
+}
+#${QUEUE_ID} .sc-gate-dl-queue-label:hover { color: #f50; }
+#${QUEUE_ID} .sc-gate-dl-queue-remove {
+	appearance: none;
+	border: 0;
+	background: transparent;
+	color: #888;
+	font-size: 14px;
+	line-height: 1;
+	cursor: pointer;
+	padding: 2px 4px;
+	flex-shrink: 0;
+}
+#${QUEUE_ID} .sc-gate-dl-queue-remove:hover { color: #fff; }
 
 /* Resize handles — all edges + corners */
 #${PANEL_ID} .sc-gate-dl-rh {
@@ -971,7 +1125,203 @@ button[${BUTTON_ATTR}="mui"] svg {
 		await cancelActiveJob(panel);
 		const iframe = panel.querySelector('iframe');
 		if (iframe) iframe.src = 'about:blank';
+		delete panel.dataset.trackUrl;
 		panel.hidden = true;
+	}
+
+	function applyQueueGeom(el) {
+		const saved = loadQueueGeom();
+		if (saved) {
+			el.style.width = `${saved.width}px`;
+			el.style.left = `${saved.left}px`;
+			el.style.top = `${saved.top}px`;
+			return;
+		}
+		el.style.width = `${DEFAULT_QUEUE_GEOM.width}px`;
+		el.style.left = `${DEFAULT_QUEUE_GEOM.left}px`;
+		el.style.top = `${DEFAULT_QUEUE_GEOM.top}px`;
+	}
+
+	function clampQueue(el) {
+		const rect = el.getBoundingClientRect();
+		const maxLeft = window.innerWidth - Math.min(rect.width, window.innerWidth);
+		const maxTop = window.innerHeight - Math.min(rect.height, window.innerHeight);
+		const left = Math.min(Math.max(0, rect.left), Math.max(0, maxLeft));
+		const top = Math.min(Math.max(0, rect.top), Math.max(0, maxTop));
+		el.style.left = `${left}px`;
+		el.style.top = `${top}px`;
+	}
+
+	function enableQueueDrag(el) {
+		const toolbar = el.querySelector('.sc-gate-dl-toolbar');
+		if (!toolbar || toolbar.dataset.dragBound) return;
+		toolbar.dataset.dragBound = '1';
+
+		let dragging = false;
+		let startX = 0;
+		let startY = 0;
+		let origLeft = 0;
+		let origTop = 0;
+
+		toolbar.addEventListener('pointerdown', (e) => {
+			if (e.button !== 0) return;
+			if (e.target.closest('button')) return;
+			dragging = true;
+			const rect = el.getBoundingClientRect();
+			startX = e.clientX;
+			startY = e.clientY;
+			origLeft = rect.left;
+			origTop = rect.top;
+			toolbar.setPointerCapture(e.pointerId);
+			e.preventDefault();
+		});
+
+		toolbar.addEventListener('pointermove', (e) => {
+			if (!dragging) return;
+			el.style.left = `${origLeft + (e.clientX - startX)}px`;
+			el.style.top = `${origTop + (e.clientY - startY)}px`;
+		});
+
+		const endDrag = (e) => {
+			if (!dragging) return;
+			dragging = false;
+			try {
+				toolbar.releasePointerCapture(e.pointerId);
+			} catch {
+				// ignore
+			}
+			clampQueue(el);
+			saveQueueGeom(el);
+		};
+
+		toolbar.addEventListener('pointerup', endDrag);
+		toolbar.addEventListener('pointercancel', endDrag);
+	}
+
+	function clearQueue() {
+		downloadQueue.length = 0;
+		renderQueue();
+	}
+
+	function removeFromQueue(index) {
+		if (index < 0 || index >= downloadQueue.length) return;
+		downloadQueue.splice(index, 1);
+		renderQueue();
+	}
+
+	function enqueueDownload(trackUrl) {
+		if (downloadQueue.some((item) => item.url === trackUrl)) return;
+		const panel = document.getElementById(PANEL_ID);
+		if (panel && !panel.hidden && panel.dataset.trackUrl === trackUrl) return;
+		downloadQueue.push({
+			url: trackUrl,
+			label: trackLabelFromUrl(trackUrl),
+		});
+		renderQueue();
+	}
+
+	function startNextFromQueue() {
+		window.clearTimeout(autoCloseTimer);
+		const next = downloadQueue.shift();
+		renderQueue();
+		if (next) {
+			openPanel(next.url);
+			return true;
+		}
+		return false;
+	}
+
+	function startQueuedAt(index) {
+		if (index < 0 || index >= downloadQueue.length) return;
+		const [item] = downloadQueue.splice(index, 1);
+		renderQueue();
+		if (!item) return;
+		const panel = document.getElementById(PANEL_ID);
+		// Active job in progress — only promote to next in line
+		if (panel && !panel.hidden && panel.dataset.jobId) {
+			downloadQueue.unshift(item);
+			renderQueue();
+			return;
+		}
+		openPanel(item.url);
+	}
+
+	function renderQueue() {
+		ensureStyles();
+		let el = document.getElementById(QUEUE_ID);
+		if (downloadQueue.length === 0) {
+			if (el) el.hidden = true;
+			return;
+		}
+
+		if (!el) {
+			el = document.createElement('div');
+			el.id = QUEUE_ID;
+			el.setAttribute('role', 'dialog');
+			el.setAttribute('aria-modal', 'false');
+			el.setAttribute('aria-label', 'sc-gate-dl download queue');
+			el.innerHTML = `
+				<div class="sc-gate-dl-toolbar">
+					<span class="sc-gate-dl-queue-title">Queue</span>
+					<button type="button" class="sc-gate-dl-close" aria-label="Clear queue" title="Clear queue">×</button>
+				</div>
+				<ul class="sc-gate-dl-queue-list"></ul>
+			`;
+			el.querySelector('.sc-gate-dl-close')?.addEventListener('click', () => {
+				clearQueue();
+			});
+			document.documentElement.appendChild(el);
+			applyQueueGeom(el);
+			enableQueueDrag(el);
+		}
+
+		const title = el.querySelector('.sc-gate-dl-queue-title');
+		if (title) title.textContent = `Queue (${downloadQueue.length})`;
+
+		const list = el.querySelector('.sc-gate-dl-queue-list');
+		if (!(list instanceof HTMLElement)) return;
+		list.replaceChildren();
+		downloadQueue.forEach((item, index) => {
+			const li = document.createElement('li');
+			li.className = 'sc-gate-dl-queue-item';
+
+			const labelBtn = document.createElement('button');
+			labelBtn.type = 'button';
+			labelBtn.className = 'sc-gate-dl-queue-label';
+			labelBtn.title = item.url;
+			labelBtn.textContent = item.label;
+			labelBtn.addEventListener('click', () => startQueuedAt(index));
+
+			const removeBtn = document.createElement('button');
+			removeBtn.type = 'button';
+			removeBtn.className = 'sc-gate-dl-queue-remove';
+			removeBtn.setAttribute('aria-label', 'Remove from queue');
+			removeBtn.title = 'Remove';
+			removeBtn.textContent = '×';
+			removeBtn.addEventListener('click', () => removeFromQueue(index));
+
+			li.append(labelBtn, removeBtn);
+			list.appendChild(li);
+		});
+
+		el.hidden = false;
+		clampQueue(el);
+	}
+
+	function requestDownload(trackUrl) {
+		if (isPanelBusy()) {
+			enqueueDownload(trackUrl);
+			return;
+		}
+		openPanel(trackUrl);
+	}
+
+	function finishCurrentAndAdvance() {
+		if (downloadQueue.length > 0) {
+			startNextFromQueue();
+			return;
+		}
+		void closePanel();
 	}
 
 	let autoCloseTimer = 0;
@@ -998,16 +1348,20 @@ button[${BUTTON_ATTR}="mui"] svg {
 			return;
 		}
 
-		if (!getAutoClose()) return;
 		if (data.type === 'file-download') {
 			if (panel) delete panel.dataset.jobId;
+			if (!getAutoClose()) return;
 			window.clearTimeout(autoCloseTimer);
 			autoCloseTimer = window.setTimeout(() => {
-				void closePanel();
+				finishCurrentAndAdvance();
 			}, 600);
 		} else if (data.type === 'new-download') {
 			if (panel) delete panel.dataset.jobId;
-			void closePanel();
+			if (downloadQueue.length > 0) {
+				startNextFromQueue();
+				return;
+			}
+			if (getAutoClose()) void closePanel();
 		}
 	});
 
@@ -1076,7 +1430,7 @@ button[${BUTTON_ATTR}="mui"] svg {
 				alert('sc-gate-dl: could not resolve a SoundCloud track URL here.');
 				return;
 			}
-			openPanel(url);
+			requestDownload(url);
 		});
 	}
 
