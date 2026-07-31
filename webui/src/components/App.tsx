@@ -92,7 +92,7 @@ function cleanPromoTags(value: string): string {
 	return result.trim();
 }
 
-/** Strip a leading `Artist - ` / `Artist — ` duplicate from the title. */
+/** Strip a leading/trailing `Artist - ` / ` - Artist` duplicate from the title. */
 function stripDuplicateArtistFromTitle(title: string, artist: string): string {
 	const trimmedArtist = artist.trim();
 	const trimmedTitle = title.trim();
@@ -101,6 +101,7 @@ function stripDuplicateArtistFromTitle(title: string, artist: string): string {
 	const escaped = trimmedArtist.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 	return trimmedTitle
 		.replace(new RegExp(String.raw`^${escaped}\s*[-–—|:]\s*`, 'i'), '')
+		.replace(new RegExp(String.raw`\s*[-–—|:]\s*${escaped}$`, 'i'), '')
 		.trim();
 }
 
@@ -1127,7 +1128,7 @@ export default function App() {
 										type="button"
 										className="btn-secondary btn-auto-cleanup"
 										disabled={isLoading}
-										title="Remove promo tags like [FREE DL] and duplicate Artist - from the title"
+										title="Remove promo tags like [FREE DL] and duplicate Artist - / - Artist from the title"
 										onClick={() =>
 											setMetadata((prev) => cleanMetadataFields(prev))
 										}
