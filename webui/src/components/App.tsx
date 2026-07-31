@@ -407,6 +407,13 @@ export default function App() {
 		void processMetadata();
 	};
 
+	const defaultMetadataValues: Metadata = job.defaultMetadata ?? {
+		title: '',
+		artist: '',
+		album: '',
+		genre: '',
+	};
+
 	// Reset and start over
 	const handleReset = () => {
 		setSoundcloudUrl('');
@@ -743,37 +750,79 @@ export default function App() {
 								<div>
 									<h3>Existing MP3 Metadata</h3>
 									<p>
-										Copy these values into the form, or keep the file unchanged.
+										Copy a tag into the form, or keep the file’s tags unchanged
+										for the whole download.
 									</p>
 								</div>
-								<dl>
-									<dt>Title</dt>
-									<dd>{job.existingMetadata.title || 'Not set'}</dd>
-									<dt>Artist</dt>
-									<dd>{job.existingMetadata.artist || 'Not set'}</dd>
-									<dt>Album</dt>
-									<dd>{job.existingMetadata.album || 'Not set'}</dd>
-									<dt>Genre</dt>
-									<dd>{job.existingMetadata.genre || 'Not set'}</dd>
-								</dl>
-								<div className="existing-metadata-actions">
-									<button
-										type="button"
-										className="btn-secondary"
-										disabled={isLoading}
-										onClick={() => setMetadata(job.existingMetadata || {})}
-									>
-										Use Existing Values
-									</button>
-									<button
-										type="button"
-										className="btn-secondary"
-										disabled={isLoading}
-										onClick={() => void processMetadata(true)}
-									>
-										Leave Metadata As-Is
-									</button>
-								</div>
+								<ul className="existing-metadata-list">
+									{(
+										[
+											{ key: 'title', label: 'Title' },
+											{ key: 'artist', label: 'Artist' },
+											{ key: 'album', label: 'Album' },
+											{ key: 'genre', label: 'Genre' },
+										] as const
+									)
+										.map(({ key, label }) => ({
+											key,
+											label,
+											existingValue:
+												job.existingMetadata?.[key]?.trim() || '',
+										}))
+										.filter(({ existingValue }) => existingValue)
+										.map(({ key, label, existingValue }) => (
+											<li key={key} className="existing-metadata-row">
+												<span className="existing-metadata-label">
+													{label}
+												</span>
+												<span className="existing-metadata-value">
+													{existingValue}
+												</span>
+												<button
+													type="button"
+													className="btn-copy-existing"
+													disabled={isLoading}
+													title={`Copy ${label.toLowerCase()} into the form`}
+													aria-label={`Copy ${label.toLowerCase()} into the form`}
+													onClick={() =>
+														setMetadata((prev) => ({
+															...prev,
+															[key]: existingValue,
+														}))
+													}
+												>
+													<svg
+														viewBox="0 0 24 24"
+														width="14"
+														height="14"
+														aria-hidden="true"
+														fill="none"
+														stroke="currentColor"
+														strokeWidth="2"
+														strokeLinecap="round"
+														strokeLinejoin="round"
+													>
+														<rect
+															x="9"
+															y="9"
+															width="13"
+															height="13"
+															rx="2"
+														/>
+														<path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+													</svg>
+												</button>
+											</li>
+										))}
+								</ul>
+								<button
+									type="button"
+									className="btn-secondary"
+									disabled={isLoading}
+									onClick={() => void processMetadata(true)}
+								>
+									Use this metadata as-is
+								</button>
 							</div>
 						)}
 						<div className="metadata-grid">
@@ -806,66 +855,85 @@ export default function App() {
 							</div>
 
 							<div className="fields-section">
-								<div className="form-group">
-									<label htmlFor="meta-title">Title</label>
-									<input
-										id="meta-title"
-										type="text"
-										value={metadata.title || ''}
-										onChange={(e) =>
-											setMetadata((prev) => ({
-												...prev,
-												title: e.target.value,
-											}))
-										}
-										placeholder="Track title"
-									/>
-								</div>
-								<div className="form-group">
-									<label htmlFor="meta-artist">Artist</label>
-									<input
-										id="meta-artist"
-										type="text"
-										value={metadata.artist || ''}
-										onChange={(e) =>
-											setMetadata((prev) => ({
-												...prev,
-												artist: e.target.value,
-											}))
-										}
-										placeholder="Artist name"
-									/>
-								</div>
-								<div className="form-group">
-									<label htmlFor="meta-album">Album</label>
-									<input
-										id="meta-album"
-										type="text"
-										value={metadata.album || ''}
-										onChange={(e) =>
-											setMetadata((prev) => ({
-												...prev,
-												album: e.target.value,
-											}))
-										}
-										placeholder="Album name"
-									/>
-								</div>
-								<div className="form-group">
-									<label htmlFor="meta-genre">Genre</label>
-									<input
-										id="meta-genre"
-										type="text"
-										value={metadata.genre || ''}
-										onChange={(e) =>
-											setMetadata((prev) => ({
-												...prev,
-												genre: e.target.value,
-											}))
-										}
-										placeholder="Genre"
-									/>
-								</div>
+								{(
+									[
+										{
+											key: 'title',
+											label: 'Title',
+											placeholder: 'Track title',
+										},
+										{
+											key: 'artist',
+											label: 'Artist',
+											placeholder: 'Artist name',
+										},
+										{
+											key: 'album',
+											label: 'Album',
+											placeholder: 'Album name',
+										},
+										{
+											key: 'genre',
+											label: 'Genre',
+											placeholder: 'Genre',
+										},
+									] as const
+								).map(({ key, label, placeholder }) => {
+									const currentValue = metadata[key] || '';
+									const defaultValue = defaultMetadataValues[key] || '';
+									const isDirty = currentValue !== defaultValue;
+									return (
+										<div className="form-group" key={key}>
+											<label htmlFor={`meta-${key}`}>{label}</label>
+											<div
+												className={`field-with-reset${isDirty ? ' has-reset' : ''}`}
+											>
+												<input
+													id={`meta-${key}`}
+													type="text"
+													value={currentValue}
+													onChange={(e) =>
+														setMetadata((prev) => ({
+															...prev,
+															[key]: e.target.value,
+														}))
+													}
+													placeholder={placeholder}
+												/>
+												{isDirty ? (
+													<button
+														type="button"
+														className="btn-reset-field"
+														disabled={isLoading}
+														title={`Reset ${label.toLowerCase()} to default`}
+														aria-label={`Reset ${label.toLowerCase()} to default`}
+														onClick={() =>
+															setMetadata((prev) => ({
+																...prev,
+																[key]: defaultValue,
+															}))
+														}
+													>
+														<svg
+															viewBox="0 0 24 24"
+															width="14"
+															height="14"
+															aria-hidden="true"
+															fill="none"
+															stroke="currentColor"
+															strokeWidth="2"
+															strokeLinecap="round"
+															strokeLinejoin="round"
+														>
+															<path d="M3 12a9 9 0 1 0 3-6.7" />
+															<path d="M3 4v5h5" />
+														</svg>
+													</button>
+												) : null}
+											</div>
+										</div>
+									);
+								})}
 							</div>
 						</div>
 
