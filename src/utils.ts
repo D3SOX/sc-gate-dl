@@ -117,8 +117,12 @@ export async function loadCookies(filename: string): Promise<CookieData[]> {
 	});
 }
 
+export function isSoundcloudUrl(value: string): boolean {
+	return value?.startsWith('https://soundcloud.com/') ?? false;
+}
+
 export function validateSoundcloudUrl(value: string): true | string {
-	if (!value?.startsWith('https://soundcloud.com/')) {
+	if (!isSoundcloudUrl(value)) {
 		return 'A valid SoundCloud URL is required';
 	}
 	return true;
@@ -128,7 +132,10 @@ export type GateProvider =
 	| 'hypeddit'
 	| 'droploud'
 	| 'gaterush'
-	| 'downloadgater';
+	| 'downloadgater'
+	| 'bandcamp'
+	/** Direct track download via yt-dlp (manual fallback, not auto-extracted). */
+	| 'soundcloud';
 
 export type GateUrlMatch = {
 	url: string;
@@ -141,6 +148,9 @@ const DROPLOUD_URL_RE = /https:\/\/droploud\.com\/(?:gate|track)\/[0-9a-f-]+/i;
 const GATERUSH_URL_RE = /https?:\/\/(?:www\.)?gaterush\.me\/[A-Za-z0-9_-]+/i;
 const DOWNLOADGATER_URL_RE =
 	/https?:\/\/(?:www\.)?downloadgater\.com\/g\/[A-Za-z0-9_-]+/i;
+/** artist.bandcamp.com/track|album/... (and bare bandcamp.com). */
+const BANDCAMP_URL_RE =
+	/https?:\/\/(?:[\w-]+\.)?bandcamp\.com\/(?:track|album)\/[^\s?#]+/i;
 
 export function isHypedditUrl(value: string): boolean {
 	return value.startsWith('https://hypeddit.com/');
@@ -158,11 +168,17 @@ export function isDownloadgaterUrl(value: string): boolean {
 	return DOWNLOADGATER_URL_RE.test(value);
 }
 
+export function isBandcampUrl(value: string): boolean {
+	return BANDCAMP_URL_RE.test(value);
+}
+
 export function getGateProvider(value: string): GateProvider | null {
 	if (isHypedditUrl(value)) return 'hypeddit';
 	if (isDroploudUrl(value)) return 'droploud';
 	if (isGaterushUrl(value)) return 'gaterush';
 	if (isDownloadgaterUrl(value)) return 'downloadgater';
+	if (isBandcampUrl(value)) return 'bandcamp';
+	if (isSoundcloudUrl(value)) return 'soundcloud';
 	return null;
 }
 
@@ -175,7 +191,7 @@ export function validateHypedditUrl(value: string): true | string {
 
 export function validateGateUrl(value: string): true | string {
 	if (!getGateProvider(value)) {
-		return 'A valid Hypeddit, Droploud, GateRush, or DownloadGater URL is required';
+		return 'A valid Hypeddit, Droploud, GateRush, DownloadGater, Bandcamp, or SoundCloud URL is required';
 	}
 	return true;
 }
@@ -184,7 +200,11 @@ function normalizeGateUrl(
 	url: string,
 	provider: GateProvider,
 ): { url: string; provider: GateProvider } {
-	if (provider === 'gaterush' || provider === 'downloadgater') {
+	if (
+		provider === 'gaterush' ||
+		provider === 'downloadgater' ||
+		provider === 'bandcamp'
+	) {
 		return {
 			url: url.replace(/^http:\/\//i, 'https://'),
 			provider,
@@ -193,7 +213,8 @@ function normalizeGateUrl(
 	return { url, provider };
 }
 
-function matchGateUrl(
+/** Traditional unlock gates (browser / HTTP). Prefer these over Bandcamp. */
+function matchTraditionalGateUrl(
 	value: string,
 ): { url: string; provider: GateProvider } | null {
 	if (isHypedditUrl(value)) {
@@ -214,12 +235,25 @@ function matchGateUrl(
 	return null;
 }
 
-/** Prefer Hypeddit, then Droploud, GateRush, DownloadGater from purchase_url or description. */
+function matchBandcampUrl(
+	value: string,
+): { url: string; provider: GateProvider } | null {
+	const bandcampMatch = value.match(BANDCAMP_URL_RE)?.[0];
+	if (bandcampMatch) {
+		return normalizeGateUrl(bandcampMatch, 'bandcamp');
+	}
+	return null;
+}
+
+/**
+ * Prefer Hypeddit / Droploud / GateRush / DownloadGater from purchase_url or
+ * description, then fall back to a Bandcamp purchase/description link.
+ */
 export function extractGateUrl(track: SoundcloudTrack): GateUrlMatch | null {
 	const { purchase_url, description } = track;
 
 	if (purchase_url) {
-		const fromPurchase = matchGateUrl(purchase_url);
+		const fromPurchase = matchTraditionalGateUrl(purchase_url);
 		if (fromPurchase) {
 			return { ...fromPurchase, type: 'purchase_url' };
 		}
@@ -255,6 +289,20 @@ export function extractGateUrl(track: SoundcloudTrack): GateUrlMatch | null {
 				...normalizeGateUrl(downloadgaterMatch, 'downloadgater'),
 				type: 'description',
 			};
+		}
+	}
+
+	if (purchase_url) {
+		const bandcamp = matchBandcampUrl(purchase_url);
+		if (bandcamp) {
+			return { ...bandcamp, type: 'purchase_url' };
+		}
+	}
+
+	if (description) {
+		const bandcamp = matchBandcampUrl(description);
+		if (bandcamp) {
+			return { ...bandcamp, type: 'description' };
 		}
 	}
 

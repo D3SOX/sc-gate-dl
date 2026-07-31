@@ -19,6 +19,7 @@ import {
 	validateGateUrl,
 	validateSoundcloudUrl,
 } from './utils';
+import { YtDlpDownloader } from './ytdlp';
 
 const ffmpegBin = await getFfmpegBin();
 const ffprobeBin = await getFfprobeBin();
@@ -184,7 +185,21 @@ async function runDownloadProcess(jobId: string): Promise<void> {
 
 		let downloadFilename: string | null = null;
 
-		if (provider === 'droploud') {
+		if (provider === 'bandcamp' || provider === 'soundcloud') {
+			const sourceLabel = provider === 'bandcamp' ? 'Bandcamp' : 'SoundCloud';
+			jobStore.updateProgress(
+				jobId,
+				'downloading',
+				`Downloading from ${sourceLabel} via yt-dlp...`,
+				40,
+				{ browserless: true },
+			);
+			const ytDlpDownloader = new YtDlpDownloader(sourceLabel);
+			ytDlpDownloader.setProgressCallback(emitProgress);
+			downloadFilename = await ytDlpDownloader.downloadAudio(gateUrl, {
+				matchTitle: job.track?.title,
+			});
+		} else if (provider === 'droploud') {
 			jobStore.updateProgress(
 				jobId,
 				'initializing_browser',
