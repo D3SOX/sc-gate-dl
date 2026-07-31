@@ -889,7 +889,10 @@ button[${BUTTON_ATTR}="mui"] svg {
 	}
 
 	function clampPanel(panel) {
+		// display:none → zero rect; clamping then would snap to (0,0) and wipe position
+		if (panel.hidden) return;
 		const rect = panel.getBoundingClientRect();
+		if (rect.width <= 0 || rect.height <= 0) return;
 		const maxLeft = window.innerWidth - Math.min(rect.width, window.innerWidth);
 		const maxTop = window.innerHeight - Math.min(rect.height, window.innerHeight);
 		const left = Math.min(Math.max(0, rect.left), Math.max(0, maxLeft));
@@ -1143,7 +1146,9 @@ button[${BUTTON_ATTR}="mui"] svg {
 	}
 
 	function clampQueue(el) {
+		if (el.hidden) return;
 		const rect = el.getBoundingClientRect();
+		if (rect.width <= 0 || rect.height <= 0) return;
 		const maxLeft = window.innerWidth - Math.min(rect.width, window.innerWidth);
 		const maxTop = window.innerHeight - Math.min(rect.height, window.innerHeight);
 		const left = Math.min(Math.max(0, rect.left), Math.max(0, maxLeft));
@@ -1411,8 +1416,6 @@ button[${BUTTON_ATTR}="mui"] svg {
 			applyDefaultGeom(panel);
 			enableDrag(panel);
 			enableEdgeResize(panel);
-		} else if (panel.hidden) {
-			clampPanel(panel);
 		}
 
 		loadTrackIntoPanel(panel, trackUrl);
