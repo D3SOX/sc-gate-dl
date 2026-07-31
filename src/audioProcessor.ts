@@ -1,7 +1,12 @@
+import { existsSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import { confirm, input } from '@inquirer/prompts';
 import { execa } from 'execa';
 import type { SoundcloudTrack } from 'soundcloud.ts';
+import {
+	pickUniqueDownloadFilename,
+	withDownloadRenameLock,
+} from './downloadRename';
 import type { Metadata } from './types';
 import {
 	getDefaultMetadata,
@@ -11,6 +16,16 @@ import {
 	REPO_URL,
 	toMp3Filename,
 } from './utils';
+
+type FfprobeResult = {
+	format?: { tags?: Record<string, string>; bit_rate?: string };
+	streams?: Array<{
+		tags?: Record<string, string>;
+		codec_type?: string;
+		codec_name?: string;
+		bit_rate?: string;
+	}>;
+};
 
 export class AudioProcessor {
 	private ffmpegBin: string;
@@ -27,11 +42,17 @@ export class AudioProcessor {
 			return null;
 		}
 
-		const tags = probeData.format?.tags || probeData.streams?.[0]?.tags || null;
-
-		if (!tags) {
+		const streamTags = (probeData.streams ?? [])
+			.filter((stream) => stream.codec_type === 'audio')
+			.map((stream) => stream.tags)
+			.filter((value): value is Record<string, string> => Boolean(value));
+		const tagSources = [...streamTags, probeData.format?.tags].filter(
+			(value): value is Record<string, string> => Boolean(value),
+		);
+		if (tagSources.length === 0) {
 			return null;
 		}
+		const tags = Object.assign({}, ...tagSources);
 
 		// MP3 metadata can be in different cases
 		const getTag = (key: string): string | undefined => {
@@ -188,14 +209,7 @@ export class AudioProcessor {
 		}
 	}
 
-	private async runFfprobe(inputPath: string): Promise<{
-		format?: { tags?: Record<string, string>; bit_rate?: string };
-		streams?: Array<{
-			tags?: Record<string, string>;
-			codec_type?: string;
-			bit_rate?: string;
-		}>;
-	} | null> {
+	private async runFfprobe(inputPath: string): Promise<FfprobeResult | null> {
 		try {
 			const { stdout } = await execa(this.ffprobeBin, [
 				'-v',
@@ -206,14 +220,7 @@ export class AudioProcessor {
 				'-show_streams',
 				inputPath,
 			]);
-			return JSON.parse(stdout) as {
-				format?: { tags?: Record<string, string>; bit_rate?: string };
-				streams?: Array<{
-					tags?: Record<string, string>;
-					codec_type?: string;
-					bit_rate?: string;
-				}>;
-			};
+			return JSON.parse(stdout) as FfprobeResult;
 		} catch (error) {
 			console.warn(
 				`Failed to probe audio: ${error instanceof Error ? error.message : String(error)}`,
@@ -222,25 +229,33 @@ export class AudioProcessor {
 		}
 	}
 
-	/** Probe audio bitrate in kbps; null when unknown. */
-	private async probeAudioBitrateKbps(
+	private parseBitrateKbps(raw: string | undefined): number | null {
+		if (!raw) return null;
+		const bps = Number(raw);
+		if (!Number.isFinite(bps) || bps <= 0) return null;
+		return Math.round(bps / 1000);
+	}
+
+	/** Probe audio bitrate (kbps) and codec; null bitrate when unknown. */
+	private async probeAudioStream(
 		inputPath: string,
-	): Promise<number | null> {
+	): Promise<{ bitrateKbps: number | null; codecName: string | null }> {
 		const probeData = await this.runFfprobe(inputPath);
 		if (!probeData) {
-			return null;
+			return { bitrateKbps: null, codecName: null };
 		}
 
 		const audioStream = probeData.streams?.find(
 			(stream) => stream.codec_type === 'audio',
 		);
-		const raw =
-			audioStream?.bit_rate || probeData.format?.bit_rate || undefined;
-		if (!raw) return null;
+		const bitrateKbps =
+			this.parseBitrateKbps(audioStream?.bit_rate) ??
+			this.parseBitrateKbps(probeData.format?.bit_rate);
 
-		const bps = Number(raw);
-		if (!Number.isFinite(bps) || bps <= 0) return null;
-		return Math.round(bps / 1000);
+		return {
+			bitrateKbps,
+			codecName: audioStream?.codec_name ?? null,
+		};
 	}
 
 	/**
@@ -251,15 +266,42 @@ export class AudioProcessor {
 		inputPath: string,
 		filename: string,
 	): Promise<number> {
-		if (isLosslessFormat(filename)) {
+		const probed = await this.probeAudioStream(inputPath);
+		const losslessCodec = probed.codecName?.toLowerCase() === 'alac';
+		if (isLosslessFormat(filename) || losslessCodec) {
 			return 320;
 		}
 
-		const probed = await this.probeAudioBitrateKbps(inputPath);
-		if (probed == null) {
+		if (probed.bitrateKbps == null) {
 			return 192;
 		}
-		return Math.min(320, Math.max(32, probed));
+		return Math.min(320, Math.max(32, probed.bitrateKbps));
+	}
+
+	/** Pick a free MP3 destination and reserve it on disk before FFmpeg runs. */
+	private async allocateMp3OutputPath(
+		inputPath: string,
+		filename: string,
+	): Promise<string> {
+		const downloadsDir = './downloads';
+		const desiredFilename = toMp3Filename(filename);
+		const currentFilename = basename(inputPath);
+
+		return withDownloadRenameLock(async () => {
+			const finalName = pickUniqueDownloadFilename({
+				desiredFilename,
+				currentFilename,
+				jobId: crypto.randomUUID(),
+				exists: (name) => existsSync(join(downloadsDir, name)),
+				isOwnedByOtherJob: () => false,
+			});
+			const outputPath = join(downloadsDir, finalName);
+			// Reserve the name so concurrent converts cannot pick the same path.
+			if (finalName !== currentFilename && !existsSync(outputPath)) {
+				await Bun.write(outputPath, new Uint8Array());
+			}
+			return outputPath;
+		});
 	}
 
 	private async convertToMp3(
@@ -268,7 +310,7 @@ export class AudioProcessor {
 		metadata: Metadata,
 		filename: string,
 	): Promise<string> {
-		const outputPath = join('./downloads', toMp3Filename(filename));
+		const outputPath = await this.allocateMp3OutputPath(inputPath, filename);
 		const bitrateKbps = await this.resolveMp3BitrateKbps(inputPath, filename);
 
 		const args: string[] = [
@@ -310,7 +352,17 @@ export class AudioProcessor {
 		args.push('-y', outputPath);
 
 		console.log(`Converting to MP3 (${bitrateKbps}kbps)...`);
-		await execa(this.ffmpegBin, args);
+		try {
+			await execa(this.ffmpegBin, args);
+		} catch (error) {
+			// Drop the empty reservation if conversion failed.
+			if (existsSync(outputPath) && (await Bun.file(outputPath).size) === 0) {
+				await Bun.file(outputPath)
+					.unlink()
+					.catch(() => {});
+			}
+			throw error;
+		}
 		console.log(`✓ Converted to ${outputPath}`);
 		return outputPath;
 	}
