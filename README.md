@@ -154,9 +154,9 @@ Adds a download icon next to SoundCloud store/buy links (feed and track pages). 
 
 **Recommended:** [Violentmonkey](https://violentmonkey.github.io/) (Firefox / Chrome / Edge). Tampermonkey also works.
 
-[![Install userscript](https://img.shields.io/badge/Install%20userscript-Violentmonkey-3b3b3b?style=for-the-badge&logo=firefoxbrowser&logoColor=white)](https://raw.githubusercontent.com/D3SOX/sc-gate-dl/main/userscript/sc-gate-dl.user.js)
+[![Install userscript](https://img.shields.io/badge/Install%20userscript-Violentmonkey-3b3b3b?style=for-the-badge&logo=firefoxbrowser&logoColor=white)](https://raw.githubusercontent.com/D3SOX/sc-gate-dl/master/userscript/sc-gate-dl.user.js)
 
-Or open the raw file: [`userscript/sc-gate-dl.user.js`](https://raw.githubusercontent.com/D3SOX/sc-gate-dl/main/userscript/sc-gate-dl.user.js)
+Or open the raw file: [`userscript/sc-gate-dl.user.js`](https://raw.githubusercontent.com/D3SOX/sc-gate-dl/master/userscript/sc-gate-dl.user.js)
 
 1. Install [Violentmonkey](https://violentmonkey.github.io/)
 2. Click **Install userscript** above (Violentmonkey will prompt to confirm)

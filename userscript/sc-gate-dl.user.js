@@ -16,8 +16,8 @@
 // @run-at       document-idle
 // @homepageURL  https://github.com/D3SOX/sc-gate-dl
 // @supportURL   https://github.com/D3SOX/sc-gate-dl/issues
-// @downloadURL  https://raw.githubusercontent.com/D3SOX/sc-gate-dl/main/userscript/sc-gate-dl.user.js
-// @updateURL    https://raw.githubusercontent.com/D3SOX/sc-gate-dl/main/userscript/sc-gate-dl.user.js
+// @downloadURL  https://raw.githubusercontent.com/D3SOX/sc-gate-dl/master/userscript/sc-gate-dl.user.js
+// @updateURL    https://raw.githubusercontent.com/D3SOX/sc-gate-dl/master/userscript/sc-gate-dl.user.js
 // ==/UserScript==
 
 (() => {
