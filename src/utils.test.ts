@@ -64,6 +64,26 @@ describe('resolveGateProviderUrl', () => {
 		});
 	});
 
+	test('rewrites Dropbox dl=0 to dl=1 when dl is the only query param', () => {
+		expect(
+			resolveGateProviderUrl('https://www.dropbox.com/s/abc123/track.wav?dl=0'),
+		).toEqual({
+			url: 'https://www.dropbox.com/s/abc123/track.wav?dl=1',
+			provider: 'direct',
+		});
+	});
+
+	test('adds dl=1 to Dropbox share links that omit dl', () => {
+		expect(
+			resolveGateProviderUrl(
+				'https://www.dropbox.com/scl/fi/abc/track.wav?rlkey=xyz',
+			),
+		).toEqual({
+			url: 'https://www.dropbox.com/scl/fi/abc/track.wav?rlkey=xyz&dl=1',
+			provider: 'direct',
+		});
+	});
+
 	test('matches raw audio file URLs as direct downloads', () => {
 		expect(
 			resolveGateProviderUrl(

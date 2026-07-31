@@ -987,7 +987,7 @@ export default function App() {
 									name="hypeddit-url"
 									value={hypedditUrlInput}
 									onChange={(e) => setHypedditUrlInput(e.target.value)}
-									placeholder="https://hypeddit.com/... / droploud.com/gate/... / gaterush.me/... / downloadgater.com/g/... / artist.bandcamp.com/track/... / dropbox.com/...&dl=1"
+									placeholder="https://hypeddit.com/... / droploud.com/gate/... / gaterush.me/... / downloadgater.com/g/... / artist.bandcamp.com/track/... / https://www.dropbox.com/...?dl=1"
 									autoComplete="off"
 									required
 									disabled={isLoading}

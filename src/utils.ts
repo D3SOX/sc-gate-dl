@@ -5,6 +5,11 @@ import { lookpath } from 'find-bin';
 import type { CookieData } from 'puppeteer';
 import type { SoundcloudTrack } from 'soundcloud.ts';
 import packageJson from '../package.json' with { type: 'json' };
+import {
+	normalizeDirectDownloadParsedUrl,
+	urlLooksLikeDirectDownload,
+} from './directLinkRules';
+import { assertSafeOutboundUrl } from './safeOutboundUrl';
 import type { LocalCookieData, Metadata } from './types';
 
 export const REPO_URL = packageJson.repository.url;
@@ -395,40 +400,16 @@ function matchBandcampUrl(
 function matchDirectDownloadUrl(
 	value: string,
 ): { url: string; provider: GateProvider } | null {
-	// Inline host/ext checks (same rules as isDirectDownloadUrl) to avoid a
-	// circular import with directDownload.ts → trimExtractedUrl.
 	const httpMatch = value.match(/https?:\/\/[^\s<>"')\]]+/i)?.[0];
 	if (!httpMatch) return null;
 	const trimmed = trimExtractedUrl(httpMatch);
 	try {
-		const url = new URL(trimmed);
-		if (!/^https?:$/i.test(url.protocol)) return null;
-		const host = url.hostname.toLowerCase();
-		const isHost =
-			/(?:^|\.)dropbox\.com$/i.test(host) ||
-			/(?:^|\.)dropboxusercontent\.com$/i.test(host) ||
-			/(?:^|\.)drive\.google\.com$/i.test(host) ||
-			/(?:^|\.)docs\.google\.com$/i.test(host);
-		const isExt =
-			/\.(mp3|wav|flac|aiff|aif|m4a|aac|ogg|opus|zip|rar)(\?|$)/i.test(
-				url.pathname,
-			);
-		const isFlag =
-			url.searchParams.get('dl') === '1' || url.searchParams.has('raw');
-		if (!isHost && !isExt && !isFlag) return null;
-
-		let normalized = trimmed.replace(/^http:\/\//i, 'https://');
-		if (/(?:^|\.)dropbox\.com$/i.test(host)) {
-			const parsed = new URL(normalized);
-			parsed.searchParams.set('dl', '1');
-			normalized = parsed.toString();
-		} else {
-			const driveFile = url.pathname.match(/\/file\/d\/([^/]+)/);
-			if (/(?:^|\.)drive\.google\.com$/i.test(host) && driveFile?.[1]) {
-				normalized = `https://drive.google.com/uc?export=download&id=${driveFile[1]}`;
-			}
-		}
-		return { url: normalized, provider: 'direct' };
+		const url = new URL(trimmed.replace(/^http:\/\//i, 'https://'));
+		if (!urlLooksLikeDirectDownload(url)) return null;
+		return {
+			url: normalizeDirectDownloadParsedUrl(url),
+			provider: 'direct',
+		};
 	} catch {
 		return null;
 	}
@@ -462,6 +443,7 @@ export function findKnownGateInHtml(
 /**
  * Resolve an unrecognized (or already-known) URL to a download gate by
  * following HTTP redirects and scanning the final HTML for embedded destinations.
+ * Each hop is validated against private/local destinations before fetching.
  */
 export async function resolveUnknownGateUrl(
 	url: string,
@@ -471,32 +453,55 @@ export async function resolveUnknownGateUrl(
 		return null;
 	}
 
-	const direct = matchKnownDownloadGateUrl(trimmed);
-	if (direct) return direct;
+	const knownUpFront = matchKnownDownloadGateUrl(trimmed);
+	if (knownUpFront) return knownUpFront;
 
 	// SoundCloud pages are not smart-link hops we want to chase.
 	if (isSoundcloudUrl(trimmed)) {
 		return null;
 	}
 
-	try {
-		const response = await fetch(trimmed, {
-			redirect: 'follow',
-			headers: {
-				'user-agent': GATE_RESOLVE_USER_AGENT,
-				accept:
-					'text/html,application/xhtml+xml,application/json;q=0.9,*/*;q=0.8',
-			},
-		});
-		const finalUrl = trimExtractedUrl(response.url);
-		const fromFinal = matchKnownDownloadGateUrl(finalUrl);
-		if (fromFinal) return fromFinal;
+	const maxHops = 10;
+	let current = trimmed;
 
-		const html = await response.text();
-		return findKnownGateInHtml(html);
+	try {
+		for (let hop = 0; hop < maxHops; hop++) {
+			await assertSafeOutboundUrl(current);
+
+			const known = matchKnownDownloadGateUrl(current);
+			if (known) return known;
+			if (isSoundcloudUrl(current)) return null;
+
+			const response = await fetch(current, {
+				redirect: 'manual',
+				signal: AbortSignal.timeout(15_000),
+				headers: {
+					'user-agent': GATE_RESOLVE_USER_AGENT,
+					accept:
+						'text/html,application/xhtml+xml,application/json;q=0.9,*/*;q=0.8',
+				},
+			});
+
+			if (response.status >= 300 && response.status < 400) {
+				const location = response.headers.get('location');
+				if (!location) return null;
+				current = trimExtractedUrl(new URL(location, current).toString());
+				continue;
+			}
+
+			const finalUrl = trimExtractedUrl(response.url || current);
+			await assertSafeOutboundUrl(finalUrl);
+			const fromFinal = matchKnownDownloadGateUrl(finalUrl);
+			if (fromFinal) return fromFinal;
+
+			const html = await response.text();
+			return findKnownGateInHtml(html);
+		}
 	} catch {
 		return null;
 	}
+
+	return null;
 }
 
 function collectUnresolvedHttpCandidates(

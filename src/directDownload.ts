@@ -1,13 +1,19 @@
 import { mkdir } from 'node:fs/promises';
 import { basename, join } from 'node:path';
+import {
+	normalizeDirectDownloadParsedUrl,
+	urlLooksLikeDirectDownload,
+} from './directLinkRules';
 import type { ProgressCallback } from './hypeddit';
-import { trimExtractedUrl } from './utils';
+import { assertSafeOutboundUrl } from './safeOutboundUrl';
+import { sanitizeFilenamePart, trimExtractedUrl } from './utils';
 
 const USER_AGENT =
 	'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36';
 
-const AUDIO_OR_ARCHIVE_EXT_RE =
-	/\.(mp3|wav|flac|aiff|aif|m4a|aac|ogg|opus|zip|rar)(\?|$)/i;
+const FETCH_TIMEOUT_MS = 60_000;
+/** Cap buffered downloads (audio / zip packages). */
+const MAX_DOWNLOAD_BYTES = 512 * 1024 * 1024;
 
 /**
  * True for http(s) URLs that look like a direct file download (Dropbox, Drive,
@@ -15,43 +21,17 @@ const AUDIO_OR_ARCHIVE_EXT_RE =
  */
 export function isDirectDownloadUrl(value: string): boolean {
 	try {
-		const url = new URL(trimExtractedUrl(value.trim()));
-		if (!/^https?:$/i.test(url.protocol)) return false;
-
-		const host = url.hostname.toLowerCase();
-		if (/(?:^|\.)dropbox\.com$/i.test(host)) return true;
-		if (/(?:^|\.)dropboxusercontent\.com$/i.test(host)) return true;
-		if (/(?:^|\.)drive\.google\.com$/i.test(host)) return true;
-		if (/(?:^|\.)docs\.google\.com$/i.test(host)) return true;
-
-		if (AUDIO_OR_ARCHIVE_EXT_RE.test(url.pathname)) return true;
-		if (url.searchParams.get('dl') === '1') return true;
-		if (url.searchParams.has('raw')) return true;
-
-		return false;
+		return urlLooksLikeDirectDownload(new URL(trimExtractedUrl(value.trim())));
 	} catch {
 		return false;
 	}
 }
 
-/** Normalize share links so fetch gets the file bytes (e.g. Dropbox dl=1). */
+/** Normalize share links so fetch gets the file bytes (e.g. Dropbox dl=0 → dl=1). */
 export function normalizeDirectDownloadUrl(url: string): string {
 	const trimmed = trimExtractedUrl(url.trim());
 	try {
-		const parsed = new URL(trimmed);
-		if (/(?:^|\.)dropbox\.com$/i.test(parsed.hostname)) {
-			parsed.searchParams.set('dl', '1');
-			return parsed.toString();
-		}
-		// Google Drive file view → uc?export=download
-		const driveFile = parsed.pathname.match(/\/file\/d\/([^/]+)/);
-		if (
-			/(?:^|\.)drive\.google\.com$/i.test(parsed.hostname) &&
-			driveFile?.[1]
-		) {
-			return `https://drive.google.com/uc?export=download&id=${driveFile[1]}`;
-		}
-		return parsed.toString();
+		return normalizeDirectDownloadParsedUrl(new URL(trimmed));
 	} catch {
 		return trimmed;
 	}
@@ -67,6 +47,13 @@ function filenameFromContentDisposition(value: string | null): string | null {
 	return plain ? plain.trim() : null;
 }
 
+function safeDownloadFilename(raw: string | null): string | null {
+	if (!raw) return null;
+	const base = basename(raw);
+	const cleaned = sanitizeFilenamePart(base);
+	return cleaned || null;
+}
+
 export class DirectDownloader {
 	private progressCallback: ProgressCallback | null = null;
 
@@ -76,6 +63,7 @@ export class DirectDownloader {
 
 	async downloadAudio(url: string): Promise<string> {
 		const downloadUrl = normalizeDirectDownloadUrl(url);
+		await assertSafeOutboundUrl(downloadUrl);
 		console.log(`Downloading direct file: ${downloadUrl}`);
 		this.progressCallback?.('downloading', 'Downloading direct file...', 40, {
 			browserless: true,
@@ -84,6 +72,7 @@ export class DirectDownloader {
 		await mkdir('./downloads', { recursive: true });
 		const response = await fetch(downloadUrl, {
 			redirect: 'follow',
+			signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
 			headers: {
 				'user-agent': USER_AGENT,
 				accept: '*/*',
@@ -95,6 +84,8 @@ export class DirectDownloader {
 			);
 		}
 
+		await assertSafeOutboundUrl(response.url);
+
 		const contentType = response.headers.get('content-type') ?? '';
 		if (/text\/html/i.test(contentType)) {
 			throw new Error(
@@ -102,18 +93,36 @@ export class DirectDownloader {
 			);
 		}
 
-		const fromHeader = filenameFromContentDisposition(
-			response.headers.get('content-disposition'),
+		const contentLength = Number(response.headers.get('content-length') ?? '');
+		if (Number.isFinite(contentLength) && contentLength > MAX_DOWNLOAD_BYTES) {
+			throw new Error(
+				`Direct download too large (${contentLength} bytes; max ${MAX_DOWNLOAD_BYTES})`,
+			);
+		}
+
+		const fromHeader = safeDownloadFilename(
+			filenameFromContentDisposition(
+				response.headers.get('content-disposition'),
+			),
 		);
-		const urlName = basename(new URL(response.url).pathname);
+		const urlName = safeDownloadFilename(
+			decodeURIComponent(basename(new URL(response.url).pathname)),
+		);
 		const filename =
 			fromHeader ||
 			(urlName && urlName !== '/'
-				? decodeURIComponent(urlName)
+				? urlName
 				: `direct-download-${Date.now()}.bin`);
 
+		const body = await response.arrayBuffer();
+		if (body.byteLength > MAX_DOWNLOAD_BYTES) {
+			throw new Error(
+				`Direct download too large (${body.byteLength} bytes; max ${MAX_DOWNLOAD_BYTES})`,
+			);
+		}
+
 		const target = join('./downloads', filename);
-		await Bun.write(target, await response.arrayBuffer());
+		await Bun.write(target, body);
 		console.log(`Saved ${filename}`);
 		return filename;
 	}
