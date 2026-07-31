@@ -15,7 +15,7 @@ import {
 	getDefaultMetadata,
 	getFfmpegBin,
 	getFfprobeBin,
-	getGateProvider,
+	resolveGateProviderUrl,
 	validateGateUrl,
 	validateSoundcloudUrl,
 } from './utils';
@@ -156,11 +156,12 @@ async function runDownloadProcess(jobId: string): Promise<void> {
 	if (!job?.hypedditUrl) return;
 
 	const gateUrl = job.hypedditUrl;
-	const provider = getGateProvider(gateUrl);
-	if (!provider) {
+	const resolved = resolveGateProviderUrl(gateUrl);
+	if (!resolved) {
 		jobStore.setError(jobId, 'Unsupported gate URL');
 		return;
 	}
+	const { url: downloadSourceUrl, provider } = resolved;
 
 	try {
 		const emitProgress = (
@@ -196,9 +197,12 @@ async function runDownloadProcess(jobId: string): Promise<void> {
 			);
 			const ytDlpDownloader = new YtDlpDownloader(sourceLabel);
 			ytDlpDownloader.setProgressCallback(emitProgress);
-			downloadFilename = await ytDlpDownloader.downloadAudio(gateUrl, {
-				matchTitle: job.track?.title,
-			});
+			downloadFilename = await ytDlpDownloader.downloadAudio(
+				downloadSourceUrl,
+				{
+					matchTitle: job.track?.title,
+				},
+			);
 		} else if (provider === 'droploud') {
 			jobStore.updateProgress(
 				jobId,
@@ -218,7 +222,8 @@ async function runDownloadProcess(jobId: string): Promise<void> {
 				'Processing Droploud gates...',
 				25,
 			);
-			downloadFilename = await droploudDownloader.downloadAudio(gateUrl);
+			downloadFilename =
+				await droploudDownloader.downloadAudio(downloadSourceUrl);
 			await closeJobDownloader(jobId);
 		} else if (provider === 'gaterush') {
 			jobStore.updateProgress(
@@ -239,7 +244,8 @@ async function runDownloadProcess(jobId: string): Promise<void> {
 				'Processing GateRush gates...',
 				25,
 			);
-			downloadFilename = await gaterushDownloader.downloadAudio(gateUrl);
+			downloadFilename =
+				await gaterushDownloader.downloadAudio(downloadSourceUrl);
 			await closeJobDownloader(jobId);
 		} else if (provider === 'downloadgater') {
 			jobStore.updateProgress(
@@ -260,7 +266,8 @@ async function runDownloadProcess(jobId: string): Promise<void> {
 				'Processing DownloadGater gates...',
 				25,
 			);
-			downloadFilename = await downloadgaterDownloader.downloadAudio(gateUrl);
+			downloadFilename =
+				await downloadgaterDownloader.downloadAudio(downloadSourceUrl);
 			await closeJobDownloader(jobId);
 		} else {
 			// Hypeddit: always try plain HTTP first (email + social skip gates).
@@ -274,7 +281,7 @@ async function runDownloadProcess(jobId: string): Promise<void> {
 				gateConfigBase,
 				emitProgress,
 			);
-			downloadFilename = await httpDownloader.tryDownload(gateUrl);
+			downloadFilename = await httpDownloader.tryDownload(downloadSourceUrl);
 
 			// Always try HTTP first. Open a browser only when the user checked
 			// “Show browser window” (headful) and the gate needs real verification
@@ -301,7 +308,8 @@ async function runDownloadProcess(jobId: string): Promise<void> {
 					25,
 				);
 
-				downloadFilename = await hypedditDownloader.downloadAudio(gateUrl);
+				downloadFilename =
+					await hypedditDownloader.downloadAudio(downloadSourceUrl);
 				await closeJobDownloader(jobId);
 			} else if (!downloadFilename && job.headless) {
 				jobStore.setError(
@@ -565,9 +573,17 @@ const server = Bun.serve({
 						return jsonResponse({ error: validation }, { status: 400 });
 					}
 
-					jobStore.update(jobId, { hypedditUrl });
+					const resolved = resolveGateProviderUrl(hypedditUrl);
+					if (!resolved) {
+						return jsonResponse(
+							{ error: 'Could not extract a supported URL' },
+							{ status: 400 },
+						);
+					}
 
-					return jsonResponse({ success: true, hypedditUrl });
+					jobStore.update(jobId, { hypedditUrl: resolved.url });
+
+					return jsonResponse({ success: true, hypedditUrl: resolved.url });
 				} catch (error) {
 					return jsonResponse(
 						{

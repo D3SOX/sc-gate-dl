@@ -17,7 +17,7 @@ Download and tag SoundCloud tracks unlocked via Hypeddit, Droploud, GateRush, Do
 
 - [**Bun**](https://bun.sh) - JavaScript runtime and package manager
 - [**ffmpeg**](https://ffmpeg.org) - Must be installed and available in your `PATH`
-- [**yt-dlp**](https://github.com/yt-dlp/yt-dlp) - Required for Bandcamp purchase/download links
+- [**yt-dlp**](https://github.com/yt-dlp/yt-dlp) - Required for Bandcamp purchase/download links and for downloading a SoundCloud track directly when no gate is found
 - **SoundCloud account** - It is recommended to create a throwaway account for this. Even though there were no reports of accounts getting banned I can't guarantee it. Also most gate downloads require reposts/likes/follows which you might not want to do with your main account
 - **Spotify account** (optional) - Required when a Hypeddit post has an unskippable Spotify gate. I also recommend creating a throwaway account as most Hypeddit downloads require saving playlists/songs to your library or following artists which you might not want on your main account.
 
@@ -156,7 +156,7 @@ If it's the first time you're running it you will need to initialize the logins 
 
 Droploud, GateRush, and DownloadGater gates are handled via their own downloaders with similar email / social unlock flows.
 
-**Bandcamp**: When a SoundCloud track’s purchase URL (or description) points at Bandcamp instead of a gate, the file is downloaded with [yt-dlp](https://github.com/yt-dlp/yt-dlp) (browserless). Traditional unlock gates still take priority if both are present.
+**Bandcamp / yt-dlp**: When a SoundCloud track’s purchase URL (or description) points at Bandcamp instead of a gate, the file is downloaded with [yt-dlp](https://github.com/yt-dlp/yt-dlp) (browserless). For Bandcamp album links, the matching track is selected from the SoundCloud title. Traditional unlock gates still take priority if both are present. If no gate or Bandcamp URL is found, the CLI and Web UI can fall back to downloading the SoundCloud track itself via yt-dlp.
 
 **File Processing**:
 

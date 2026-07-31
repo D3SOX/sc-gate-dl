@@ -10,7 +10,7 @@ import { SoundcloudClient } from './soundcloud';
 import {
 	getFfmpegBin,
 	getFfprobeBin,
-	getGateProvider,
+	resolveGateProviderUrl,
 	validateSoundcloudUrl,
 } from './utils';
 import { YtDlpDownloader } from './ytdlp';
@@ -79,18 +79,25 @@ try {
 				message:
 					'Enter the Hypeddit, Droploud, GateRush, DownloadGater, or Bandcamp URL',
 				validate: (value) => {
-					const provider = getGateProvider(value);
-					if (!provider || provider === 'soundcloud') {
+					const resolved = resolveGateProviderUrl(value);
+					if (!resolved || resolved.provider === 'soundcloud') {
 						return 'A valid Hypeddit, Droploud, GateRush, DownloadGater, or Bandcamp URL is required';
 					}
 					return true;
 				},
 			});
-			const provider = getGateProvider(gateUrl);
+			const resolved = resolveGateProviderUrl(gateUrl);
 			gate =
-				provider && provider !== 'soundcloud'
-					? { url: gateUrl, provider, type: 'purchase_url' }
+				resolved && resolved.provider !== 'soundcloud'
+					? {
+							url: resolved.url,
+							provider: resolved.provider,
+							type: 'purchase_url',
+						}
 					: null;
+			if (gate) {
+				gateUrl = gate.url;
+			}
 		}
 	}
 

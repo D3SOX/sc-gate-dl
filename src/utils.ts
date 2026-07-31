@@ -148,9 +148,17 @@ const DROPLOUD_URL_RE = /https:\/\/droploud\.com\/(?:gate|track)\/[0-9a-f-]+/i;
 const GATERUSH_URL_RE = /https?:\/\/(?:www\.)?gaterush\.me\/[A-Za-z0-9_-]+/i;
 const DOWNLOADGATER_URL_RE =
 	/https?:\/\/(?:www\.)?downloadgater\.com\/g\/[A-Za-z0-9_-]+/i;
+const BANDCAMP_HOST = String.raw`https?:\/\/(?:[\w-]+\.)?bandcamp\.com`;
 /** artist.bandcamp.com/track|album/... (and bare bandcamp.com). */
-const BANDCAMP_URL_RE =
-	/https?:\/\/(?:[\w-]+\.)?bandcamp\.com\/(?:track|album)\/[^\s?#]+/i;
+const BANDCAMP_URL_RE = new RegExp(
+	`${BANDCAMP_HOST}\\/(?:track|album)\\/[^\\s?#]+`,
+	'i',
+);
+const BANDCAMP_ALBUM_URL_RE = new RegExp(
+	`${BANDCAMP_HOST}\\/album\\/[^\\s?#]+`,
+	'i',
+);
+const SOUNDCLOUD_URL_RE = /https:\/\/soundcloud\.com\/[^\s?#]+/i;
 
 export function isHypedditUrl(value: string): boolean {
 	return value.startsWith('https://hypeddit.com/');
@@ -172,14 +180,32 @@ export function isBandcampUrl(value: string): boolean {
 	return BANDCAMP_URL_RE.test(value);
 }
 
-export function getGateProvider(value: string): GateProvider | null {
-	if (isHypedditUrl(value)) return 'hypeddit';
-	if (isDroploudUrl(value)) return 'droploud';
-	if (isGaterushUrl(value)) return 'gaterush';
-	if (isDownloadgaterUrl(value)) return 'downloadgater';
-	if (isBandcampUrl(value)) return 'bandcamp';
-	if (isSoundcloudUrl(value)) return 'soundcloud';
+export function isBandcampAlbumUrl(value: string): boolean {
+	return BANDCAMP_ALBUM_URL_RE.test(value);
+}
+
+/**
+ * Extract the canonical provider URL from a string (possibly with surrounding
+ * text). Prefer traditional gates, then Bandcamp, then SoundCloud.
+ */
+export function resolveGateProviderUrl(
+	value: string,
+): { url: string; provider: GateProvider } | null {
+	const traditional = matchTraditionalGateUrl(value);
+	if (traditional) return traditional;
+
+	const bandcamp = matchBandcampUrl(value);
+	if (bandcamp) return bandcamp;
+
+	const soundcloudMatch = value.match(SOUNDCLOUD_URL_RE)?.[0];
+	if (soundcloudMatch) {
+		return { url: soundcloudMatch, provider: 'soundcloud' };
+	}
 	return null;
+}
+
+export function getGateProvider(value: string): GateProvider | null {
+	return resolveGateProviderUrl(value)?.provider ?? null;
 }
 
 export function validateHypedditUrl(value: string): true | string {
@@ -190,7 +216,7 @@ export function validateHypedditUrl(value: string): true | string {
 }
 
 export function validateGateUrl(value: string): true | string {
-	if (!getGateProvider(value)) {
+	if (!resolveGateProviderUrl(value)) {
 		return 'A valid Hypeddit, Droploud, GateRush, DownloadGater, Bandcamp, or SoundCloud URL is required';
 	}
 	return true;
@@ -217,8 +243,9 @@ function normalizeGateUrl(
 function matchTraditionalGateUrl(
 	value: string,
 ): { url: string; provider: GateProvider } | null {
-	if (isHypedditUrl(value)) {
-		return { url: value, provider: 'hypeddit' };
+	const hypedditMatch = value.match(HYPEDDIT_URL_RE)?.[0];
+	if (hypedditMatch) {
+		return { url: hypedditMatch, provider: 'hypeddit' };
 	}
 	const droploudMatch = value.match(DROPLOUD_URL_RE)?.[0];
 	if (droploudMatch) {

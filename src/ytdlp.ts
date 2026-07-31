@@ -3,6 +3,7 @@ import { basename, join } from 'node:path';
 import { execa } from 'execa';
 import { lookpath } from 'find-bin';
 import type { JobProgress } from './types';
+import { isBandcampAlbumUrl } from './utils';
 
 type ProgressCallback = (
 	stage: JobProgress['stage'],
@@ -17,8 +18,8 @@ export type YtDlpDownloadOptions = {
 };
 
 const DOWNLOADS_DIR = './downloads';
-const BANDCAMP_ALBUM_RE =
-	/https?:\/\/(?:[\w-]+\.)?bandcamp\.com\/album\/[^\s?#]+/i;
+const YTDLP_DOWNLOAD_TIMEOUT_MS = 10 * 60_000;
+const YTDLP_METADATA_TIMEOUT_MS = 60_000;
 
 type FlatEntry = {
 	id?: string;
@@ -64,10 +65,6 @@ export function titleMatchScore(candidate: string, wanted: string): number {
 	}
 	const union = tokensA.size + tokensB.size - inter;
 	return union === 0 ? 0 : inter / union;
-}
-
-function isBandcampAlbumUrl(url: string): boolean {
-	return BANDCAMP_ALBUM_RE.test(url);
 }
 
 /**
@@ -121,18 +118,22 @@ export class YtDlpDownloader {
 
 		const outputTemplate = join(DOWNLOADS_DIR, '%(title)s [%(id)s].%(ext)s');
 
-		const { stdout } = await execa(ytDlpBin, [
-			'--no-mtime',
-			'--no-playlist',
-			'-f',
-			'bestaudio/best',
-			'-o',
-			outputTemplate,
-			'--print',
-			'after_move:filepath',
-			'--no-warnings',
-			downloadUrl,
-		]);
+		const { stdout } = await execa(
+			ytDlpBin,
+			[
+				'--no-mtime',
+				'--no-playlist',
+				'-f',
+				'bestaudio/best',
+				'-o',
+				outputTemplate,
+				'--print',
+				'after_move:filepath',
+				'--no-warnings',
+				downloadUrl,
+			],
+			{ timeout: YTDLP_DOWNLOAD_TIMEOUT_MS, killSignal: 'SIGTERM' },
+		);
 
 		const filepaths = stdout
 			.trim()
@@ -194,12 +195,11 @@ export class YtDlpDownloader {
 			`${this.sourceLabel}: album URL — matching track “${matchTitle}”…`,
 		);
 
-		const { stdout } = await execa(ytDlpBin, [
-			'--flat-playlist',
-			'-J',
-			'--no-warnings',
-			albumUrl,
-		]);
+		const { stdout } = await execa(
+			ytDlpBin,
+			['--flat-playlist', '-J', '--no-warnings', albumUrl],
+			{ timeout: YTDLP_METADATA_TIMEOUT_MS, killSignal: 'SIGTERM' },
+		);
 
 		const data = JSON.parse(stdout) as {
 			_type?: string;
