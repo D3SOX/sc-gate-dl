@@ -63,6 +63,38 @@ const SP_AUTH_ACCEPT_BUTTON = '[data-testid="auth-accept"]';
 // Download gate
 const DW_DOWNLOAD_BUTTON = '#gateDownloadButton';
 
+// Droploud gate
+const DROPLOUD_FREE_DOWNLOAD_BUTTON = '.ds-free-dl.dtr-card-cta';
+const DROPLOUD_STEP_PANE = '.dtr-card-pane-step';
+const DROPLOUD_OPEN_LINK_BUTTONS = '.dtr-open-grid .ds-btn';
+const DROPLOUD_CONFIRM_BUTTON = 'button.dtr-confirm-btn';
+const DROPLOUD_SC_COMMENT_INPUT = '#dtr-sc-comment-input';
+const DROPLOUD_UNLOCKED_TITLE = '.dtr-card-title';
+const DROPLOUD_DOWNLOAD_BUTTON = '.ds-free-dl.dtr-card-cta';
+const DROPLOUD_EMAIL_WRAP = '.dtr-email-wrap';
+const DROPLOUD_EMAIL_INPUT = '.dtr-email-wrap input[type="email"]';
+const DROPLOUD_EMAIL_CONSENT = '.dtr-email-wrap input[type="checkbox"]';
+const DROPLOUD_DLFOLLOW_WRAP = '.dtr-dlfollow-wrap';
+const DROPLOUD_DLFOLLOW_SKIP = 'button.dtr-dlfollow-skip';
+const DROPLOUD_DISCLAIMER_CHECK = '.dtr-social-wrap input[type="checkbox"]';
+
+// GateRush gate
+const GATERUSH_COOKIE_ACCEPT = '#acceptAllBtn';
+const GATERUSH_EMAIL_FORM = '#emailForm';
+const GATERUSH_NAME_INPUT = '#nameInput';
+const GATERUSH_EMAIL_INPUT = '#emailInput';
+const GATERUSH_EMAIL_SUBMIT = '#btnSaveEmail';
+const GATERUSH_COMMENT_FORM = '#commentForm';
+const GATERUSH_COMMENT_INPUT = '#commentInput';
+const GATERUSH_SC_CONNECT = '#btnSoundCloudConnect';
+const GATERUSH_IG_ACCOUNT_BUTTON = '.btnIgAccount';
+const GATERUSH_DOWNLOAD_BUTTON = '#btnDownload';
+const GATERUSH_PROGRESS_STEP = '.progress-step';
+
+// DownloadGater gate
+const DOWNLOADGATER_FREE_DOWNLOAD = 'button.download-button';
+const DOWNLOADGATER_DOWNLOAD_FILE = 'button.download-button';
+
 export default {
 	SOUNDCLOUD_LIBRARY_LINK,
 	SOUNDCLOUD_CAPTCHA_CONTAINER,
@@ -104,4 +136,30 @@ export default {
 	SP_LOGIN_BUTTON,
 	SP_AUTH_ACCEPT_BUTTON,
 	DW_DOWNLOAD_BUTTON,
+	DROPLOUD_FREE_DOWNLOAD_BUTTON,
+	DROPLOUD_STEP_PANE,
+	DROPLOUD_OPEN_LINK_BUTTONS,
+	DROPLOUD_CONFIRM_BUTTON,
+	DROPLOUD_SC_COMMENT_INPUT,
+	DROPLOUD_UNLOCKED_TITLE,
+	DROPLOUD_DOWNLOAD_BUTTON,
+	DROPLOUD_EMAIL_WRAP,
+	DROPLOUD_EMAIL_INPUT,
+	DROPLOUD_EMAIL_CONSENT,
+	DROPLOUD_DLFOLLOW_WRAP,
+	DROPLOUD_DLFOLLOW_SKIP,
+	DROPLOUD_DISCLAIMER_CHECK,
+	GATERUSH_COOKIE_ACCEPT,
+	GATERUSH_EMAIL_FORM,
+	GATERUSH_NAME_INPUT,
+	GATERUSH_EMAIL_INPUT,
+	GATERUSH_EMAIL_SUBMIT,
+	GATERUSH_COMMENT_FORM,
+	GATERUSH_COMMENT_INPUT,
+	GATERUSH_SC_CONNECT,
+	GATERUSH_IG_ACCOUNT_BUTTON,
+	GATERUSH_DOWNLOAD_BUTTON,
+	GATERUSH_PROGRESS_STEP,
+	DOWNLOADGATER_FREE_DOWNLOAD,
+	DOWNLOADGATER_DOWNLOAD_FILE,
 } as const;

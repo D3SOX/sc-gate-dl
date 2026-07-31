@@ -250,6 +250,26 @@
 	cursor: not-allowed;
 }
 
+.checkbox-row {
+	display: flex;
+	align-items: center;
+	gap: var(--space-sm);
+	color: var(--text-secondary);
+	font-size: 0.9rem;
+	cursor: pointer;
+}
+
+.checkbox-row input {
+	width: 16px;
+	height: 16px;
+	accent-color: var(--neon-orange);
+	cursor: pointer;
+}
+
+.checkbox-row input:disabled {
+	cursor: not-allowed;
+}
+
 /* Notice box */
 .notice {
 	display: flex;

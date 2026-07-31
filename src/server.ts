@@ -1,17 +1,21 @@
 import { join } from 'node:path';
 import type { SoundcloudTrack } from 'soundcloud.ts';
 import { AudioProcessor } from './audioProcessor';
+import { DownloadgaterDownloader } from './downloadgater';
+import { DroploudDownloader } from './droploud';
+import { GaterushDownloader } from './gaterush';
 import { HypedditDownloader } from './hypeddit';
 import { HypedditHttpDownloader } from './hypedditHttp';
 import { jobStore } from './jobStore';
 import { SoundcloudClient } from './soundcloud';
 import type { Job, Metadata } from './types';
 import {
-	extractHypedditUrl,
+	extractGateUrl,
 	getDefaultMetadata,
 	getFfmpegBin,
 	getFfprobeBin,
-	validateHypedditUrl,
+	getGateProvider,
+	validateGateUrl,
 	validateSoundcloudUrl,
 } from './utils';
 
@@ -26,14 +30,26 @@ function getRequiredEnv(name: string): string {
 	return value;
 }
 
+function getOptionalEnv(name: string): string | undefined {
+	return process.env[name] || undefined;
+}
+
 const SC_COMMENT = getRequiredEnv('SC_COMMENT');
-const HYPEDDIT_NAME = getRequiredEnv('HYPEDDIT_NAME');
-const HYPEDDIT_EMAIL = getRequiredEnv('HYPEDDIT_EMAIL');
+if (SC_COMMENT.trim().length < 2) {
+	throw new Error(
+		'SC_COMMENT must be at least 2 characters (Droploud disables Connect otherwise).',
+	);
+}
+const HYPEDDIT_NAME = getOptionalEnv('HYPEDDIT_NAME');
+const HYPEDDIT_EMAIL = getOptionalEnv('HYPEDDIT_EMAIL');
 
 const soundcloudClient = new SoundcloudClient();
 const audioProcessor = new AudioProcessor(ffmpegBin, ffprobeBin);
 
 let hypedditDownloader: HypedditDownloader | null = null;
+let droploudDownloader: DroploudDownloader | null = null;
+let gaterushDownloader: GaterushDownloader | null = null;
+let downloadgaterDownloader: DownloadgaterDownloader | null = null;
 
 function serializeTrack(track: SoundcloudTrack): Job['track'] {
 	return {
@@ -60,6 +76,13 @@ async function runDownloadProcess(jobId: string): Promise<void> {
 	const job = jobStore.get(jobId);
 	if (!job?.hypedditUrl) return;
 
+	const gateUrl = job.hypedditUrl;
+	const provider = getGateProvider(gateUrl);
+	if (!provider) {
+		jobStore.setError(jobId, 'Unsupported gate URL');
+		return;
+	}
+
 	try {
 		const emitProgress = (
 			stage: Job['progress']['stage'],
@@ -68,57 +91,113 @@ async function runDownloadProcess(jobId: string): Promise<void> {
 			extra?: Partial<Job['progress']>,
 		) => jobStore.updateProgress(jobId, stage, message, percent, extra);
 
-		// Fast path: gates that are purely client-side (email + social follow/like/
-		// repost buttons) can be satisfied with plain HTTP, skipping the browser.
-		jobStore.updateProgress(
-			jobId,
-			'handling_gates',
-			'Trying browserless download...',
-			15,
-		);
-		const httpDownloader = new HypedditHttpDownloader(
-			{
-				name: HYPEDDIT_NAME,
-				email: HYPEDDIT_EMAIL,
-				comment: SC_COMMENT,
-				headless: true,
-			},
-			emitProgress,
-		);
-		let downloadFilename = await httpDownloader.tryDownload(job.hypedditUrl);
+		// CloakBrowser + DataDome: headed is more reliable (captcha reuses main session).
+		const headless = process.env.BROWSER_HEADLESS === 'true';
+		const gateConfig = {
+			name: HYPEDDIT_NAME,
+			email: HYPEDDIT_EMAIL,
+			comment: SC_COMMENT,
+			headless,
+		};
 
-		// Fall back to the browser for gates that need real verification (Spotify, ...).
-		if (!downloadFilename) {
+		let downloadFilename: string | null = null;
+
+		if (provider === 'droploud') {
 			jobStore.updateProgress(
 				jobId,
 				'initializing_browser',
-				'Launching browser...',
+				'Launching browser for Droploud...',
 				10,
 			);
-
-			hypedditDownloader = new HypedditDownloader({
-				name: HYPEDDIT_NAME,
-				email: HYPEDDIT_EMAIL,
-				comment: SC_COMMENT,
-				headless: true,
-			});
-
-			hypedditDownloader.setProgressCallback(emitProgress);
-
-			await hypedditDownloader.initialize();
-
+			droploudDownloader = new DroploudDownloader(gateConfig);
+			droploudDownloader.setProgressCallback(emitProgress);
+			await droploudDownloader.initialize();
 			jobStore.updateProgress(
 				jobId,
 				'handling_gates',
-				'Processing Hypeddit gates...',
+				'Processing Droploud gates...',
 				25,
 			);
-
-			downloadFilename = await hypedditDownloader.downloadAudio(
-				job.hypedditUrl,
+			downloadFilename = await droploudDownloader.downloadAudio(gateUrl);
+			await droploudDownloader.close();
+			droploudDownloader = null;
+		} else if (provider === 'gaterush') {
+			jobStore.updateProgress(
+				jobId,
+				'initializing_browser',
+				'Launching browser for GateRush...',
+				10,
 			);
-			await hypedditDownloader.close();
-			hypedditDownloader = null;
+			gaterushDownloader = new GaterushDownloader(gateConfig);
+			gaterushDownloader.setProgressCallback(emitProgress);
+			await gaterushDownloader.initialize();
+			jobStore.updateProgress(
+				jobId,
+				'handling_gates',
+				'Processing GateRush gates...',
+				25,
+			);
+			downloadFilename = await gaterushDownloader.downloadAudio(gateUrl);
+			await gaterushDownloader.close();
+			gaterushDownloader = null;
+		} else if (provider === 'downloadgater') {
+			jobStore.updateProgress(
+				jobId,
+				'initializing_browser',
+				'Launching browser for DownloadGater...',
+				10,
+			);
+			downloadgaterDownloader = new DownloadgaterDownloader(gateConfig);
+			downloadgaterDownloader.setProgressCallback(emitProgress);
+			await downloadgaterDownloader.initialize();
+			jobStore.updateProgress(
+				jobId,
+				'handling_gates',
+				'Processing DownloadGater gates...',
+				25,
+			);
+			downloadFilename = await downloadgaterDownloader.downloadAudio(gateUrl);
+			await downloadgaterDownloader.close();
+			downloadgaterDownloader = null;
+		} else {
+			// Fast path: gates that are purely client-side (email + social follow/like/
+			// repost buttons) can be satisfied with plain HTTP, skipping the browser.
+			jobStore.updateProgress(
+				jobId,
+				'handling_gates',
+				'Trying browserless download...',
+				15,
+			);
+			const httpDownloader = new HypedditHttpDownloader(
+				gateConfig,
+				emitProgress,
+			);
+			downloadFilename = await httpDownloader.tryDownload(gateUrl);
+
+			// Fall back to the browser for gates that need real verification (Spotify, ...).
+			if (!downloadFilename) {
+				jobStore.updateProgress(
+					jobId,
+					'initializing_browser',
+					'Launching browser...',
+					10,
+				);
+
+				hypedditDownloader = new HypedditDownloader(gateConfig);
+				hypedditDownloader.setProgressCallback(emitProgress);
+				await hypedditDownloader.initialize();
+
+				jobStore.updateProgress(
+					jobId,
+					'handling_gates',
+					'Processing Hypeddit gates...',
+					25,
+				);
+
+				downloadFilename = await hypedditDownloader.downloadAudio(gateUrl);
+				await hypedditDownloader.close();
+				hypedditDownloader = null;
+			}
 		}
 
 		if (!downloadFilename) {
@@ -149,6 +228,18 @@ async function runDownloadProcess(jobId: string): Promise<void> {
 		if (hypedditDownloader) {
 			await hypedditDownloader.close();
 			hypedditDownloader = null;
+		}
+		if (droploudDownloader) {
+			await droploudDownloader.close();
+			droploudDownloader = null;
+		}
+		if (gaterushDownloader) {
+			await gaterushDownloader.close();
+			gaterushDownloader = null;
+		}
+		if (downloadgaterDownloader) {
+			await downloadgaterDownloader.close();
+			downloadgaterDownloader = null;
 		}
 		const message =
 			error instanceof Error ? error.message : 'Unknown error occurred';
@@ -203,7 +294,7 @@ const server = Bun.serve({
 				}),
 		},
 		'/': () =>
-			new Response('Hypeddit SoundCloud Downloader API is running!', {
+			new Response('sc-gate-dl API is running!', {
 				headers: corsHeaders,
 			}),
 
@@ -309,7 +400,7 @@ const server = Bun.serve({
 
 					const hypedditUrl = skipAutomaticHypedditFetch
 						? null
-						: extractHypedditUrl(track);
+						: extractGateUrl(track);
 					const defaultMetadata = getDefaultMetadata(track);
 
 					const updatedJob = jobStore.update(job.id, {
@@ -321,8 +412,8 @@ const server = Bun.serve({
 							message: hypedditUrl
 								? 'Ready to start download'
 								: skipAutomaticHypedditFetch
-									? 'Automatic Hypeddit lookup skipped - manual input required'
-									: 'Hypeddit URL not found - manual input required',
+									? 'Automatic gate lookup skipped - manual input required'
+									: 'Gate URL not found - manual input required',
 							percent: 10,
 						},
 					});
@@ -367,12 +458,12 @@ const server = Bun.serve({
 
 					if (!hypedditUrl) {
 						return jsonResponse(
-							{ error: 'hypedditUrl is required' },
+							{ error: 'Gate URL (hypedditUrl) is required' },
 							{ status: 400 },
 						);
 					}
 
-					const validation = validateHypedditUrl(hypedditUrl);
+					const validation = validateGateUrl(hypedditUrl);
 					if (validation !== true) {
 						return jsonResponse({ error: validation }, { status: 400 });
 					}
@@ -402,10 +493,7 @@ const server = Bun.serve({
 					}
 
 					if (!job.hypedditUrl) {
-						return jsonResponse(
-							{ error: 'Hypeddit URL not set' },
-							{ status: 400 },
-						);
+						return jsonResponse({ error: 'Gate URL not set' }, { status: 400 });
 					}
 
 					if (
@@ -662,6 +750,18 @@ const server = Bun.serve({
 		if (hypedditDownloader) {
 			await hypedditDownloader.close();
 			hypedditDownloader = null;
+		}
+		if (droploudDownloader) {
+			await droploudDownloader.close();
+			droploudDownloader = null;
+		}
+		if (gaterushDownloader) {
+			await gaterushDownloader.close();
+			gaterushDownloader = null;
+		}
+		if (downloadgaterDownloader) {
+			await downloadgaterDownloader.close();
+			downloadgaterDownloader = null;
 		}
 		return jsonResponse({ error: 'Internal Server Error' }, { status: 500 });
 	},

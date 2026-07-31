@@ -152,10 +152,16 @@ export class HypedditHttpDownloader {
 			});
 
 			if (gate.steps.includes('email')) {
+				if (!this.config.email) {
+					console.log(
+						'Browserless: email gate needs HYPEDDIT_EMAIL, falling back to browser',
+					);
+					return null;
+				}
 				await this.post('/verifyEmailAddress', finalUrl, {
 					validateEmailAddress: this.config.email,
 					fan_gate_id: gate.fanGateId,
-					email_name: this.config.name,
+					email_name: this.config.name ?? '',
 					adcode: '',
 					hypesource: '',
 				});
@@ -192,7 +198,7 @@ export class HypedditHttpDownloader {
 			page: 'nonsingle',
 			is_skippable: gate.isSkippable,
 			steps: gate.steps.join(','),
-			email: this.config.email,
+			email: this.config.email ?? '',
 			download_action: 'DOWNLOAD',
 			wrndk: gate.wrndk,
 			is_mobile: '',

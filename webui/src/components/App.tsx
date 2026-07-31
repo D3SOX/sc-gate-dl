@@ -45,6 +45,7 @@ export default function App() {
 	const [step, setStep] = useState<Step>('url');
 	const [soundcloudUrl, setSoundcloudUrl] = useState('');
 	const [hypedditUrlInput, setHypedditUrlInput] = useState('');
+	const [skipAutomaticHypedditFetch, setSkipAutomaticHypedditFetch] = useState(false);
 	const [job, setJob] = useState<JobState>({
 		jobId: null,
 		track: null,
@@ -135,7 +136,10 @@ export default function App() {
 			const response = await fetch(`${API_BASE}/api/job`, {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ soundcloudUrl }),
+				body: JSON.stringify({
+					soundcloudUrl,
+					skipAutomaticHypedditFetch,
+				}),
 			});
 
 			const data = await response.json();
@@ -158,7 +162,7 @@ export default function App() {
 				setMetadata(data.defaultMetadata);
 			}
 
-			if (data.needsHypedditUrl) {
+			if (skipAutomaticHypedditFetch || data.needsHypedditUrl) {
 				setStep('hypeddit');
 			} else {
 				// Auto-start download
@@ -316,6 +320,7 @@ export default function App() {
 	const handleReset = () => {
 		setSoundcloudUrl('');
 		setHypedditUrlInput('');
+		setSkipAutomaticHypedditFetch(false);
 		setJob({
 			jobId: null,
 			track: null,
@@ -389,9 +394,9 @@ export default function App() {
 			<header className="header">
 				<div className="logo">
 					<span className="logo-icon">&#9654;</span>
-					<h1>Hypeddit Downloader</h1>
+					<h1>sc-gate-dl</h1>
 				</div>
-				<p className="tagline">Download & tag SoundCloud tracks from Hypeddit</p>
+				<p className="tagline">Download & tag SoundCloud tracks from Hypeddit, Droploud, GateRush, or DownloadGater</p>
 			</header>
 
 			{/* Step indicator */}
@@ -403,7 +408,7 @@ export default function App() {
 				<div className="step-connector" />
 				<div className={`step ${step === 'hypeddit' ? 'active' : ''} ${['progress', 'metadata', 'complete'].includes(step) ? 'completed' : ''}`}>
 					<span className="step-number">2</span>
-					<span className="step-label">Hypeddit</span>
+					<span className="step-label">Gate</span>
 				</div>
 				<div className="step-connector" />
 				<div className={`step ${step === 'progress' ? 'active' : ''} ${['metadata', 'complete'].includes(step) ? 'completed' : ''}`}>
@@ -467,6 +472,16 @@ export default function App() {
 								disabled={isLoading}
 							/>
 						</div>
+						<label className="checkbox-row" htmlFor="skip-hypeddit-fetch">
+							<input
+								id="skip-hypeddit-fetch"
+								type="checkbox"
+								checked={skipAutomaticHypedditFetch}
+								onChange={(e) => setSkipAutomaticHypedditFetch(e.target.checked)}
+								disabled={isLoading}
+							/>
+							<span>Skip automatic gate link fetching</span>
+						</label>
 						<button type="submit" className="btn-primary" disabled={isLoading}>
 							{isLoading ? (
 								<>
@@ -480,24 +495,26 @@ export default function App() {
 					</form>
 				)}
 
-				{/* Step 2: Hypeddit URL (if needed) */}
+				{/* Step 2: Gate URL (if needed) */}
 				{step === 'hypeddit' && (
 					<form onSubmit={handleHypedditSubmit} className="form animate-slide-up">
 						<div className="notice">
 							<span className="notice-icon">i</span>
 							<p>
-								Hypeddit URL not found in track. Please enter it manually.
+								{skipAutomaticHypedditFetch
+									? 'Automatic gate lookup is disabled. Please enter the URL manually.'
+									: 'Gate URL not found in track. Please enter a Hypeddit, Droploud, GateRush, or DownloadGater URL manually.'}
 							</p>
 						</div>
 						<div className="form-group">
-							<label htmlFor="hypeddit-url">Hypeddit URL</label>
+							<label htmlFor="hypeddit-url">Gate URL</label>
 							<input
 								id="hypeddit-url"
 								type="url"
 								name="hypeddit-url"
 								value={hypedditUrlInput}
 								onChange={(e) => setHypedditUrlInput(e.target.value)}
-								placeholder="https://hypeddit.com/..."
+								placeholder="https://hypeddit.com/... / droploud.com/gate/... / gaterush.me/... / downloadgater.com/g/..."
 								autoComplete="off"
 								required
 								disabled={isLoading}

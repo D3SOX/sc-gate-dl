@@ -10,8 +10,10 @@ export interface LocalCookieData {
 }
 
 export interface HypedditConfig {
-	name: string;
-	email: string;
+	/** Optional — only needed for Hypeddit/GateRush email gates that ask for a name. */
+	name?: string;
+	/** Optional — only needed for Hypeddit/GateRush email gates. */
+	email?: string;
 	comment: string;
 	headless: boolean;
 }

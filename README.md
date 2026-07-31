@@ -1,10 +1,10 @@
-# Hypeddit SoundCloud Downloader
+# sc-gate-dl
 
-A simple tool that automates downloading audio from Hypeddit posts and enriches them with metadata from SoundCloud.
+Download and tag SoundCloud tracks unlocked via Hypeddit, Droploud, or GateRush gates.
 
 ## Features
 
-- 🎵 Automatically download audio from Hypeddit posts
+- 🎵 Automatically download audio from Hypeddit, Droploud, and GateRush gates
 - ⚡ Browserless fast path that skips the browser for gates that don't need real verification (see [How It Works](#how-it-works))
 - 🔄 Handles multiple gate types (see [How It Works](#how-it-works))
 - 📝 Fetches metadata from the provided SoundCloud link
@@ -17,7 +17,7 @@ A simple tool that automates downloading audio from Hypeddit posts and enriches 
 
 - [**Bun**](https://bun.sh) - JavaScript runtime and package manager
 - [**ffmpeg**](https://ffmpeg.org) - Must be installed and available in your `PATH`
-- **SoundCloud account** - It is recommended to create a throwaway account for this. Even though there were no reports of accounts getting banned I can't guarantee it. Also most Hypeddit downloads require reposts/likes/follows which you might not want to do with your main account
+- **SoundCloud account** - It is recommended to create a throwaway account for this. Even though there were no reports of accounts getting banned I can't guarantee it. Also most gate downloads require reposts/likes/follows which you might not want to do with your main account
 - **Spotify account** (optional) - Required when a Hypeddit post has an unskippable Spotify gate. I also recommend creating a throwaway account as most Hypeddit downloads require saving playlists/songs to your library or following artists which you might not want on your main account.
 
 ## Installation
@@ -61,6 +61,8 @@ For `HYPEDDIT_EMAIL` you can enter any valid email address (For example grab one
 5. Go to the **Payload** tab
 6. You should see your client id in the **Query String Parameters** section, and your oauth token (`access_token`) in the **Request Payload** section
 7. Copy these values to your `.env` file as `SC_CLIENT_ID` and `SC_OAUTH_TOKEN`
+
+If you want to export data from a separate SoundCloud account, add that account's credentials as `MANAGED_SC_CLIENT_ID` and `MANAGED_SC_OAUTH_TOKEN`.
 
 ### Cookies
 
@@ -114,6 +116,16 @@ bun start https://soundcloud.com/artist/track
 
 The final MP3 file will be saved in the `./downloads` directory with proper metadata and artwork embedded.
 
+### Managed account export
+
+To export the followed users, liked tracks, reposted tracks, and playlists from the separate managed SoundCloud account in your `.env`, run:
+
+```bash
+bun manage-acc
+```
+
+The export will be written to a timestamped directory inside `./exports` and includes `playlists.json` with playlist track data. `reposted-playlists.json` is also included as an extra export.
+
 ### Web UI
 
 There is now also an experimental (vibe-coded) web UI for the tool. You can start it by running
@@ -140,6 +152,8 @@ If it's the first time you're running it you will need to initialize the logins 
 - YouTube gate: Handles YouTube subscribe requirements (This gets bypassed as it does not actually require subscribing)
 - Spotify gate: Authorizes Spotify access
 - Download gate: Triggers the audio download
+
+Droploud and GateRush gates are handled via their own downloaders with similar email / social unlock flows.
 
 **File Processing**:
 

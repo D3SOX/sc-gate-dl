@@ -1,10 +1,19 @@
 import { confirm, input } from '@inquirer/prompts';
 import { AudioProcessor } from './audioProcessor';
 import { loadConfig, saveConfig } from './config';
+import { DownloadgaterDownloader } from './downloadgater';
+import { DroploudDownloader } from './droploud';
+import { GaterushDownloader } from './gaterush';
 import { HypedditDownloader } from './hypeddit';
 import { HypedditHttpDownloader } from './hypedditHttp';
 import { SoundcloudClient } from './soundcloud';
-import { getFfmpegBin, getFfprobeBin, validateSoundcloudUrl } from './utils';
+import {
+	getFfmpegBin,
+	getFfprobeBin,
+	getGateProvider,
+	validateGateUrl,
+	validateSoundcloudUrl,
+} from './utils';
 
 try {
 	const ffmpegBin = await getFfmpegBin();
@@ -14,13 +23,14 @@ try {
 	if (!SC_COMMENT) {
 		throw new Error('SC_COMMENT is required. Please set it in your .env file.');
 	}
-	const HYPEDDIT_NAME = process.env.HYPEDDIT_NAME;
-	const HYPEDDIT_EMAIL = process.env.HYPEDDIT_EMAIL;
-	if (!HYPEDDIT_NAME || !HYPEDDIT_EMAIL) {
+	if (SC_COMMENT.trim().length < 2) {
 		throw new Error(
-			'HYPEDDIT_NAME and HYPEDDIT_EMAIL are required. Please set them in your .env file.',
+			'SC_COMMENT must be at least 2 characters (Droploud disables Connect otherwise).',
 		);
 	}
+	// Optional — only required when a gate actually asks for name/email.
+	const HYPEDDIT_NAME = process.env.HYPEDDIT_NAME;
+	const HYPEDDIT_EMAIL = process.env.HYPEDDIT_EMAIL;
 
 	const config = await loadConfig();
 
@@ -43,20 +53,23 @@ try {
 	const soundcloudClient = new SoundcloudClient();
 	const track = await soundcloudClient.getTrack(soundcloudUrl);
 
-	// try to find Hypeddit URL from soundcloud track
-	let hypedditUrl: string | null = await soundcloudClient.getHypedditURL(track);
+	let gate = await soundcloudClient.getGateURL(track);
+	let gateUrl = gate?.url ?? null;
 
-	// if no Hypeddit URL was found, prompt the user for it
-	if (!hypedditUrl) {
-		hypedditUrl = await input({
-			message: 'Enter the URL of the Hypeddit post',
-			validate: (value) => {
-				if (!value?.startsWith('https://hypeddit.com/')) {
-					return 'A valid Hypeddit URL is required';
-				}
-				return true;
-			},
+	if (!gateUrl) {
+		gateUrl = await input({
+			message:
+				'Enter the Hypeddit, Droploud, GateRush, or DownloadGater gate URL',
+			validate: validateGateUrl,
 		});
+		const provider = getGateProvider(gateUrl);
+		gate = provider ? { url: gateUrl, provider, type: 'purchase_url' } : null;
+	}
+
+	if (!gateUrl || !gate) {
+		throw new Error(
+			'A valid Hypeddit, Droploud, GateRush, or DownloadGater URL is required',
+		);
 	}
 
 	const headless = config
@@ -75,35 +88,78 @@ try {
 				default: false,
 			});
 
-	const hypedditConfig = {
+	const gateConfig = {
 		name: HYPEDDIT_NAME,
 		email: HYPEDDIT_EMAIL,
 		comment: SC_COMMENT,
 		headless,
 	};
 
-	// Fast path: gates that are purely client-side (email + social follow/like/
-	// repost buttons) can be satisfied with plain HTTP, skipping the browser.
-	const httpDownloader = new HypedditHttpDownloader(hypedditConfig);
-	let downloadFilename = await httpDownloader.tryDownload(hypedditUrl);
+	let downloadFilename: string | null = null;
 	let usedBrowser = false;
 
-	// Fall back to the browser for gates that need real verification (Spotify, ...).
-	if (!downloadFilename) {
+	if (gate.provider === 'droploud') {
 		usedBrowser = true;
-		const hypedditDownloader = new HypedditDownloader(hypedditConfig);
-		await hypedditDownloader.initialize();
-
+		const droploudDownloader = new DroploudDownloader(gateConfig);
+		await droploudDownloader.initialize();
 		if (initializeLogins) {
-			await hypedditDownloader.prepareLogins();
+			await droploudDownloader.prepareLogins();
 			if (config) {
 				await saveConfig({ ...config, initializeLogins: false });
 				console.log('✓ Updated config.json: initializeLogins set to false');
 			}
 		}
+		downloadFilename = await droploudDownloader.downloadAudio(gateUrl);
+		await droploudDownloader.close();
+	} else if (gate.provider === 'gaterush') {
+		usedBrowser = true;
+		const gaterushDownloader = new GaterushDownloader(gateConfig);
+		await gaterushDownloader.initialize();
+		if (initializeLogins) {
+			await gaterushDownloader.prepareLogins();
+			if (config) {
+				await saveConfig({ ...config, initializeLogins: false });
+				console.log('✓ Updated config.json: initializeLogins set to false');
+			}
+		}
+		downloadFilename = await gaterushDownloader.downloadAudio(gateUrl);
+		await gaterushDownloader.close();
+	} else if (gate.provider === 'downloadgater') {
+		usedBrowser = true;
+		const downloadgaterDownloader = new DownloadgaterDownloader(gateConfig);
+		await downloadgaterDownloader.initialize();
+		if (initializeLogins) {
+			await downloadgaterDownloader.prepareLogins();
+			if (config) {
+				await saveConfig({ ...config, initializeLogins: false });
+				console.log('✓ Updated config.json: initializeLogins set to false');
+			}
+		}
+		downloadFilename = await downloadgaterDownloader.downloadAudio(gateUrl);
+		await downloadgaterDownloader.close();
+	} else {
+		// Fast path: gates that are purely client-side (email + social follow/like/
+		// repost buttons) can be satisfied with plain HTTP, skipping the browser.
+		const httpDownloader = new HypedditHttpDownloader(gateConfig);
+		downloadFilename = await httpDownloader.tryDownload(gateUrl);
 
-		downloadFilename = await hypedditDownloader.downloadAudio(hypedditUrl);
-		await hypedditDownloader.close();
+		// Fall back to the browser for gates that need real verification (Spotify, ...).
+		if (!downloadFilename) {
+			usedBrowser = true;
+			const hypedditDownloader = new HypedditDownloader(gateConfig);
+			await hypedditDownloader.initialize();
+
+			if (initializeLogins) {
+				await hypedditDownloader.prepareLogins();
+				if (config) {
+					await saveConfig({ ...config, initializeLogins: false });
+					console.log('✓ Updated config.json: initializeLogins set to false');
+				}
+			}
+
+			downloadFilename = await hypedditDownloader.downloadAudio(gateUrl);
+			await hypedditDownloader.close();
+		}
 	}
 
 	// The browserless path never touches the SoundCloud account (it only declares
