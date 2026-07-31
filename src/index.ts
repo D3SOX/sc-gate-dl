@@ -147,13 +147,12 @@ try {
 			await downloadgaterDownloader.close();
 		}
 	} else {
-		// Fast path: gates that are purely client-side (email + social follow/like/
-		// repost buttons) can be satisfied with plain HTTP, skipping the browser.
+		// Hypeddit: always try plain HTTP first (email + social skip gates).
 		const httpDownloader = new HypedditHttpDownloader(gateConfig);
 		downloadFilename = await httpDownloader.tryDownload(gateUrl);
 
-		// Fall back to the browser for gates that need real verification (Spotify, ...).
-		if (!downloadFilename) {
+		// HTTP first. Browser fallback only when not headless (user wants a window).
+		if (!downloadFilename && !gateConfig.headless) {
 			usedBrowser = true;
 			const hypedditDownloader = new HypedditDownloader(gateConfig);
 			try {
@@ -171,6 +170,10 @@ try {
 			} finally {
 				await hypedditDownloader.close();
 			}
+		} else if (!downloadFilename && gateConfig.headless) {
+			console.log(
+				'Browserless: Hypeddit gate needs a browser (e.g. Spotify). Re-run with headless disabled to allow a browser fallback.',
+			);
 		}
 	}
 

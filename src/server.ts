@@ -1,5 +1,5 @@
-import { rm } from 'node:fs/promises';
-import { join } from 'node:path';
+import { cp, mkdir, rm } from 'node:fs/promises';
+import { basename, join } from 'node:path';
 import type { SoundcloudTrack } from 'soundcloud.ts';
 import { AudioProcessor } from './audioProcessor';
 import { DownloadgaterDownloader } from './downloadgater';
@@ -22,6 +22,8 @@ import {
 
 const ffmpegBin = await getFfmpegBin();
 const ffprobeBin = await getFfprobeBin();
+
+const SHARED_BROWSER_DATA = './browser-data';
 
 function getRequiredEnv(name: string): string {
 	const value = process.env[name];
@@ -57,6 +59,47 @@ const activeDownloaders = new Map<string, AnyDownloader>();
 const jobProfileDirs = new Map<string, string>();
 /** In-flight close+profile cleanup so SIGINT cannot delete a profile mid-close. */
 const closingJobs = new Map<string, Promise<void>>();
+
+/**
+ * Job profiles start empty, which drops the SoundCloud session from Initialize
+ * Logins (stored in ./browser-data). Seed each job dir from that shared profile
+ * so OAuth still sees a logged-in session while jobs stay isolated.
+ */
+async function prepareJobUserDataDir(jobId: string): Promise<string> {
+	const userDataDir = join(SHARED_BROWSER_DATA, 'jobs', jobId);
+	await rm(userDataDir, { recursive: true, force: true }).catch(() => {});
+	await mkdir(userDataDir, { recursive: true });
+
+	const sharedDefault = join(SHARED_BROWSER_DATA, 'Default');
+	const skipDirNames = new Set([
+		'Cache',
+		'Code Cache',
+		'GPUCache',
+		'GrShaderCache',
+		'ShaderCache',
+		'DawnGraphiteCache',
+		'DawnWebGPUCache',
+		'Service Worker',
+		'Blob',
+		'File System',
+	]);
+
+	try {
+		await cp(sharedDefault, join(userDataDir, 'Default'), {
+			recursive: true,
+			filter: (source) => {
+				const name = basename(source);
+				if (name === 'LOCK' || name === 'SingletonLock') return false;
+				if (skipDirNames.has(name)) return false;
+				return true;
+			},
+		});
+	} catch {
+		// No shared profile yet — soundcloud-cookies.json injection still applies.
+	}
+
+	return userDataDir;
+}
 
 async function closeJobDownloader(jobId: string): Promise<void> {
 	const existing = closingJobs.get(jobId);
@@ -126,15 +169,17 @@ async function runDownloadProcess(jobId: string): Promise<void> {
 			extra?: Partial<Job['progress']>,
 		) => jobStore.updateProgress(jobId, stage, message, percent, extra);
 
-		// CloakBrowser + DataDome: headed is more reliable (captcha reuses main session).
-		const headless = process.env.BROWSER_HEADLESS === 'true';
-		const userDataDir = join('./browser-data', 'jobs', jobId);
-		const gateConfig = {
+		const gateConfigBase = {
 			name: HYPEDDIT_NAME,
 			email: HYPEDDIT_EMAIL,
 			comment: SC_COMMENT,
-			headless,
-			userDataDir,
+			headless: job.headless,
+		};
+
+		const prepareBrowserConfig = async () => {
+			const userDataDir = await prepareJobUserDataDir(jobId);
+			jobProfileDirs.set(jobId, userDataDir);
+			return { ...gateConfigBase, userDataDir };
 		};
 
 		let downloadFilename: string | null = null;
@@ -146,8 +191,9 @@ async function runDownloadProcess(jobId: string): Promise<void> {
 				'Launching browser for Droploud...',
 				10,
 			);
-			const droploudDownloader = new DroploudDownloader(gateConfig);
-			jobProfileDirs.set(jobId, userDataDir);
+			const droploudDownloader = new DroploudDownloader(
+				await prepareBrowserConfig(),
+			);
 			activeDownloaders.set(jobId, droploudDownloader);
 			droploudDownloader.setProgressCallback(emitProgress);
 			await droploudDownloader.initialize();
@@ -166,8 +212,9 @@ async function runDownloadProcess(jobId: string): Promise<void> {
 				'Launching browser for GateRush...',
 				10,
 			);
-			const gaterushDownloader = new GaterushDownloader(gateConfig);
-			jobProfileDirs.set(jobId, userDataDir);
+			const gaterushDownloader = new GaterushDownloader(
+				await prepareBrowserConfig(),
+			);
 			activeDownloaders.set(jobId, gaterushDownloader);
 			gaterushDownloader.setProgressCallback(emitProgress);
 			await gaterushDownloader.initialize();
@@ -186,8 +233,9 @@ async function runDownloadProcess(jobId: string): Promise<void> {
 				'Launching browser for DownloadGater...',
 				10,
 			);
-			const downloadgaterDownloader = new DownloadgaterDownloader(gateConfig);
-			jobProfileDirs.set(jobId, userDataDir);
+			const downloadgaterDownloader = new DownloadgaterDownloader(
+				await prepareBrowserConfig(),
+			);
 			activeDownloaders.set(jobId, downloadgaterDownloader);
 			downloadgaterDownloader.setProgressCallback(emitProgress);
 			await downloadgaterDownloader.initialize();
@@ -200,31 +248,33 @@ async function runDownloadProcess(jobId: string): Promise<void> {
 			downloadFilename = await downloadgaterDownloader.downloadAudio(gateUrl);
 			await closeJobDownloader(jobId);
 		} else {
-			// Fast path: gates that are purely client-side (email + social follow/like/
-			// repost buttons) can be satisfied with plain HTTP, skipping the browser.
+			// Hypeddit: always try plain HTTP first (email + social skip gates).
 			jobStore.updateProgress(
 				jobId,
 				'handling_gates',
-				'Trying browserless download...',
+				'Trying browserless Hypeddit download...',
 				15,
 			);
 			const httpDownloader = new HypedditHttpDownloader(
-				gateConfig,
+				gateConfigBase,
 				emitProgress,
 			);
 			downloadFilename = await httpDownloader.tryDownload(gateUrl);
 
-			// Fall back to the browser for gates that need real verification (Spotify, ...).
-			if (!downloadFilename) {
+			// Always try HTTP first. Open a browser only when the user checked
+			// “Show browser window” (headful) and the gate needs real verification
+			// (e.g. Spotify). Headless stays fully browserless for Hypeddit.
+			if (!downloadFilename && !job.headless) {
 				jobStore.updateProgress(
 					jobId,
 					'initializing_browser',
-					'Launching browser...',
+					'Launching browser for Hypeddit...',
 					10,
 				);
 
-				const hypedditDownloader = new HypedditDownloader(gateConfig);
-				jobProfileDirs.set(jobId, userDataDir);
+				const hypedditDownloader = new HypedditDownloader(
+					await prepareBrowserConfig(),
+				);
 				activeDownloaders.set(jobId, hypedditDownloader);
 				hypedditDownloader.setProgressCallback(emitProgress);
 				await hypedditDownloader.initialize();
@@ -238,6 +288,10 @@ async function runDownloadProcess(jobId: string): Promise<void> {
 
 				downloadFilename = await hypedditDownloader.downloadAudio(gateUrl);
 				await closeJobDownloader(jobId);
+			} else if (!downloadFilename && job.headless) {
+				console.log(
+					'Browserless: Hypeddit gate needs a browser (e.g. Spotify). Enable “Show browser window (headful)” to continue.',
+				);
 			}
 		}
 
@@ -531,6 +585,15 @@ const server = Bun.serve({
 							{ error: 'Job is already in progress or completed' },
 							{ status: 400 },
 						);
+					}
+
+					try {
+						const body = (await req.json()) as { headless?: boolean };
+						if (typeof body.headless === 'boolean') {
+							jobStore.update(jobId, { headless: body.headless });
+						}
+					} catch {
+						// No/empty JSON body — keep job default / BROWSER_HEADLESS
 					}
 
 					runDownloadProcess(jobId);

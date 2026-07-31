@@ -53,27 +53,59 @@ export class SoundcloudClient {
 	}
 
 	/**
-	 * Repost a track (PUT me/track_reposts/:id) using the same soundcloud.ts API
-	 * path as deleteV2. DataDome protects this write; DELETE cleanup is not.
-	 * Falls back to Chrome-TLS curl (+ optional residential proxy) when Bun is blocked.
+	 * True if this track is already in the account's reposts (GET, not DataDome PUT).
+	 */
+	async isTrackReposted(trackUrlOrId: string): Promise<boolean> {
+		const track = await this.getTrack(trackUrlOrId);
+		const trackId = Number(track.id);
+		try {
+			const reposts = await this.paginateCollection<
+				number | { id?: number | string }
+			>('me/track_reposts/ids', { limit: 200, offset: 0 });
+			return reposts.some((entry) => {
+				const id = typeof entry === 'number' ? entry : Number(entry?.id);
+				return id === trackId;
+			});
+		} catch (error) {
+			const message = error instanceof Error ? error.message : String(error);
+			console.warn(
+				`SoundCloud isTrackReposted check failed for ${trackId}: ${message.slice(0, 160)}`,
+			);
+			throw error;
+		}
+	}
+
+	/**
+	 * Webi/MUI SoundCloud uses GraphQL `RepostTrack` (not classic PUT
+	 * me/track_reposts). Prefer that; fall back to PUT + Chrome-TLS curl.
 	 */
 	async repostTrack(trackUrlOrId: string): Promise<SoundcloudTrack> {
 		const track = await this.getTrack(trackUrlOrId);
-		const endpoint = `me/track_reposts/${track.id}`;
 
+		const gql = await this.repostTrackViaGraphql(track);
+		if (gql.ok) return track;
+
+		// Bun/fetch GraphQL is often DataDome 403; retry with Chrome TLS.
+		if (gql.status === 403 || /captcha-delivery/i.test(gql.body)) {
+			const chromeGql = await this.chromeTlsGraphqlRepost(track);
+			if (chromeGql.ok) return track;
+			gql.status = chromeGql.status;
+			gql.reason = chromeGql.reason;
+			gql.body = chromeGql.body;
+		}
+
+		const endpoint = `me/track_reposts/${track.id}`;
 		try {
 			await this.soundcloud.api.putV2(endpoint);
 			return track;
 		} catch (error) {
 			const message = error instanceof Error ? error.message : String(error);
 			if (!/status code 403/i.test(message) && !/403/.test(message)) {
-				// 422/409 from some gateways — treat as already reposted if we can detect
 				if (/status code (422|409)/i.test(message)) return track;
 				throw error;
 			}
 		}
 
-		// Bun TLS is often flagged for engagement PUTs; mirror real Chrome via curl-impersonate.
 		const chromeResult = await this.chromeTlsMutate('PUT', endpoint);
 		if (
 			chromeResult.status === 200 ||
@@ -85,20 +117,268 @@ export class SoundcloudClient {
 			return track;
 		}
 
-		const captchaUrl = extractCaptchaDeliveryUrl(chromeResult.body);
+		const captchaUrl =
+			extractCaptchaDeliveryUrl(chromeResult.body) ||
+			extractCaptchaDeliveryUrl(gql.body);
 		const hardBlocked = /you have been blocked|unusual activity/i.test(
-			chromeResult.body,
+			`${chromeResult.body}\n${gql.body}`,
 		);
 		const proxyHint =
-			' Engagement PUTs are DataDome-protected (DELETE cleanup is not). Set SC_API_PROXY or CLOAKBROWSER_PROXY to a residential proxy and retry.';
+			' Engagement writes are DataDome-protected. Set SC_API_PROXY or CLOAKBROWSER_PROXY to a residential proxy and retry.';
 		const error = new Error(
 			hardBlocked
 				? `Failed to repost SoundCloud track ${track.id}: DataDome hard-blocked this IP.${proxyHint}`
-				: `Failed to repost SoundCloud track ${track.id}: HTTP ${chromeResult.status}${chromeResult.body ? ` ${chromeResult.body.slice(0, 200)}` : ''}.${proxyHint}`,
+				: `Failed to repost SoundCloud track ${track.id}: GraphQL ${gql.status}/${gql.reason}; PUT HTTP ${chromeResult.status}${chromeResult.body ? ` ${chromeResult.body.slice(0, 160)}` : ''}.${proxyHint}`,
 		) as Error & { captchaUrl?: string; status?: number };
-		error.status = chromeResult.status;
+		error.status = chromeResult.status || gql.status;
 		if (captchaUrl) error.captchaUrl = captchaUrl;
 		throw error;
+	}
+
+	/**
+	 * Same mutation the webi player fires on Repost
+	 * (apollographql-client-name: webi).
+	 */
+	async repostTrackViaGraphql(
+		track: SoundcloudTrack | string,
+	): Promise<{ ok: boolean; status: number; reason: string; body: string }> {
+		const resolved =
+			typeof track === 'string' ? await this.getTrack(track) : track;
+		const trackUrn = `soundcloud:tracks:${resolved.id}`;
+		const clientId =
+			this.soundcloud.api.clientId ?? process.env.SC_CLIENT_ID ?? '';
+		const oauthToken =
+			this.soundcloud.api.oauthToken ?? process.env.SC_OAUTH_TOKEN ?? '';
+
+		const url = new URL('https://graph.soundcloud.com/graphql');
+		url.searchParams.set('client_id', clientId);
+
+		const query = `
+    mutation RepostTrack($trackUrn: ID!) {
+  repostTrack(trackRepost: {urn: $trackUrn}) {
+    __typename
+    ... on Repost {
+      caption
+    }
+    ... on TrackRepostFailedError {
+      errorMessage
+    }
+    ... on TrackRepostCaptionFailedError {
+      errorMessage
+    }
+  }
+}
+    `;
+
+		const headers: Record<string, string> = {
+			accept: '*/*',
+			'content-type': 'application/json',
+			origin: 'https://soundcloud.com',
+			referer: 'https://soundcloud.com/',
+			'apollographql-client-name': 'webi',
+			'apollographql-client-version': '0.1.0',
+			'app-locale': 'en',
+			Authorization: `OAuth ${oauthToken}`,
+		};
+
+		try {
+			const cookies = await loadCookies('soundcloud-cookies.json');
+			const datadome = cookies.find((c) => c.name === 'datadome')?.value;
+			if (cookies.length) {
+				headers.Cookie = cookies.map((c) => `${c.name}=${c.value}`).join('; ');
+			}
+			if (datadome) headers['x-datadome-clientid'] = datadome;
+		} catch {
+			// optional
+		}
+
+		const response = await fetch(url, {
+			method: 'POST',
+			headers,
+			body: JSON.stringify({
+				query,
+				variables: { trackUrn },
+			}),
+			signal: AbortSignal.timeout(30_000),
+		});
+		const body = await response.text().catch(() => '');
+
+		if (!response.ok) {
+			return {
+				ok: false,
+				status: response.status,
+				reason: `http-${response.status}`,
+				body,
+			};
+		}
+
+		try {
+			const json = JSON.parse(body) as {
+				data?: {
+					repostTrack?: {
+						__typename?: string;
+						errorMessage?: string;
+					};
+				};
+				errors?: { message?: string }[];
+			};
+			const result = json.data?.repostTrack;
+			const typename = result?.__typename || '';
+			if (typename === 'Repost') {
+				return { ok: true, status: 200, reason: 'repost', body };
+			}
+			if (/FailedError$/i.test(typename)) {
+				return {
+					ok: false,
+					status: 200,
+					reason: result?.errorMessage || typename,
+					body,
+				};
+			}
+			if (json.errors?.length) {
+				return {
+					ok: false,
+					status: 200,
+					reason: json.errors[0]?.message || 'graphql-errors',
+					body,
+				};
+			}
+			// Already reposted often still returns a Repost-like payload; accept empty ok typename edge cases via ids check later
+			if (typename) {
+				return { ok: true, status: 200, reason: typename, body };
+			}
+		} catch {
+			// fall through
+		}
+
+		return { ok: false, status: response.status, reason: 'parse-failed', body };
+	}
+
+	private async chromeTlsGraphqlRepost(
+		track: SoundcloudTrack,
+	): Promise<{ ok: boolean; status: number; reason: string; body: string }> {
+		const curlBin =
+			(await lookpath('curl_chrome131')) ||
+			(await lookpath('curl_chrome116')) ||
+			(await lookpath('curl-impersonate'));
+		if (!curlBin) {
+			return {
+				ok: false,
+				status: 0,
+				reason: 'no-curl-chrome',
+				body: '',
+			};
+		}
+
+		const clientId =
+			this.soundcloud.api.clientId ?? process.env.SC_CLIENT_ID ?? '';
+		const oauthToken =
+			this.soundcloud.api.oauthToken ?? process.env.SC_OAUTH_TOKEN ?? '';
+		const trackUrn = `soundcloud:tracks:${track.id}`;
+		const url = `https://graph.soundcloud.com/graphql?client_id=${encodeURIComponent(clientId)}`;
+		const payload = JSON.stringify({
+			query: `
+    mutation RepostTrack($trackUrn: ID!) {
+  repostTrack(trackRepost: {urn: $trackUrn}) {
+    __typename
+    ... on Repost {
+      caption
+    }
+    ... on TrackRepostFailedError {
+      errorMessage
+    }
+    ... on TrackRepostCaptionFailedError {
+      errorMessage
+    }
+  }
+}
+    `,
+			variables: { trackUrn },
+		});
+
+		const escapeCurlConfig = (value: string) =>
+			value.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+		const configLines = [
+			`url = "${escapeCurlConfig(url)}"`,
+			`header = "Authorization: OAuth ${escapeCurlConfig(oauthToken)}"`,
+		];
+		const args = [
+			'-sS',
+			'-w',
+			'\n__STATUS__:%{http_code}',
+			'-X',
+			'POST',
+			'-H',
+			'Origin: https://soundcloud.com',
+			'-H',
+			'Referer: https://soundcloud.com/',
+			'-H',
+			'content-type: application/json',
+			'-H',
+			'apollographql-client-name: webi',
+			'-H',
+			'apollographql-client-version: 0.1.0',
+			'-H',
+			'app-locale: en',
+			'-H',
+			'accept: */*',
+			'--data-binary',
+			payload,
+		];
+
+		try {
+			const cookies = await loadCookies('soundcloud-cookies.json');
+			const datadome = cookies.find((c) => c.name === 'datadome')?.value;
+			if (cookies.length) {
+				args.push(
+					'-H',
+					`Cookie: ${cookies.map((c) => `${c.name}=${c.value}`).join('; ')}`,
+				);
+			}
+			if (datadome) args.push('-H', `x-datadome-clientid: ${datadome}`);
+		} catch {
+			// optional
+		}
+
+		const proxy =
+			process.env.SC_API_PROXY?.trim() ||
+			process.env.CLOAKBROWSER_PROXY?.trim() ||
+			process.env.PROXY_URL?.trim();
+		if (proxy) args.push('-x', proxy);
+		args.push('--config', '-');
+
+		const result = await execa(curlBin, args, {
+			input: `${configLines.join('\n')}\n`,
+			reject: false,
+		});
+		const output = `${result.stdout}${result.stderr}`;
+		const statusMatch = output.match(/__STATUS__:(\d+)\s*$/);
+		const status = statusMatch ? Number(statusMatch[1]) : 0;
+		const body = output.replace(/\n__STATUS__:\d+\s*$/, '');
+
+		if (status < 200 || status >= 300) {
+			return { ok: false, status, reason: `http-${status}`, body };
+		}
+		try {
+			const json = JSON.parse(body) as {
+				data?: { repostTrack?: { __typename?: string; errorMessage?: string } };
+			};
+			const typename = json.data?.repostTrack?.__typename || '';
+			if (
+				typename === 'Repost' ||
+				(!!typename && !/FailedError$/i.test(typename))
+			) {
+				return { ok: true, status, reason: typename || 'ok', body };
+			}
+			return {
+				ok: false,
+				status,
+				reason: json.data?.repostTrack?.errorMessage || typename || 'failed',
+				body,
+			};
+		} catch {
+			return { ok: false, status, reason: 'parse-failed', body };
+		}
 	}
 
 	/**

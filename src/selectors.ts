@@ -7,6 +7,19 @@ const SOUNDCLOUD_CAPTCHA_TRACK = '.sliderText';
 
 const SPOTIFY_ACCOUNT_SETTINGS_LINK = '#account-settings-link';
 
+// SoundCloud track page — classic (sc-button-*) and Next/MUI (aria-label)
+const SOUNDCLOUD_REPOST_BUTTON = 'button.sc-button-repost';
+const SOUNDCLOUD_REPOST_BUTTON_SELECTED =
+	'button.sc-button-repost.sc-button-selected';
+const SOUNDCLOUD_REPOST_BUTTON_MUI =
+	'button[aria-label="Repost"], button[title="Repost"], [title="Repost"] > button';
+const SOUNDCLOUD_SOUND_ACTIONS =
+	'.soundActions, .listenEngagement__footer, .listenEngagement__actions';
+const SOUNDCLOUD_COOKIE_ACCEPT =
+	'#onetrust-accept-btn-handler, #accept-recommended-btn-handler, button.ot-pc-refuse-all-handler, button.save-preference-btn-handler.onetrust-close-btn-handler';
+const SOUNDCLOUD_COOKIE_PC = '#onetrust-pc-sdk';
+const SOUNDCLOUD_COOKIE_BANNER = '#onetrust-banner-sdk';
+
 // Hypeddit smart link selection page (shown when the URL is a multi-platform smart link)
 const HYPEDDIT_SMART_LINK_SECTION = '.hype-smart-link-list-section';
 const HYPEDDIT_SMART_LINK_HYPEDDIT_ANCHOR = `${HYPEDDIT_SMART_LINK_SECTION} a.smartlink-click-button[data-type="hypeddit"]`;
@@ -101,6 +114,13 @@ export default {
 	SOUNDCLOUD_CAPTCHA_IFRAME,
 	SOUNDCLOUD_CAPTCHA_SLIDER,
 	SOUNDCLOUD_CAPTCHA_TRACK,
+	SOUNDCLOUD_REPOST_BUTTON,
+	SOUNDCLOUD_REPOST_BUTTON_SELECTED,
+	SOUNDCLOUD_REPOST_BUTTON_MUI,
+	SOUNDCLOUD_SOUND_ACTIONS,
+	SOUNDCLOUD_COOKIE_ACCEPT,
+	SOUNDCLOUD_COOKIE_PC,
+	SOUNDCLOUD_COOKIE_BANNER,
 	SPOTIFY_ACCOUNT_SETTINGS_LINK,
 	HYPEDDIT_SMART_LINK_SECTION,
 	HYPEDDIT_SMART_LINK_HYPEDDIT_ANCHOR,

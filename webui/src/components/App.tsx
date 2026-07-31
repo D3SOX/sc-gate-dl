@@ -46,6 +46,7 @@ export default function App() {
 	const [soundcloudUrl, setSoundcloudUrl] = useState('');
 	const [hypedditUrlInput, setHypedditUrlInput] = useState('');
 	const [skipAutomaticHypedditFetch, setSkipAutomaticHypedditFetch] = useState(false);
+	const [headfulMode, setHeadfulMode] = useState(false);
 	const [job, setJob] = useState<JobState>({
 		jobId: null,
 		track: null,
@@ -221,6 +222,8 @@ export default function App() {
 		try {
 			const response = await fetch(`${API_BASE}/api/job/${jobId}/start`, {
 				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ headless: !headfulMode }),
 			});
 
 			if (!response.ok) {
@@ -266,7 +269,7 @@ export default function App() {
 				error: err instanceof Error ? err.message : 'Unknown error',
 			}));
 		}
-	}, [showCleanupSoundcloudToast]);
+	}, [headfulMode, showCleanupSoundcloudToast]);
 
 	// Process metadata and finalize
 	const handleMetadataSubmit = async (e: React.FormEvent) => {
@@ -321,6 +324,7 @@ export default function App() {
 		setSoundcloudUrl('');
 		setHypedditUrlInput('');
 		setSkipAutomaticHypedditFetch(false);
+		setHeadfulMode(false);
 		setJob({
 			jobId: null,
 			track: null,
@@ -482,6 +486,16 @@ export default function App() {
 							/>
 							<span>Skip automatic gate link fetching</span>
 						</label>
+						<label className="checkbox-row" htmlFor="headful-mode">
+							<input
+								id="headful-mode"
+								type="checkbox"
+								checked={headfulMode}
+								onChange={(e) => setHeadfulMode(e.target.checked)}
+								disabled={isLoading}
+							/>
+							<span>Show browser window (headful)</span>
+						</label>
 						<button type="submit" className="btn-primary" disabled={isLoading}>
 							{isLoading ? (
 								<>
@@ -520,6 +534,16 @@ export default function App() {
 								disabled={isLoading}
 							/>
 						</div>
+						<label className="checkbox-row" htmlFor="headful-mode-gate">
+							<input
+								id="headful-mode-gate"
+								type="checkbox"
+								checked={headfulMode}
+								onChange={(e) => setHeadfulMode(e.target.checked)}
+								disabled={isLoading}
+							/>
+							<span>Show browser window (headful)</span>
+						</label>
 						<button type="submit" className="btn-primary" disabled={isLoading}>
 							{isLoading ? (
 								<>

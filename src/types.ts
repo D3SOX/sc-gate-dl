@@ -56,6 +56,8 @@ export interface Job {
 	id: string;
 	soundcloudUrl: string;
 	hypedditUrl: string | null;
+	/** Whether browser automation runs headless. Defaults to true. */
+	headless: boolean;
 	track: {
 		title: string;
 		artworkUrl: string | null;
