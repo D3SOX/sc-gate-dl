@@ -8,8 +8,8 @@ import Soundcloud, {
 	type SoundcloudUser,
 } from 'soundcloud.ts';
 import {
+	extractAndResolveGateUrl,
 	extractCaptchaDeliveryUrl,
-	extractGateUrl,
 	loadCookies,
 } from './utils';
 
@@ -518,7 +518,7 @@ export class SoundcloudClient {
 	}
 
 	async getGateURL(track: SoundcloudTrack) {
-		const gate = extractGateUrl(track);
+		const gate = await extractAndResolveGateUrl(track);
 		if (!gate) {
 			return null;
 		}
@@ -529,11 +529,13 @@ export class SoundcloudClient {
 					? 'GateRush'
 					: gate.provider === 'downloadgater'
 						? 'DownloadGater'
-						: gate.provider === 'bandcamp'
-							? 'Bandcamp'
-							: gate.provider === 'soundcloud'
-								? 'SoundCloud'
-								: 'Hypeddit';
+						: gate.provider === 'direct'
+							? 'direct download'
+							: gate.provider === 'bandcamp'
+								? 'Bandcamp'
+								: gate.provider === 'soundcloud'
+									? 'SoundCloud'
+									: 'Hypeddit';
 		const sourceLabel =
 			gate.type === 'purchase_url' ? 'purchase URL' : 'description';
 		console.log(

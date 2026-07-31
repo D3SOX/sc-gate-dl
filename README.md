@@ -1,10 +1,10 @@
 # sc-gate-dl
 
-Download and tag SoundCloud tracks unlocked via Hypeddit, Droploud, GateRush, DownloadGater, or Bandcamp.
+Download and tag SoundCloud tracks unlocked via Hypeddit, Droploud, GateRush, DownloadGater, Bandcamp, or a direct download link.
 
 ## Features
 
-- 🎵 Automatically download audio from Hypeddit, Droploud, GateRush, DownloadGater, and Bandcamp links
+- 🎵 Automatically download audio from Hypeddit, Droploud, GateRush, DownloadGater, Bandcamp, and direct file links (e.g. Dropbox `dl=1`)
 - ⚡ Browserless fast path that skips the browser for gates that don't need real verification (see [How It Works](#how-it-works))
 - 🔄 Handles multiple gate types (see [How It Works](#how-it-works))
 - 📝 Fetches metadata from the provided SoundCloud link
@@ -191,6 +191,8 @@ Panel size/position is remembered in `localStorage` (`sc-gate-dl-panel-geom`).
 Droploud, GateRush, and DownloadGater gates are handled via their own downloaders with similar email / social unlock flows.
 
 **Bandcamp / yt-dlp**: When a SoundCloud track’s purchase URL (or description) points at Bandcamp instead of a gate, the file is downloaded with [yt-dlp](https://github.com/yt-dlp/yt-dlp) (browserless). For Bandcamp album links, the matching track is selected from the SoundCloud title. Traditional unlock gates still take priority if both are present. If no gate or Bandcamp URL is found, the CLI and Web UI can fall back to downloading the SoundCloud track itself via yt-dlp.
+
+**Direct download**: Paste a file URL (Dropbox with `dl=1`, Google Drive file links, or any http(s) URL ending in a common audio/archive extension). The file is fetched browserlessly — useful when a gate is unsupported but you already have the download link.
 
 **File Processing**:
 

@@ -219,6 +219,8 @@ export type GateProvider =
 	| 'droploud'
 	| 'gaterush'
 	| 'downloadgater'
+	/** Direct HTTP(S) file URL (Dropbox, Drive, raw audio link, …). */
+	| 'direct'
 	| 'bandcamp'
 	/** Direct track download via yt-dlp (manual fallback, not auto-extracted). */
 	| 'soundcloud';
@@ -240,10 +242,16 @@ const BANDCAMP_URL_RE =
 const BANDCAMP_ALBUM_URL_RE =
 	/https?:\/\/(?:[\w-]+\.)?bandcamp\.com\/album\/[^\s?#]+/i;
 const SOUNDCLOUD_URL_RE = /https:\/\/soundcloud\.com\/[^\s?#]+/i;
+const ANY_HTTP_URL_RE = /https?:\/\/[^\s<>"')\]]+/gi;
 
-/** Strip prose/Markdown delimiters glued to the end of a matched URL. */
-function trimExtractedUrl(url: string): string {
-	return url.replace(/[)\]}>.,;:!?'"…]+$/g, '');
+const GATE_RESOLVE_USER_AGENT =
+	'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36';
+
+/** Strip prose/Markdown/JSON delimiters glued to the end of a matched URL. */
+export function trimExtractedUrl(url: string): string {
+	const cut = url.search(/["'<>\\]/);
+	const base = cut >= 0 ? url.slice(0, cut) : url;
+	return base.replace(/[)\]}>.,;:!?'"…]+$/g, '');
 }
 
 export function isHypedditUrl(value: string): boolean {
@@ -272,7 +280,8 @@ export function isBandcampAlbumUrl(value: string): boolean {
 
 /**
  * Extract the canonical provider URL from a string (possibly with surrounding
- * text). Prefer traditional gates, then Bandcamp, then SoundCloud.
+ * text). Prefer traditional gates, then Bandcamp, then direct file links, then
+ * SoundCloud.
  */
 export function resolveGateProviderUrl(
 	value: string,
@@ -282,6 +291,9 @@ export function resolveGateProviderUrl(
 
 	const bandcamp = matchBandcampUrl(value);
 	if (bandcamp) return bandcamp;
+
+	const direct = matchDirectDownloadUrl(value);
+	if (direct) return direct;
 
 	const soundcloudMatch = value.match(SOUNDCLOUD_URL_RE)?.[0];
 	if (soundcloudMatch) {
@@ -305,10 +317,14 @@ export function validateHypedditUrl(value: string): true | string {
 }
 
 export function validateGateUrl(value: string): true | string {
-	if (!resolveGateProviderUrl(value)) {
-		return 'A valid Hypeddit, Droploud, GateRush, DownloadGater, Bandcamp, or SoundCloud URL is required';
+	if (resolveGateProviderUrl(value)) {
+		return true;
 	}
-	return true;
+	// Unknown http(s) URLs may still resolve via redirects / embedded destinations.
+	if (/^https?:\/\/\S+/i.test(value.trim())) {
+		return true;
+	}
+	return 'A valid Hypeddit, Droploud, GateRush, DownloadGater, Bandcamp, direct download, SoundCloud, or resolvable http(s) URL is required';
 }
 
 function normalizeGateUrl(
@@ -318,7 +334,8 @@ function normalizeGateUrl(
 	if (
 		provider === 'gaterush' ||
 		provider === 'downloadgater' ||
-		provider === 'bandcamp'
+		provider === 'bandcamp' ||
+		provider === 'direct'
 	) {
 		return {
 			url: url.replace(/^http:\/\//i, 'https://'),
@@ -326,6 +343,17 @@ function normalizeGateUrl(
 		};
 	}
 	return { url, provider };
+}
+
+/** Known download gates / Bandcamp / direct files (excludes SoundCloud). */
+function matchKnownDownloadGateUrl(
+	value: string,
+): { url: string; provider: GateProvider } | null {
+	const traditional = matchTraditionalGateUrl(value);
+	if (traditional) return traditional;
+	const bandcamp = matchBandcampUrl(value);
+	if (bandcamp) return bandcamp;
+	return matchDirectDownloadUrl(value);
 }
 
 /** Traditional unlock gates (browser / HTTP). Prefer these over Bandcamp. */
@@ -364,9 +392,145 @@ function matchBandcampUrl(
 	return null;
 }
 
+function matchDirectDownloadUrl(
+	value: string,
+): { url: string; provider: GateProvider } | null {
+	// Inline host/ext checks (same rules as isDirectDownloadUrl) to avoid a
+	// circular import with directDownload.ts → trimExtractedUrl.
+	const httpMatch = value.match(/https?:\/\/[^\s<>"')\]]+/i)?.[0];
+	if (!httpMatch) return null;
+	const trimmed = trimExtractedUrl(httpMatch);
+	try {
+		const url = new URL(trimmed);
+		if (!/^https?:$/i.test(url.protocol)) return null;
+		const host = url.hostname.toLowerCase();
+		const isHost =
+			/(?:^|\.)dropbox\.com$/i.test(host) ||
+			/(?:^|\.)dropboxusercontent\.com$/i.test(host) ||
+			/(?:^|\.)drive\.google\.com$/i.test(host) ||
+			/(?:^|\.)docs\.google\.com$/i.test(host);
+		const isExt =
+			/\.(mp3|wav|flac|aiff|aif|m4a|aac|ogg|opus|zip|rar)(\?|$)/i.test(
+				url.pathname,
+			);
+		const isFlag =
+			url.searchParams.get('dl') === '1' || url.searchParams.has('raw');
+		if (!isHost && !isExt && !isFlag) return null;
+
+		let normalized = trimmed.replace(/^http:\/\//i, 'https://');
+		if (/(?:^|\.)dropbox\.com$/i.test(host)) {
+			const parsed = new URL(normalized);
+			parsed.searchParams.set('dl', '1');
+			normalized = parsed.toString();
+		} else {
+			const driveFile = url.pathname.match(/\/file\/d\/([^/]+)/);
+			if (/(?:^|\.)drive\.google\.com$/i.test(host) && driveFile?.[1]) {
+				normalized = `https://drive.google.com/uc?export=download&id=${driveFile[1]}`;
+			}
+		}
+		return { url: normalized, provider: 'direct' };
+	} catch {
+		return null;
+	}
+}
+
+/**
+ * Scan HTML (or any text blob) for a known gate / Bandcamp URL, including
+ * meta-refresh targets. Used for smart-link pages that embed destinations.
+ */
+export function findKnownGateInHtml(
+	html: string,
+): { url: string; provider: GateProvider } | null {
+	const normalized = html.replace(/\\\//g, '/');
+	const direct = matchKnownDownloadGateUrl(normalized);
+	if (direct) return direct;
+
+	const refresh =
+		normalized.match(
+			/http-equiv=["']refresh["'][^>]*content=["'][^"']*url=([^"'>\s]+)/i,
+		) ??
+		normalized.match(
+			/content=["'][^"']*url=([^"'>\s]+)[^"']*["'][^>]*http-equiv=["']refresh["']/i,
+		);
+	if (refresh?.[1]) {
+		const target = refresh[1].replace(/&amp;/g, '&');
+		return matchKnownDownloadGateUrl(target);
+	}
+	return null;
+}
+
+/**
+ * Resolve an unrecognized (or already-known) URL to a download gate by
+ * following HTTP redirects and scanning the final HTML for embedded destinations.
+ */
+export async function resolveUnknownGateUrl(
+	url: string,
+): Promise<{ url: string; provider: GateProvider } | null> {
+	const trimmed = trimExtractedUrl(url.trim());
+	if (!/^https?:\/\//i.test(trimmed)) {
+		return null;
+	}
+
+	const direct = matchKnownDownloadGateUrl(trimmed);
+	if (direct) return direct;
+
+	// SoundCloud pages are not smart-link hops we want to chase.
+	if (isSoundcloudUrl(trimmed)) {
+		return null;
+	}
+
+	try {
+		const response = await fetch(trimmed, {
+			redirect: 'follow',
+			headers: {
+				'user-agent': GATE_RESOLVE_USER_AGENT,
+				accept:
+					'text/html,application/xhtml+xml,application/json;q=0.9,*/*;q=0.8',
+			},
+		});
+		const finalUrl = trimExtractedUrl(response.url);
+		const fromFinal = matchKnownDownloadGateUrl(finalUrl);
+		if (fromFinal) return fromFinal;
+
+		const html = await response.text();
+		return findKnownGateInHtml(html);
+	} catch {
+		return null;
+	}
+}
+
+function collectUnresolvedHttpCandidates(
+	track: SoundcloudTrack,
+): { url: string; type: 'purchase_url' | 'description' }[] {
+	const candidates: { url: string; type: 'purchase_url' | 'description' }[] =
+		[];
+	const seen = new Set<string>();
+
+	const push = (raw: string, type: 'purchase_url' | 'description') => {
+		const url = trimExtractedUrl(raw);
+		if (!/^https?:\/\//i.test(url) || isSoundcloudUrl(url) || seen.has(url)) {
+			return;
+		}
+		// Skip URLs already recognized as download gates / Bandcamp.
+		if (matchKnownDownloadGateUrl(url)) return;
+		seen.add(url);
+		candidates.push({ url, type });
+	};
+
+	if (track.purchase_url) {
+		push(track.purchase_url, 'purchase_url');
+	}
+	if (track.description) {
+		for (const match of track.description.match(ANY_HTTP_URL_RE) ?? []) {
+			push(match, 'description');
+		}
+	}
+	return candidates;
+}
+
 /**
  * Prefer Hypeddit / Droploud / GateRush / DownloadGater from purchase_url or
- * description, then fall back to a Bandcamp purchase/description link.
+ * description, then Bandcamp, then direct file links (Dropbox, Drive, …).
  */
 export function extractGateUrl(track: SoundcloudTrack): GateUrlMatch | null {
 	const { purchase_url, description } = track;
@@ -399,7 +563,57 @@ export function extractGateUrl(track: SoundcloudTrack): GateUrlMatch | null {
 		}
 	}
 
+	if (purchase_url) {
+		const direct = matchDirectDownloadUrl(purchase_url);
+		if (direct) {
+			return { ...direct, type: 'purchase_url' };
+		}
+	}
+
+	if (description) {
+		const direct = matchDirectDownloadUrl(description);
+		if (direct) {
+			return { ...direct, type: 'description' };
+		}
+	}
+
 	return null;
+}
+
+/**
+ * Like extractGateUrl, but also follows redirects / scans smart-link HTML when
+ * purchase_url or description contain unrecognized http(s) links.
+ */
+export async function extractAndResolveGateUrl(
+	track: SoundcloudTrack,
+): Promise<GateUrlMatch | null> {
+	const sync = extractGateUrl(track);
+	if (sync) return sync;
+
+	for (const candidate of collectUnresolvedHttpCandidates(track)) {
+		const resolved = await resolveUnknownGateUrl(candidate.url);
+		if (resolved) {
+			return { ...resolved, type: candidate.type };
+		}
+	}
+	return null;
+}
+
+/**
+ * Resolve a user-supplied or stored gate URL: known providers pass through;
+ * otherwise try redirect / HTML destination resolution.
+ */
+export async function resolveGateUrlOrFollow(
+	value: string,
+): Promise<{ url: string; provider: GateProvider } | null> {
+	const direct = resolveGateProviderUrl(value);
+	if (direct && direct.provider !== 'soundcloud') {
+		return direct;
+	}
+	if (direct?.provider === 'soundcloud') {
+		return direct;
+	}
+	return resolveUnknownGateUrl(value);
 }
 
 /** @deprecated Prefer extractGateUrl */

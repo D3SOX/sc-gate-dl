@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import {
 	artistTitleFilename,
 	cookiesToNetscape,
+	findKnownGateInHtml,
 	previewProcessedFilename,
 	resolveGateProviderUrl,
 	sanitizeFilenamePart,
@@ -51,8 +52,60 @@ describe('resolveGateProviderUrl', () => {
 			provider: 'hypeddit',
 		});
 	});
+
+	test('matches Dropbox direct download URLs and forces dl=1', () => {
+		expect(
+			resolveGateProviderUrl(
+				'https://www.dropbox.com/scl/fi/abc/track.wav?rlkey=xyz&e=1&dl=0',
+			),
+		).toEqual({
+			url: 'https://www.dropbox.com/scl/fi/abc/track.wav?rlkey=xyz&e=1&dl=1',
+			provider: 'direct',
+		});
+	});
+
+	test('matches raw audio file URLs as direct downloads', () => {
+		expect(
+			resolveGateProviderUrl(
+				'FREE DL: https://cdn.example.com/files/track.wav!',
+			),
+		).toEqual({
+			url: 'https://cdn.example.com/files/track.wav',
+			provider: 'direct',
+		});
+	});
 });
 
+describe('findKnownGateInHtml', () => {
+	test('finds embedded Hypeddit destination in smart-link HTML', () => {
+		const html = `
+			<script>
+			window.linkfire.destination = {"url":"https:\\/\\/hypeddit.com\\/dorey\\/strobedoreyedit","serviceType":"contentlink"};
+			</script>
+		`;
+		expect(findKnownGateInHtml(html)).toEqual({
+			url: 'https://hypeddit.com/dorey/strobedoreyedit',
+			provider: 'hypeddit',
+		});
+	});
+
+	test('follows meta refresh to a known gate', () => {
+		const html =
+			'<meta http-equiv="refresh" content="0;url=https://hypeddit.com/artist/track">';
+		expect(findKnownGateInHtml(html)).toEqual({
+			url: 'https://hypeddit.com/artist/track',
+			provider: 'hypeddit',
+		});
+	});
+
+	test('prefers Hypeddit when Bandcamp is also present', () => {
+		const html = 'https://hypeddit.com/a/b and https://x.bandcamp.com/track/y';
+		expect(findKnownGateInHtml(html)).toEqual({
+			url: 'https://hypeddit.com/a/b',
+			provider: 'hypeddit',
+		});
+	});
+});
 describe('writeSoundcloudNetscapeCookies', () => {
 	test('returns null for malformed JSON', async () => {
 		const dir = await mkdtemp(join(tmpdir(), 'sc-gate-dl-test-'));

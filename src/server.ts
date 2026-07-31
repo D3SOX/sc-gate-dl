@@ -3,6 +3,7 @@ import { cp, mkdir, rm } from 'node:fs/promises';
 import { basename, extname, join } from 'node:path';
 import type { SoundcloudTrack } from 'soundcloud.ts';
 import { AudioProcessor } from './audioProcessor';
+import { DirectDownloader } from './directDownload';
 import { DownloadgaterDownloader } from './downloadgater';
 import { renameDownloadFileExclusive } from './downloadRename';
 import { DroploudDownloader } from './droploud';
@@ -14,12 +15,12 @@ import { SoundcloudClient } from './soundcloud';
 import type { Job, Metadata, OutputFormat } from './types';
 import {
 	artistTitleFilename,
-	extractGateUrl,
+	extractAndResolveGateUrl,
 	getDefaultMetadata,
 	getFfmpegBin,
 	getFfprobeBin,
 	isMp3Format,
-	resolveGateProviderUrl,
+	resolveGateUrlOrFollow,
 	validateGateUrl,
 	validateSoundcloudUrl,
 } from './utils';
@@ -180,11 +181,13 @@ async function runDownloadProcess(jobId: string): Promise<void> {
 	const job = jobStore.get(jobId);
 	if (!job?.hypedditUrl) return;
 
-	const gateUrl = job.hypedditUrl;
-	const resolved = resolveGateProviderUrl(gateUrl);
+	const resolved = await resolveGateUrlOrFollow(job.hypedditUrl);
 	if (!resolved) {
 		jobStore.setError(jobId, 'Unsupported gate URL');
 		return;
+	}
+	if (resolved.url !== job.hypedditUrl) {
+		jobStore.update(jobId, { hypedditUrl: resolved.url });
 	}
 	const { url: downloadSourceUrl, provider } = resolved;
 
@@ -313,6 +316,20 @@ async function runDownloadProcess(jobId: string): Promise<void> {
 			);
 			downloadFilename =
 				await downloadgaterDownloader.downloadAudio(downloadSourceUrl);
+			throwIfCancelled();
+		} else if (provider === 'direct') {
+			jobStore.updateProgress(
+				jobId,
+				'downloading',
+				'Downloading direct file...',
+				40,
+				{ browserless: true },
+			);
+			const directDownloader = new DirectDownloader();
+			activeDownloaders.set(jobId, directDownloader);
+			directDownloader.setProgressCallback(emitProgress);
+			downloadFilename =
+				await directDownloader.downloadAudio(downloadSourceUrl);
 			throwIfCancelled();
 		} else {
 			// Hypeddit: always try plain HTTP first (email + social skip gates).
@@ -647,7 +664,7 @@ const server = Bun.serve({
 
 					const hypedditUrl = skipAutomaticHypedditFetch
 						? null
-						: extractGateUrl(track);
+						: await extractAndResolveGateUrl(track);
 					const defaultMetadata = getDefaultMetadata(track);
 
 					const updatedJob = jobStore.update(job.id, {
@@ -716,7 +733,7 @@ const server = Bun.serve({
 						return jsonResponse({ error: validation }, { status: 400 });
 					}
 
-					const resolved = resolveGateProviderUrl(hypedditUrl);
+					const resolved = await resolveGateUrlOrFollow(hypedditUrl);
 					if (!resolved) {
 						return jsonResponse(
 							{ error: 'Could not extract a supported URL' },
