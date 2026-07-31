@@ -655,32 +655,55 @@ const server = Bun.serve({
 				const stream = new ReadableStream({
 					start(controller) {
 						const encoder = new TextEncoder();
+						let closed = false;
+						let unsubscribe: (() => void) | null = null;
+
+						const safeEnqueue = (chunk: string) => {
+							if (closed) return;
+							try {
+								controller.enqueue(encoder.encode(chunk));
+							} catch {
+								closed = true;
+							}
+						};
+
+						const cleanup = () => {
+							if (closed) return;
+							closed = true;
+							clearInterval(heartbeat);
+							unsubscribe?.();
+						};
 
 						const initialData = `data: ${JSON.stringify(job.progress)}\n\n`;
-						controller.enqueue(encoder.encode(initialData));
+						safeEnqueue(initialData);
 
-						const unsubscribe = jobStore.subscribe(jobId, (progress) => {
-							const data = `data: ${JSON.stringify(progress)}\n\n`;
-							try {
-								controller.enqueue(encoder.encode(data));
-							} catch {
-								unsubscribe();
+						// Keep the SSE connection alive during long silent stretches
+						// (e.g. yt-dlp downloads up to 10 minutes with no progress events).
+						// Bun closes idle connections after idleTimeout (~255s).
+						const heartbeat = setInterval(() => {
+							safeEnqueue(': keepalive\n\n');
+							if (closed) {
+								clearInterval(heartbeat);
 							}
+						}, 30_000);
+
+						unsubscribe = jobStore.subscribe(jobId, (progress) => {
+							safeEnqueue(`data: ${JSON.stringify(progress)}\n\n`);
 
 							if (progress.stage === 'ready' || progress.stage === 'error') {
 								setTimeout(() => {
+									cleanup();
 									try {
 										controller.close();
 									} catch {
 										// Already closed
 									}
 								}, 100);
-								unsubscribe();
 							}
 						});
 
 						req.signal.addEventListener('abort', () => {
-							unsubscribe();
+							cleanup();
 							try {
 								controller.close();
 							} catch {

@@ -148,17 +148,17 @@ const DROPLOUD_URL_RE = /https:\/\/droploud\.com\/(?:gate|track)\/[0-9a-f-]+/i;
 const GATERUSH_URL_RE = /https?:\/\/(?:www\.)?gaterush\.me\/[A-Za-z0-9_-]+/i;
 const DOWNLOADGATER_URL_RE =
 	/https?:\/\/(?:www\.)?downloadgater\.com\/g\/[A-Za-z0-9_-]+/i;
-const BANDCAMP_HOST = String.raw`https?:\/\/(?:[\w-]+\.)?bandcamp\.com`;
 /** artist.bandcamp.com/track|album/... (and bare bandcamp.com). */
-const BANDCAMP_URL_RE = new RegExp(
-	`${BANDCAMP_HOST}\\/(?:track|album)\\/[^\\s?#]+`,
-	'i',
-);
-const BANDCAMP_ALBUM_URL_RE = new RegExp(
-	`${BANDCAMP_HOST}\\/album\\/[^\\s?#]+`,
-	'i',
-);
+const BANDCAMP_URL_RE =
+	/https?:\/\/(?:[\w-]+\.)?bandcamp\.com\/(?:track|album)\/[^\s?#]+/i;
+const BANDCAMP_ALBUM_URL_RE =
+	/https?:\/\/(?:[\w-]+\.)?bandcamp\.com\/album\/[^\s?#]+/i;
 const SOUNDCLOUD_URL_RE = /https:\/\/soundcloud\.com\/[^\s?#]+/i;
+
+/** Strip prose/Markdown delimiters glued to the end of a matched URL. */
+function trimExtractedUrl(url: string): string {
+	return url.replace(/[)\]}>.,;:!?'"…]+$/g, '');
+}
 
 export function isHypedditUrl(value: string): boolean {
 	return value.startsWith('https://hypeddit.com/');
@@ -199,7 +199,10 @@ export function resolveGateProviderUrl(
 
 	const soundcloudMatch = value.match(SOUNDCLOUD_URL_RE)?.[0];
 	if (soundcloudMatch) {
-		return { url: soundcloudMatch, provider: 'soundcloud' };
+		return {
+			url: trimExtractedUrl(soundcloudMatch),
+			provider: 'soundcloud',
+		};
 	}
 	return null;
 }
@@ -245,19 +248,22 @@ function matchTraditionalGateUrl(
 ): { url: string; provider: GateProvider } | null {
 	const hypedditMatch = value.match(HYPEDDIT_URL_RE)?.[0];
 	if (hypedditMatch) {
-		return { url: hypedditMatch, provider: 'hypeddit' };
+		return { url: trimExtractedUrl(hypedditMatch), provider: 'hypeddit' };
 	}
 	const droploudMatch = value.match(DROPLOUD_URL_RE)?.[0];
 	if (droploudMatch) {
-		return { url: droploudMatch, provider: 'droploud' };
+		return { url: trimExtractedUrl(droploudMatch), provider: 'droploud' };
 	}
 	const gaterushMatch = value.match(GATERUSH_URL_RE)?.[0];
 	if (gaterushMatch) {
-		return normalizeGateUrl(gaterushMatch, 'gaterush');
+		return normalizeGateUrl(trimExtractedUrl(gaterushMatch), 'gaterush');
 	}
 	const downloadgaterMatch = value.match(DOWNLOADGATER_URL_RE)?.[0];
 	if (downloadgaterMatch) {
-		return normalizeGateUrl(downloadgaterMatch, 'downloadgater');
+		return normalizeGateUrl(
+			trimExtractedUrl(downloadgaterMatch),
+			'downloadgater',
+		);
 	}
 	return null;
 }
@@ -267,7 +273,7 @@ function matchBandcampUrl(
 ): { url: string; provider: GateProvider } | null {
 	const bandcampMatch = value.match(BANDCAMP_URL_RE)?.[0];
 	if (bandcampMatch) {
-		return normalizeGateUrl(bandcampMatch, 'bandcamp');
+		return normalizeGateUrl(trimExtractedUrl(bandcampMatch), 'bandcamp');
 	}
 	return null;
 }
@@ -287,35 +293,9 @@ export function extractGateUrl(track: SoundcloudTrack): GateUrlMatch | null {
 	}
 
 	if (description) {
-		const hypedditMatch = description.match(HYPEDDIT_URL_RE)?.[0];
-		if (hypedditMatch) {
-			return {
-				url: hypedditMatch,
-				provider: 'hypeddit',
-				type: 'description',
-			};
-		}
-		const droploudMatch = description.match(DROPLOUD_URL_RE)?.[0];
-		if (droploudMatch) {
-			return {
-				url: droploudMatch,
-				provider: 'droploud',
-				type: 'description',
-			};
-		}
-		const gaterushMatch = description.match(GATERUSH_URL_RE)?.[0];
-		if (gaterushMatch) {
-			return {
-				...normalizeGateUrl(gaterushMatch, 'gaterush'),
-				type: 'description',
-			};
-		}
-		const downloadgaterMatch = description.match(DOWNLOADGATER_URL_RE)?.[0];
-		if (downloadgaterMatch) {
-			return {
-				...normalizeGateUrl(downloadgaterMatch, 'downloadgater'),
-				type: 'description',
-			};
+		const fromDescription = matchTraditionalGateUrl(description);
+		if (fromDescription) {
+			return { ...fromDescription, type: 'description' };
 		}
 	}
 
