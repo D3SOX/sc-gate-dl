@@ -102,7 +102,7 @@ export class HypedditDownloader {
 	async initialize() {
 		this.browser = await launchAppBrowser({
 			headless: this.config.headless,
-			userDataDir: './browser-data',
+			userDataDir: this.config.userDataDir ?? './browser-data',
 		});
 
 		// Load and set cookies at browser context level to make them available to all pages

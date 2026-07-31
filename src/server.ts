@@ -1,3 +1,4 @@
+import { rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { SoundcloudTrack } from 'soundcloud.ts';
 import { AudioProcessor } from './audioProcessor';
@@ -52,17 +53,26 @@ type AnyDownloader = {
 
 /** Per-job browser handles so concurrent jobs cannot close each other. */
 const activeDownloaders = new Map<string, AnyDownloader>();
+/** Job-scoped Chromium profiles under ./browser-data/jobs/<jobId>. */
+const jobProfileDirs = new Map<string, string>();
 
 async function closeJobDownloader(jobId: string): Promise<void> {
 	const downloader = activeDownloaders.get(jobId);
-	if (!downloader) return;
-	activeDownloaders.delete(jobId);
-	await downloader.close().catch(() => {});
+	if (downloader) {
+		activeDownloaders.delete(jobId);
+		await downloader.close().catch(() => {});
+	}
+
+	const profileDir = jobProfileDirs.get(jobId);
+	if (profileDir) {
+		jobProfileDirs.delete(jobId);
+		await rm(profileDir, { recursive: true, force: true }).catch(() => {});
+	}
 }
 
 async function closeAllDownloaders(): Promise<void> {
-	const ids = [...activeDownloaders.keys()];
-	await Promise.all(ids.map((id) => closeJobDownloader(id)));
+	const ids = new Set([...activeDownloaders.keys(), ...jobProfileDirs.keys()]);
+	await Promise.all([...ids].map((id) => closeJobDownloader(id)));
 }
 
 function serializeTrack(track: SoundcloudTrack): Job['track'] {
@@ -107,11 +117,13 @@ async function runDownloadProcess(jobId: string): Promise<void> {
 
 		// CloakBrowser + DataDome: headed is more reliable (captcha reuses main session).
 		const headless = process.env.BROWSER_HEADLESS === 'true';
+		const userDataDir = join('./browser-data', 'jobs', jobId);
 		const gateConfig = {
 			name: HYPEDDIT_NAME,
 			email: HYPEDDIT_EMAIL,
 			comment: SC_COMMENT,
 			headless,
+			userDataDir,
 		};
 
 		let downloadFilename: string | null = null;
@@ -124,6 +136,7 @@ async function runDownloadProcess(jobId: string): Promise<void> {
 				10,
 			);
 			const droploudDownloader = new DroploudDownloader(gateConfig);
+			jobProfileDirs.set(jobId, userDataDir);
 			activeDownloaders.set(jobId, droploudDownloader);
 			droploudDownloader.setProgressCallback(emitProgress);
 			await droploudDownloader.initialize();
@@ -143,6 +156,7 @@ async function runDownloadProcess(jobId: string): Promise<void> {
 				10,
 			);
 			const gaterushDownloader = new GaterushDownloader(gateConfig);
+			jobProfileDirs.set(jobId, userDataDir);
 			activeDownloaders.set(jobId, gaterushDownloader);
 			gaterushDownloader.setProgressCallback(emitProgress);
 			await gaterushDownloader.initialize();
@@ -162,6 +176,7 @@ async function runDownloadProcess(jobId: string): Promise<void> {
 				10,
 			);
 			const downloadgaterDownloader = new DownloadgaterDownloader(gateConfig);
+			jobProfileDirs.set(jobId, userDataDir);
 			activeDownloaders.set(jobId, downloadgaterDownloader);
 			downloadgaterDownloader.setProgressCallback(emitProgress);
 			await downloadgaterDownloader.initialize();
@@ -198,6 +213,7 @@ async function runDownloadProcess(jobId: string): Promise<void> {
 				);
 
 				const hypedditDownloader = new HypedditDownloader(gateConfig);
+				jobProfileDirs.set(jobId, userDataDir);
 				activeDownloaders.set(jobId, hypedditDownloader);
 				hypedditDownloader.setProgressCallback(emitProgress);
 				await hypedditDownloader.initialize();
@@ -746,9 +762,24 @@ const server = Bun.serve({
 	},
 	error: async (err) => {
 		console.error('Server error:', err);
-		await closeAllDownloaders();
 		return jsonResponse({ error: 'Internal Server Error' }, { status: 500 });
 	},
+});
+
+let shuttingDown = false;
+async function shutdown(signal: string): Promise<void> {
+	if (shuttingDown) return;
+	shuttingDown = true;
+	console.log(`Received ${signal}, closing active browsers...`);
+	await closeAllDownloaders();
+	process.exit(0);
+}
+
+process.on('SIGINT', () => {
+	void shutdown('SIGINT');
+});
+process.on('SIGTERM', () => {
+	void shutdown('SIGTERM');
 });
 
 console.log(`Server is running on ${server.url}`);

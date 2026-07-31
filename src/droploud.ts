@@ -42,7 +42,7 @@ export class DroploudDownloader {
 	async initialize() {
 		this.browser = await launchAppBrowser({
 			headless: this.config.headless,
-			userDataDir: './browser-data',
+			userDataDir: this.config.userDataDir ?? './browser-data',
 		});
 
 		const browserContext = this.browser.defaultBrowserContext();
@@ -1151,7 +1151,7 @@ export class DroploudDownloader {
 			}
 		};
 
-		setTimeout(async () => {
+		const retryTimer = setTimeout(async () => {
 			if (!downloadGuid) {
 				console.log(
 					'Download not started after 10 seconds, clicking button again...',
@@ -1168,6 +1168,7 @@ export class DroploudDownloader {
 			await Promise.all([clickDownload(), downloadCompletePromise]);
 		} finally {
 			clearTimeout(downloadTimer);
+			clearTimeout(retryTimer);
 			pBar.stop();
 			await client.detach().catch(() => {});
 		}

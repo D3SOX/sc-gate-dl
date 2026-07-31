@@ -32,7 +32,7 @@ export class DownloadgaterDownloader {
 	async initialize() {
 		this.browser = await launchAppBrowser({
 			headless: this.config.headless,
-			userDataDir: './browser-data',
+			userDataDir: this.config.userDataDir ?? './browser-data',
 		});
 
 		const browserContext = this.browser.defaultBrowserContext();
@@ -690,7 +690,7 @@ export class DownloadgaterDownloader {
 			});
 		};
 
-		setTimeout(async () => {
+		const retryTimer = setTimeout(async () => {
 			if (!downloadGuid) {
 				console.log(
 					'Download not started after 10 seconds, clicking button again...',
@@ -708,6 +708,7 @@ export class DownloadgaterDownloader {
 			await downloadCompletePromise;
 		} finally {
 			clearTimeout(downloadTimer);
+			clearTimeout(retryTimer);
 			pBar.stop();
 			await client.detach().catch(() => {});
 		}

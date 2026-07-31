@@ -16,6 +16,8 @@ export interface HypedditConfig {
 	email?: string;
 	comment: string;
 	headless: boolean;
+	/** Persistent Chromium profile. Defaults to `./browser-data`. */
+	userDataDir?: string;
 }
 
 export interface Metadata {
