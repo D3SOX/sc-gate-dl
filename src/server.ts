@@ -1,5 +1,5 @@
 import { cp, mkdir, rename, rm } from 'node:fs/promises';
-import { basename, join } from 'node:path';
+import { basename, extname, join } from 'node:path';
 import type { SoundcloudTrack } from 'soundcloud.ts';
 import { AudioProcessor } from './audioProcessor';
 import { DownloadgaterDownloader } from './downloadgater';
@@ -53,6 +53,7 @@ const soundcloudClient = new SoundcloudClient();
 const audioProcessor = new AudioProcessor(ffmpegBin, ffprobeBin);
 
 async function renameDownloadFile(
+	jobId: string,
 	currentFilename: string,
 	desiredFilename: string,
 ): Promise<string> {
@@ -61,14 +62,29 @@ async function renameDownloadFile(
 	}
 
 	const fromPath = join('./downloads', currentFilename);
-	const toPath = join('./downloads', desiredFilename);
+	let finalName = desiredFilename;
+	let toPath = join('./downloads', finalName);
 
-	if (await Bun.file(toPath).exists()) {
-		await rm(toPath, { force: true });
+	const destinationBlocked =
+		jobStore.isFilenameOwnedByOtherJob(finalName, jobId) ||
+		((await Bun.file(toPath).exists()) && finalName !== currentFilename);
+
+	if (destinationBlocked) {
+		const ext = extname(desiredFilename);
+		const stem = basename(desiredFilename, ext);
+		const shortId = jobId.slice(0, 8);
+		finalName = `${stem} [${shortId}]${ext}`;
+		toPath = join('./downloads', finalName);
+		let n = 2;
+		while (await Bun.file(toPath).exists()) {
+			finalName = `${stem} [${shortId}] (${n})${ext}`;
+			toPath = join('./downloads', finalName);
+			n += 1;
+		}
 	}
 
 	await rename(fromPath, toPath);
-	return desiredFilename;
+	return finalName;
 }
 
 type AnyDownloader = {
@@ -837,7 +853,7 @@ const server = Bun.serve({
 						return jsonResponse({ error: 'Job not found' }, { status: 404 });
 					}
 
-					if (!job.downloadFilename) {
+					if (!job.downloadFilename && !job.outputFilename) {
 						return jsonResponse(
 							{ error: 'No downloaded file available' },
 							{ status: 400 },
@@ -884,7 +900,16 @@ const server = Bun.serve({
 						nameAsArtistTitle = body.nameAsArtistTitle === true;
 					}
 
-					if (preserveMetadata && !isMp3Format(job.downloadFilename)) {
+					const sourceFilename =
+						job.outputFilename || job.downloadFilename || '';
+					if (!sourceFilename) {
+						return jsonResponse(
+							{ error: 'No downloaded file available' },
+							{ status: 400 },
+						);
+					}
+
+					if (preserveMetadata && !isMp3Format(sourceFilename)) {
 						return jsonResponse(
 							{
 								error: 'Existing metadata can only be preserved for MP3 files',
@@ -894,14 +919,22 @@ const server = Bun.serve({
 					}
 
 					if (job.outputFormat === 'original' || preserveMetadata) {
-						let outputFilename = job.downloadFilename;
+						let outputFilename = sourceFilename;
 						if (nameAsArtistTitle) {
 							outputFilename = await renameDownloadFile(
-								job.downloadFilename,
-								artistTitleFilename(metadata.artist, metadata.title),
+								jobId,
+								sourceFilename,
+								artistTitleFilename(
+									metadata.artist,
+									metadata.title,
+									extname(sourceFilename) || '.mp3',
+								),
 							);
 						}
-						jobStore.update(jobId, { outputFilename });
+						jobStore.update(jobId, {
+							outputFilename,
+							downloadFilename: outputFilename,
+						});
 						jobStore.updateProgress(
 							jobId,
 							'ready',
@@ -940,7 +973,7 @@ const server = Bun.serve({
 					}
 
 					const outputPath = await audioProcessor.processAudio(
-						job.downloadFilename,
+						sourceFilename,
 						metadata,
 						artwork,
 						'always',
@@ -949,11 +982,15 @@ const server = Bun.serve({
 					let outputFilename = basename(outputPath);
 					if (nameAsArtistTitle) {
 						outputFilename = await renameDownloadFile(
+							jobId,
 							outputFilename,
-							artistTitleFilename(metadata.artist, metadata.title),
+							artistTitleFilename(metadata.artist, metadata.title, '.mp3'),
 						);
 					}
-					jobStore.update(jobId, { outputFilename });
+					jobStore.update(jobId, {
+						outputFilename,
+						downloadFilename: outputFilename,
+					});
 
 					jobStore.updateProgress(
 						jobId,

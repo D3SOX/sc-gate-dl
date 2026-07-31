@@ -48,6 +48,20 @@ class JobStore {
 		return this.jobs.get(id);
 	}
 
+	/** True when another job already claims this downloads/ filename. */
+	isFilenameOwnedByOtherJob(filename: string, excludeJobId: string): boolean {
+		for (const job of this.jobs.values()) {
+			if (job.id === excludeJobId) continue;
+			if (
+				job.downloadFilename === filename ||
+				job.outputFilename === filename
+			) {
+				return true;
+			}
+		}
+		return false;
+	}
+
 	/**
 	 * Updates a job and notifies listeners
 	 */

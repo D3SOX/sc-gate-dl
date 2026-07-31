@@ -1,5 +1,10 @@
 import { describe, expect, test } from 'bun:test';
-import { resolveGateProviderUrl } from './utils';
+import {
+	artistTitleFilename,
+	previewProcessedFilename,
+	resolveGateProviderUrl,
+	sanitizeFilenamePart,
+} from './utils';
 
 describe('resolveGateProviderUrl', () => {
 	test('extracts Bandcamp track URLs from surrounding prose', () => {
@@ -40,5 +45,54 @@ describe('resolveGateProviderUrl', () => {
 			url: 'https://hypeddit.com/foo',
 			provider: 'hypeddit',
 		});
+	});
+});
+
+describe('sanitizeFilenamePart', () => {
+	test('strips unsafe filename characters and collapses whitespace', () => {
+		expect(sanitizeFilenamePart('  a/b:c*d?e  ')).toBe('abcde');
+		expect(sanitizeFilenamePart('foo   bar')).toBe('foo bar');
+	});
+});
+
+describe('artistTitleFilename', () => {
+	test('builds Artist - Title with default mp3 extension', () => {
+		expect(artistTitleFilename('Wax Thief', 'When I grow up')).toBe(
+			'Wax Thief - When I grow up.mp3',
+		);
+	});
+
+	test('falls back for empty artist/title and preserves custom extension', () => {
+		expect(artistTitleFilename('  ', '', '.wav')).toBe(
+			'Unknown Artist - Unknown Title.wav',
+		);
+		expect(artistTitleFilename('A', 'B', 'flac')).toBe('A - B.flac');
+	});
+});
+
+describe('previewProcessedFilename', () => {
+	test('prefers artist-title naming when requested', () => {
+		expect(
+			previewProcessedFilename('track.wav', {
+				nameAsArtistTitle: true,
+				artist: 'Artist',
+				title: 'Title',
+			}),
+		).toBe('Artist - Title.mp3');
+	});
+
+	test('converts lossless extensions to mp3 when not renaming', () => {
+		expect(
+			previewProcessedFilename('song.flac', { nameAsArtistTitle: false }),
+		).toBe('song.mp3');
+		expect(
+			previewProcessedFilename('song.aiff', { nameAsArtistTitle: false }),
+		).toBe('song.mp3');
+	});
+
+	test('keeps non-lossless filenames unchanged when not renaming', () => {
+		expect(
+			previewProcessedFilename('song.mp3', { nameAsArtistTitle: false }),
+		).toBe('song.mp3');
 	});
 });

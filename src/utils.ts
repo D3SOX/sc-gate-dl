@@ -369,11 +369,16 @@ export function sanitizeFilenamePart(value: string): string {
 		.trim();
 }
 
-/** `Artist - Title.mp3` from metadata fields. */
-export function artistTitleFilename(artist?: string, title?: string): string {
+/** `Artist - Title` (+ extension) from metadata fields. */
+export function artistTitleFilename(
+	artist?: string,
+	title?: string,
+	extension = '.mp3',
+): string {
 	const safeArtist = sanitizeFilenamePart(artist || '') || 'Unknown Artist';
 	const safeTitle = sanitizeFilenamePart(title || '') || 'Unknown Title';
-	return `${safeArtist} - ${safeTitle}.mp3`;
+	const ext = extension.startsWith('.') ? extension : `.${extension}`;
+	return `${safeArtist} - ${safeTitle}${ext}`;
 }
 
 /** Predicted output name for the metadata step (always ends as MP3). */
@@ -386,7 +391,7 @@ export function previewProcessedFilename(
 	},
 ): string {
 	if (options.nameAsArtistTitle) {
-		return artistTitleFilename(options.artist, options.title);
+		return artistTitleFilename(options.artist, options.title, '.mp3');
 	}
 	if (isLosslessFormat(downloadFilename)) {
 		return losslessToMp3Filename(downloadFilename);
