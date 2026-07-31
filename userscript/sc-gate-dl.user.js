@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         sc-gate-dl
 // @namespace    https://github.com/D3SOX/sc-gate-dl
-// @version      1.6.0
+// @version      1.6.1
 // @description  Open the sc-gate-dl Web UI in a floating panel next to SoundCloud store/buy links
 // @author       D3SOX
 // @match        https://soundcloud.com/*
@@ -237,6 +237,8 @@
 			}
 			if (parts.length < 2) return null;
 			if (RESERVED_FIRST.has(parts[0].toLowerCase())) return null;
+			// Playlists / albums: /artist/sets/slug — not a single track
+			if (parts[1].toLowerCase() === 'sets') return null;
 			if (TRAILING_SEGMENTS.has(parts[1].toLowerCase())) return null;
 			return `https://soundcloud.com/${parts[0]}/${parts[1]}`;
 		} catch {
@@ -284,6 +286,41 @@
 		const fromPage = pageTrackUrl();
 		if (fromPage) return fromPage;
 		return trackUrlFromCard(el);
+	}
+
+	/** Playlists/albums aren't single-track downloads — skip injection there. */
+	function isPlaylistOrAlbumContext(el) {
+		if (!(el instanceof Element)) return false;
+		if (el.closest('.sound.playlist')) return true;
+		if (
+			el.closest(
+				'.l-listen-hero.playlist, .fullHero.playlist, .listenContext.playlist',
+			)
+		) {
+			return true;
+		}
+		const sound = el.closest(
+			'.sound, .soundList__item, .activity, [role="group"]',
+		);
+		if (sound?.classList?.contains('playlist')) return true;
+		if (
+			sound?.querySelector(
+				'a.soundTitle__title[href*="/sets/"], a.sound__coverArt[href*="/sets/"]',
+			)
+		) {
+			return true;
+		}
+		const buy =
+			(el.closest('.purchaseLink__container') || el).querySelector?.(
+				'a[aria-label], a[title]',
+			) || el;
+		const label = (
+			buy.getAttribute?.('aria-label') ||
+			buy.getAttribute?.('title') ||
+			''
+		).toLowerCase();
+		if (/\bbuy all\b/.test(label)) return true;
+		return false;
 	}
 
 	function getWebuiBase() {
@@ -1085,6 +1122,7 @@ button[${BUTTON_ATTR}="mui"] svg {
 
 	function injectClassic(el) {
 		if (isOurNode(el)) return;
+		if (isPlaylistOrAlbumContext(el)) return;
 		const trackUrl = resolveTrackUrl(el);
 		// Insert as sibling AFTER the cart cluster inside .soundActions.
 		// Do not append inside the cart wrapper — it is ~16px tall and clips the icon.
@@ -1113,6 +1151,7 @@ button[${BUTTON_ATTR}="mui"] svg {
 
 	function injectMui(buyAnchor) {
 		if (!isMuiBuyAnchor(buyAnchor)) return;
+		if (isPlaylistOrAlbumContext(buyAnchor)) return;
 		if (alreadyInjectedNear(buyAnchor)) return;
 		const templateBtn = buyAnchor.querySelector('button.MuiIconButton-root');
 		const trackUrl = resolveTrackUrl(buyAnchor);
@@ -1132,6 +1171,11 @@ button[${BUTTON_ATTR}="mui"] svg {
 
 	function scan(root = document) {
 		const scope = root instanceof Element || root === document ? root : document;
+
+		// Drop buttons that landed on playlist/album cards (e.g. before class hydrated)
+		for (const wrap of scope.querySelectorAll?.(`[${WRAP_ATTR}]`) || []) {
+			if (isPlaylistOrAlbumContext(wrap)) wrap.remove();
+		}
 
 		// Classic layout only — one control per purchaseLink__container
 		const containers = scope.querySelectorAll?.('.purchaseLink__container') || [];
