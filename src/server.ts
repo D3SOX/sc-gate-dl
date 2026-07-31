@@ -284,10 +284,10 @@ async function runDownloadProcess(jobId: string): Promise<void> {
 			);
 			downloadFilename = await httpDownloader.tryDownload(downloadSourceUrl);
 
-			// Always try HTTP first. Open a browser only when the user checked
-			// “Show browser window” (headful) and the gate needs real verification
-			// (e.g. Spotify). Headless stays fully browserless for Hypeddit.
-			if (!downloadFilename && !job.headless) {
+			// Always try HTTP first. Fall back to the browser (headless or
+			// headful per job setting) when the gate needs real verification
+			// (e.g. Spotify).
+			if (!downloadFilename) {
 				jobStore.updateProgress(
 					jobId,
 					'initializing_browser',
@@ -312,12 +312,6 @@ async function runDownloadProcess(jobId: string): Promise<void> {
 				downloadFilename =
 					await hypedditDownloader.downloadAudio(downloadSourceUrl);
 				await closeJobDownloader(jobId);
-			} else if (!downloadFilename && job.headless) {
-				jobStore.setError(
-					jobId,
-					'This Hypeddit gate needs a browser (e.g. Spotify). Enable “Show browser window (headful)” and retry.',
-				);
-				return;
 			}
 		}
 

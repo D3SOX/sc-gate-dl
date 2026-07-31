@@ -115,8 +115,7 @@ try {
 		: config
 			? config.headless
 			: await confirm({
-					message:
-						'Run headless? (no browser window). Headless also skips the Hypeddit browser fallback — gates that need Spotify/etc. will fail unless you turn headless off.',
+					message: 'Run headless? (no browser window)',
 					default: true,
 				});
 
@@ -200,8 +199,8 @@ try {
 		const httpDownloader = new HypedditHttpDownloader(gateConfig);
 		downloadFilename = await httpDownloader.tryDownload(gateUrl);
 
-		// HTTP first. Browser fallback only when not headless (user wants a window).
-		if (!downloadFilename && !gateConfig.headless) {
+		// HTTP first. Fall back to the browser (headless or headful) when needed.
+		if (!downloadFilename) {
 			usedBrowser = true;
 			const hypedditDownloader = new HypedditDownloader(gateConfig);
 			try {
@@ -219,10 +218,6 @@ try {
 			} finally {
 				await hypedditDownloader.close();
 			}
-		} else if (!downloadFilename && gateConfig.headless) {
-			throw new Error(
-				'This Hypeddit gate needs a browser (e.g. Spotify). Re-run with headless disabled to allow a browser fallback.',
-			);
 		}
 	}
 
