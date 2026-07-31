@@ -236,6 +236,7 @@ async function runDownloadProcess(jobId: string): Promise<void> {
 				{ browserless: true },
 			);
 			const ytDlpDownloader = new YtDlpDownloader(sourceLabel);
+			activeDownloaders.set(jobId, ytDlpDownloader);
 			ytDlpDownloader.setProgressCallback(emitProgress);
 			downloadFilename = await ytDlpDownloader.downloadAudio(
 				downloadSourceUrl,
@@ -325,6 +326,7 @@ async function runDownloadProcess(jobId: string): Promise<void> {
 				gateConfigBase,
 				emitProgress,
 			);
+			activeDownloaders.set(jobId, httpDownloader);
 			downloadFilename = await httpDownloader.tryDownload(downloadSourceUrl);
 			throwIfCancelled();
 
@@ -823,90 +825,98 @@ const server = Bun.serve({
 
 		'/api/job/:id/events': {
 			GET: (req) => {
-				const jobId = req.params.id;
-				const job = jobStore.get(jobId);
+				try {
+					const jobId = req.params.id;
+					const job = jobStore.get(jobId);
 
-				if (!job) {
-					return jsonResponse({ error: 'Job not found' }, { status: 404 });
-				}
+					if (!job) {
+						return jsonResponse({ error: 'Job not found' }, { status: 404 });
+					}
 
-				const stream = new ReadableStream({
-					start(controller) {
-						const encoder = new TextEncoder();
-						let cleanedUp = false;
-						let unsubscribe: (() => void) | null = null;
-						let heartbeat: ReturnType<typeof setInterval> | null = null;
+					const stream = new ReadableStream({
+						start(controller) {
+							const encoder = new TextEncoder();
+							let cleanedUp = false;
+							let unsubscribe: (() => void) | null = null;
+							let heartbeat: ReturnType<typeof setInterval> | null = null;
 
-						const cleanup = () => {
-							if (cleanedUp) return;
-							cleanedUp = true;
-							if (heartbeat !== null) {
-								clearInterval(heartbeat);
-								heartbeat = null;
-							}
-							unsubscribe?.();
-							unsubscribe = null;
-						};
+							const cleanup = () => {
+								if (cleanedUp) return;
+								cleanedUp = true;
+								if (heartbeat !== null) {
+									clearInterval(heartbeat);
+									heartbeat = null;
+								}
+								unsubscribe?.();
+								unsubscribe = null;
+							};
 
-						const closeStream = () => {
-							cleanup();
-							try {
-								controller.close();
-							} catch {
-								// Already closed
-							}
-						};
-
-						const safeEnqueue = (chunk: string): boolean => {
-							if (cleanedUp) return false;
-							try {
-								controller.enqueue(encoder.encode(chunk));
-								return true;
-							} catch {
+							const closeStream = () => {
 								cleanup();
-								return false;
-							}
-						};
+								try {
+									controller.close();
+								} catch {
+									// Already closed
+								}
+							};
 
-						if (!safeEnqueue(`data: ${JSON.stringify(job.progress)}\n\n`)) {
-							return;
-						}
+							const safeEnqueue = (chunk: string): boolean => {
+								if (cleanedUp) return false;
+								try {
+									controller.enqueue(encoder.encode(chunk));
+									return true;
+								} catch {
+									cleanup();
+									return false;
+								}
+							};
 
-						// Keep the SSE connection alive during long silent stretches
-						// (e.g. yt-dlp downloads up to 10 minutes with no progress events).
-						// Bun closes idle connections after idleTimeout (~255s).
-						heartbeat = setInterval(() => {
-							safeEnqueue(': keepalive\n\n');
-						}, 30_000);
-
-						unsubscribe = jobStore.subscribe(jobId, (progress) => {
-							if (!safeEnqueue(`data: ${JSON.stringify(progress)}\n\n`)) {
+							if (!safeEnqueue(`data: ${JSON.stringify(job.progress)}\n\n`)) {
 								return;
 							}
 
+							// Keep the SSE connection alive during long silent stretches
+							// (e.g. yt-dlp downloads up to 10 minutes with no progress events).
+							// Bun closes idle connections after idleTimeout (~255s).
+							heartbeat = setInterval(() => {
+								safeEnqueue(': keepalive\n\n');
+							}, 30_000);
+
+							unsubscribe = jobStore.subscribe(jobId, (progress) => {
+								if (!safeEnqueue(`data: ${JSON.stringify(progress)}\n\n`)) {
+									return;
+								}
+
+								if (
+									progress.stage === 'ready' ||
+									progress.stage === 'error' ||
+									progress.stage === 'cancelled'
+								) {
+									setTimeout(closeStream, 100);
+								}
+							});
+
+							// subscribe() does not replay — close if the job is already done.
 							if (
-								progress.stage === 'ready' ||
-								progress.stage === 'error' ||
-								progress.stage === 'cancelled'
+								job.progress.stage === 'ready' ||
+								job.progress.stage === 'error' ||
+								job.progress.stage === 'cancelled'
 							) {
 								setTimeout(closeStream, 100);
 							}
-						});
 
-						// subscribe() does not replay — close if the job is already done.
-						if (
-							job.progress.stage === 'ready' ||
-							job.progress.stage === 'error' ||
-							job.progress.stage === 'cancelled'
-						) {
-							setTimeout(closeStream, 100);
-						}
+							req.signal.addEventListener('abort', closeStream);
+						},
+					});
 
-						req.signal.addEventListener('abort', closeStream);
-					},
-				});
-
-				return sseResponse(stream);
+					return sseResponse(stream);
+				} catch (error) {
+					console.error('SSE setup failed:', error);
+					return jsonResponse(
+						{ error: 'Failed to open event stream' },
+						{ status: 500 },
+					);
+				}
 			},
 		},
 
@@ -1160,10 +1170,17 @@ const server = Bun.serve({
 			},
 		},
 	}),
-	error: async (err) => {
+	error: ((err: Error, request?: Request) => {
 		console.error('Server error:', err);
-		return jsonResponse({ error: 'Internal Server Error' }, { status: 500 });
-	},
+		const respond = () =>
+			jsonResponse({ error: 'Internal Server Error' }, { status: 500 });
+		// Bun may pass Request as a second runtime arg (typed API is 1-arg).
+		// Restore ALS so CORS uses the request Origin instead of *.
+		if (request instanceof Request) {
+			return requestAls.run(request, respond);
+		}
+		return respond();
+	}) as (err: Error) => Response | Promise<Response>,
 });
 
 let shuttingDown = false;

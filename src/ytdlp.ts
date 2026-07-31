@@ -85,6 +85,7 @@ export function titleMatchScore(candidate: string, wanted: string): number {
 export class YtDlpDownloader {
 	private progressCallback: ProgressCallback | null = null;
 	private sourceLabel: string;
+	private activeProcess: ReturnType<typeof execa> | null = null;
 
 	constructor(sourceLabel = 'yt-dlp') {
 		this.sourceLabel = sourceLabel;
@@ -92,6 +93,32 @@ export class YtDlpDownloader {
 
 	setProgressCallback(callback: ProgressCallback) {
 		this.progressCallback = callback;
+	}
+
+	async close(): Promise<void> {
+		const running = this.activeProcess;
+		this.activeProcess = null;
+		running?.kill('SIGTERM');
+	}
+
+	private async runYtDlp(
+		ytDlpBin: string,
+		args: string[],
+		timeout: number,
+	): Promise<string> {
+		const process = execa(ytDlpBin, args, {
+			timeout,
+			killSignal: 'SIGTERM',
+		});
+		this.activeProcess = process;
+		try {
+			const { stdout } = await process;
+			return stdout;
+		} finally {
+			if (this.activeProcess === process) {
+				this.activeProcess = null;
+			}
+		}
 	}
 
 	async downloadAudio(
@@ -159,10 +186,7 @@ export class YtDlpDownloader {
 
 		let stdout: string;
 		try {
-			({ stdout } = await execa(ytDlpBin, args, {
-				timeout: YTDLP_DOWNLOAD_TIMEOUT_MS,
-				killSignal: 'SIGTERM',
-			}));
+			stdout = await this.runYtDlp(ytDlpBin, args, YTDLP_DOWNLOAD_TIMEOUT_MS);
 		} finally {
 			if (cookiesPath) await rm(cookiesPath, { force: true });
 		}
@@ -227,10 +251,10 @@ export class YtDlpDownloader {
 			`${this.sourceLabel}: album URL — matching track “${matchTitle}”…`,
 		);
 
-		const { stdout } = await execa(
+		const stdout = await this.runYtDlp(
 			ytDlpBin,
 			['--flat-playlist', '-J', '--no-warnings', albumUrl],
-			{ timeout: YTDLP_METADATA_TIMEOUT_MS, killSignal: 'SIGTERM' },
+			YTDLP_METADATA_TIMEOUT_MS,
 		);
 
 		const data = JSON.parse(stdout) as {

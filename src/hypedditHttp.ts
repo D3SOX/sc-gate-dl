@@ -115,10 +115,15 @@ export class HypedditHttpDownloader {
 	private readonly progressCallback: ProgressCallback | null;
 	private cookies = new Map<string, string>();
 	private csrfToken = '';
+	private abortController = new AbortController();
 
 	constructor(config: HypedditConfig, progressCallback?: ProgressCallback) {
 		this.config = config;
 		this.progressCallback = progressCallback ?? null;
+	}
+
+	async close(): Promise<void> {
+		this.abortController.abort();
 	}
 
 	// Attempts to download the file without a browser. Returns the saved filename,
@@ -185,6 +190,9 @@ export class HypedditHttpDownloader {
 
 			return await this.saveFile(downloadUrl);
 		} catch (error) {
+			if (this.abortController.signal.aborted) {
+				throw new Error('Download cancelled');
+			}
 			if (error instanceof BrowserlessConfigError) {
 				throw error;
 			}
@@ -238,7 +246,9 @@ export class HypedditHttpDownloader {
 
 	private async saveFile(downloadUrl: string): Promise<string> {
 		this.progressCallback?.('downloading', 'Downloading file...', 76);
-		const response = await fetch(downloadUrl);
+		const response = await fetch(downloadUrl, {
+			signal: this.abortController.signal,
+		});
 		if (!response.ok) {
 			throw new Error(`Download request failed: ${response.status}`);
 		}
@@ -314,6 +324,7 @@ export class HypedditHttpDownloader {
 		const response = await fetch(url, {
 			headers: { 'User-Agent': USER_AGENT },
 			redirect: 'follow',
+			signal: this.abortController.signal,
 		});
 		this.storeCookies(response);
 		return await response.text();
@@ -339,6 +350,7 @@ export class HypedditHttpDownloader {
 				Cookie: this.cookieHeader(),
 			},
 			body: params.toString(),
+			signal: this.abortController.signal,
 		});
 		this.storeCookies(response);
 		return response;
