@@ -187,13 +187,22 @@ async function runDownloadProcess(jobId: string): Promise<void> {
 	}
 	const { url: downloadSourceUrl, provider } = resolved;
 
+	const throwIfCancelled = () => {
+		if (jobStore.isCancelled(jobId)) {
+			throw new Error('Download cancelled');
+		}
+	};
+
 	try {
 		const emitProgress = (
 			stage: Job['progress']['stage'],
 			message: string,
 			percent: number,
 			extra?: Partial<Job['progress']>,
-		) => jobStore.updateProgress(jobId, stage, message, percent, extra);
+		) => {
+			if (jobStore.isCancelled(jobId)) return;
+			jobStore.updateProgress(jobId, stage, message, percent, extra);
+		};
 
 		const gateConfigBase = {
 			name: HYPEDDIT_NAME,
@@ -203,6 +212,7 @@ async function runDownloadProcess(jobId: string): Promise<void> {
 		};
 
 		const prepareBrowserConfig = async () => {
+			throwIfCancelled();
 			const userDataDir = await prepareJobUserDataDir(jobId);
 			jobProfileDirs.set(jobId, userDataDir);
 			return { ...gateConfigBase, userDataDir };
@@ -227,6 +237,7 @@ async function runDownloadProcess(jobId: string): Promise<void> {
 					matchTitle: job.track?.title,
 				},
 			);
+			throwIfCancelled();
 		} else if (provider === 'droploud') {
 			jobStore.updateProgress(
 				jobId,
@@ -240,6 +251,7 @@ async function runDownloadProcess(jobId: string): Promise<void> {
 			activeDownloaders.set(jobId, droploudDownloader);
 			droploudDownloader.setProgressCallback(emitProgress);
 			await droploudDownloader.initialize();
+			throwIfCancelled();
 			jobStore.updateProgress(
 				jobId,
 				'handling_gates',
@@ -248,7 +260,7 @@ async function runDownloadProcess(jobId: string): Promise<void> {
 			);
 			downloadFilename =
 				await droploudDownloader.downloadAudio(downloadSourceUrl);
-			await closeJobDownloader(jobId);
+			throwIfCancelled();
 		} else if (provider === 'gaterush') {
 			jobStore.updateProgress(
 				jobId,
@@ -262,6 +274,7 @@ async function runDownloadProcess(jobId: string): Promise<void> {
 			activeDownloaders.set(jobId, gaterushDownloader);
 			gaterushDownloader.setProgressCallback(emitProgress);
 			await gaterushDownloader.initialize();
+			throwIfCancelled();
 			jobStore.updateProgress(
 				jobId,
 				'handling_gates',
@@ -270,7 +283,7 @@ async function runDownloadProcess(jobId: string): Promise<void> {
 			);
 			downloadFilename =
 				await gaterushDownloader.downloadAudio(downloadSourceUrl);
-			await closeJobDownloader(jobId);
+			throwIfCancelled();
 		} else if (provider === 'downloadgater') {
 			jobStore.updateProgress(
 				jobId,
@@ -284,6 +297,7 @@ async function runDownloadProcess(jobId: string): Promise<void> {
 			activeDownloaders.set(jobId, downloadgaterDownloader);
 			downloadgaterDownloader.setProgressCallback(emitProgress);
 			await downloadgaterDownloader.initialize();
+			throwIfCancelled();
 			jobStore.updateProgress(
 				jobId,
 				'handling_gates',
@@ -292,7 +306,7 @@ async function runDownloadProcess(jobId: string): Promise<void> {
 			);
 			downloadFilename =
 				await downloadgaterDownloader.downloadAudio(downloadSourceUrl);
-			await closeJobDownloader(jobId);
+			throwIfCancelled();
 		} else {
 			// Hypeddit: always try plain HTTP first (email + social skip gates).
 			jobStore.updateProgress(
@@ -306,6 +320,7 @@ async function runDownloadProcess(jobId: string): Promise<void> {
 				emitProgress,
 			);
 			downloadFilename = await httpDownloader.tryDownload(downloadSourceUrl);
+			throwIfCancelled();
 
 			// Always try HTTP first. Fall back to the browser (headless or
 			// headful per job setting) when the gate needs real verification
@@ -324,6 +339,7 @@ async function runDownloadProcess(jobId: string): Promise<void> {
 				activeDownloaders.set(jobId, hypedditDownloader);
 				hypedditDownloader.setProgressCallback(emitProgress);
 				await hypedditDownloader.initialize();
+				throwIfCancelled();
 
 				jobStore.updateProgress(
 					jobId,
@@ -334,8 +350,12 @@ async function runDownloadProcess(jobId: string): Promise<void> {
 
 				downloadFilename =
 					await hypedditDownloader.downloadAudio(downloadSourceUrl);
-				await closeJobDownloader(jobId);
+				throwIfCancelled();
 			}
+		}
+
+		if (jobStore.isCancelled(jobId)) {
+			return;
 		}
 
 		if (!downloadFilename) {
@@ -357,6 +377,8 @@ async function runDownloadProcess(jobId: string): Promise<void> {
 			);
 			jobStore.update(jobId, { existingMetadata: existingMetadata ?? {} });
 		}
+
+		throwIfCancelled();
 
 		jobStore.updateProgress(
 			jobId,
@@ -380,19 +402,38 @@ async function runDownloadProcess(jobId: string): Promise<void> {
 			}
 		}
 
+		if (jobStore.isCancelled(jobId)) {
+			return;
+		}
+
 		jobStore.updateProgress(jobId, 'ready', 'Ready for metadata editing', 100);
 	} catch (error) {
-		await closeJobDownloader(jobId);
+		if (jobStore.isCancelled(jobId)) {
+			// Progress already set to cancelled by the cancel endpoint (or below).
+			if (jobStore.get(jobId)?.progress.stage !== 'cancelled') {
+				jobStore.cancel(jobId);
+			}
+			return;
+		}
 		const message =
 			error instanceof Error ? error.message : 'Unknown error occurred';
+		if (/cancel|target closed|session closed|browser.*closed/i.test(message)) {
+			jobStore.cancel(jobId, 'Download cancelled');
+			return;
+		}
 		jobStore.setError(jobId, message);
+	} finally {
+		await closeJobDownloader(jobId);
 	}
 }
 
 const corsHeaders: Record<string, string> = {
 	'Access-Control-Allow-Origin': '*',
 	'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
-	'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+	'Access-Control-Allow-Headers':
+		'Content-Type, Authorization, Access-Control-Request-Private-Network',
+	// Chrome Private Network Access: allow soundcloud.com → localhost:3000 (userscript)
+	'Access-Control-Allow-Private-Network': 'true',
 };
 
 function jsonResponse(data: unknown, options?: { status?: number }): Response {
@@ -663,13 +704,16 @@ const server = Bun.serve({
 					if (
 						job.progress.stage !== 'pending' &&
 						job.progress.stage !== 'waiting_hypeddit' &&
-						job.progress.stage !== 'error'
+						job.progress.stage !== 'error' &&
+						job.progress.stage !== 'cancelled'
 					) {
 						return jsonResponse(
 							{ error: 'Job is already in progress or completed' },
 							{ status: 400 },
 						);
 					}
+
+					jobStore.clearCancelled(jobId);
 
 					try {
 						const body = (await req.json()) as { headless?: boolean };
@@ -683,6 +727,40 @@ const server = Bun.serve({
 					runDownloadProcess(jobId);
 
 					return jsonResponse({ success: true, message: 'Download started' });
+				} catch (error) {
+					return jsonResponse(
+						{
+							error: error instanceof Error ? error.message : 'Unknown error',
+						},
+						{ status: 500 },
+					);
+				}
+			},
+		},
+
+		'/api/job/:id/cancel': {
+			POST: async (req) => {
+				try {
+					const jobId = req.params.id;
+					const job = jobStore.get(jobId);
+
+					if (!job) {
+						return jsonResponse({ error: 'Job not found' }, { status: 404 });
+					}
+
+					const stage = job.progress.stage;
+					if (stage === 'ready' || stage === 'cancelled') {
+						jobStore.cancel(jobId);
+						await closeJobDownloader(jobId);
+						return jsonResponse({ success: true, message: 'Cancelled' });
+					}
+
+					jobStore.cancel(jobId, 'Cancelling download…');
+					// Close CloakBrowser / job profile so Chromium exits cleanly
+					await closeJobDownloader(jobId);
+					jobStore.cancel(jobId, 'Download cancelled');
+
+					return jsonResponse({ success: true, message: 'Download cancelled' });
 				} catch (error) {
 					return jsonResponse(
 						{
@@ -757,7 +835,11 @@ const server = Bun.serve({
 								return;
 							}
 
-							if (progress.stage === 'ready' || progress.stage === 'error') {
+							if (
+								progress.stage === 'ready' ||
+								progress.stage === 'error' ||
+								progress.stage === 'cancelled'
+							) {
 								setTimeout(closeStream, 100);
 							}
 						});
@@ -765,7 +847,8 @@ const server = Bun.serve({
 						// subscribe() does not replay — close if the job is already done.
 						if (
 							job.progress.stage === 'ready' ||
-							job.progress.stage === 'error'
+							job.progress.stage === 'error' ||
+							job.progress.stage === 'cancelled'
 						) {
 							setTimeout(closeStream, 100);
 						}

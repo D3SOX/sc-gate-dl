@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Toaster, toast } from 'sonner';
 import './App.css';
 
@@ -43,6 +43,14 @@ interface JobState {
 }
 
 const API_BASE = 'http://localhost:3000';
+
+function notifyParent(
+	type: 'file-download' | 'new-download' | 'job' | 'cancelled' | 'ready',
+	payload?: { jobId?: string },
+) {
+	if (window.parent === window) return;
+	window.parent.postMessage({ source: 'sc-gate-dl', type, ...payload }, '*');
+}
 
 /** Promo fluff often glued onto SoundCloud / gate titles. */
 const PROMO_TAG =
@@ -187,6 +195,8 @@ export default function App() {
 	const [nameAsArtistTitle, setNameAsArtistTitle] = useState(false);
 	const [isLoading, setIsLoading] = useState(false);
 	const cleanupToastShownRef = useRef(false);
+	const autoStartedFromQueryRef = useRef(false);
+	const eventSourceRef = useRef<EventSource | null>(null);
 	const formatPercent = (value?: number) => Math.round(value ?? 0);
 
 	const showCleanupSoundcloudToast = useCallback(() => {
@@ -255,62 +265,244 @@ export default function App() {
 		});
 	}, []);
 
-	// Create job with SoundCloud URL
-	const handleSoundcloudSubmit = async (e: React.FormEvent) => {
-		e.preventDefault();
-		if (!soundcloudUrl.trim()) return;
+	// Start download process
+	const startDownload = useCallback(
+		async (jobId: string) => {
+			setStep('progress');
+			cleanupToastShownRef.current = false;
+			eventSourceRef.current?.close();
+			eventSourceRef.current = null;
+			notifyParent('job', { jobId });
 
-		setIsLoading(true);
-		setJob((prev) => ({ ...prev, error: null }));
+			try {
+				const response = await fetch(`${API_BASE}/api/job/${jobId}/start`, {
+					method: 'POST',
+					headers: { 'Content-Type': 'application/json' },
+					body: JSON.stringify({ headless: !headfulMode }),
+				});
+
+				if (!response.ok) {
+					const data = await response.json();
+					throw new Error(data.error || 'Failed to start download');
+				}
+
+				// Connect to SSE for progress updates
+				const eventSource = new EventSource(
+					`${API_BASE}/api/job/${jobId}/events`,
+				);
+				eventSourceRef.current = eventSource;
+
+				eventSource.onmessage = (event) => {
+					const progress: JobProgress = JSON.parse(event.data);
+					setJob((prev) => ({ ...prev, progress }));
+
+					// Browserless downloads never touch the SoundCloud account, so there
+					// is nothing to clean up afterwards.
+					if (
+						progress.stage === 'downloading' &&
+						(progress.downloadBytes || progress.totalBytes) &&
+						!progress.browserless &&
+						!cleanupToastShownRef.current
+					) {
+						showCleanupSoundcloudToast();
+						cleanupToastShownRef.current = true;
+					}
+
+					if (progress.stage === 'ready') {
+						eventSource.close();
+						eventSourceRef.current = null;
+						notifyParent('ready');
+						fetch(`${API_BASE}/api/job/${jobId}`)
+							.then((res) => res.json())
+							.then((data) => {
+								setJob((prev) => ({
+									...prev,
+									downloadFilename: data.downloadFilename,
+									outputFilename: data.outputFilename,
+									existingMetadata: data.existingMetadata,
+									outputFormat: data.outputFormat,
+								}));
+								setStep(
+									data.outputFormat === 'original' ? 'complete' : 'metadata',
+								);
+							})
+							.catch((err) => {
+								setJob((prev) => ({
+									...prev,
+									error:
+										err instanceof Error ? err.message : 'Failed to load job',
+								}));
+							});
+					} else if (progress.stage === 'error') {
+						eventSource.close();
+						eventSourceRef.current = null;
+						setJob((prev) => ({ ...prev, error: progress.message }));
+					} else if (progress.stage === 'cancelled') {
+						eventSource.close();
+						eventSourceRef.current = null;
+						setJob((prev) => ({
+							...prev,
+							progress,
+							error: null,
+						}));
+						setStep('url');
+						notifyParent('cancelled');
+					}
+				};
+
+				eventSource.onerror = () => {
+					eventSource.close();
+					if (eventSourceRef.current === eventSource) {
+						eventSourceRef.current = null;
+					}
+				};
+			} catch (err) {
+				setJob((prev) => ({
+					...prev,
+					error: err instanceof Error ? err.message : 'Unknown error',
+				}));
+			}
+		},
+		[headfulMode, showCleanupSoundcloudToast],
+	);
+
+	const cancelDownload = useCallback(async () => {
+		const jobId = job.jobId;
+		if (!jobId) return;
+
+		eventSourceRef.current?.close();
+		eventSourceRef.current = null;
 
 		try {
-			const response = await fetch(`${API_BASE}/api/job`, {
-				method: 'POST',
-				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({
-					soundcloudUrl,
-					skipAutomaticHypedditFetch,
-					outputFormat,
-				}),
-			});
-
-			const data = await response.json();
-
-			if (!response.ok) {
-				throw new Error(data.error || 'Failed to create job');
-			}
-
-			setJob({
-				...job,
-				jobId: data.jobId,
-				track: data.track,
-				hypedditUrl: data.hypedditUrl,
-				defaultMetadata: data.defaultMetadata,
-				existingMetadata: null,
-				outputFormat,
-				error: null,
-			});
-
-			// Pre-fill metadata
-			if (data.defaultMetadata) {
-				setMetadata(data.defaultMetadata);
-			}
-
-			if (skipAutomaticHypedditFetch || data.needsHypedditUrl) {
-				setStep('hypeddit');
-			} else {
-				// Auto-start download
-				startDownload(data.jobId);
-			}
+			await fetch(`${API_BASE}/api/job/${jobId}/cancel`, { method: 'POST' });
 		} catch (err) {
-			setJob((prev) => ({
-				...prev,
-				error: err instanceof Error ? err.message : 'Unknown error',
-			}));
-		} finally {
-			setIsLoading(false);
+			console.warn('Cancel request failed', err);
 		}
+
+		setJob((prev) => ({
+			...prev,
+			progress: {
+				stage: 'cancelled',
+				message: 'Download cancelled',
+				percent: prev.progress?.percent ?? 0,
+			},
+			error: null,
+		}));
+		setStep('url');
+		notifyParent('cancelled');
+	}, [job.jobId]);
+
+	// Parent userscript panel X → cancel in-progress job
+	useEffect(() => {
+		const onMessage = (event: MessageEvent) => {
+			const data = event.data;
+			if (!data || data.source !== 'sc-gate-dl-host') return;
+			if (data.type === 'cancel') {
+				void cancelDownload();
+			}
+		};
+		window.addEventListener('message', onMessage);
+		return () => window.removeEventListener('message', onMessage);
+	}, [cancelDownload]);
+
+	const createJob = useCallback(
+		async (url: string, formatOverride?: OutputFormat) => {
+			const trimmed = url.trim();
+			if (!trimmed) return;
+
+			const format = formatOverride ?? outputFormat;
+
+			setIsLoading(true);
+			setJob((prev) => ({ ...prev, error: null }));
+
+			try {
+				const response = await fetch(`${API_BASE}/api/job`, {
+					method: 'POST',
+					headers: { 'Content-Type': 'application/json' },
+					body: JSON.stringify({
+						soundcloudUrl: trimmed,
+						skipAutomaticHypedditFetch,
+						outputFormat: format,
+					}),
+				});
+
+				const data = await response.json();
+
+				if (!response.ok) {
+					throw new Error(data.error || 'Failed to create job');
+				}
+
+				setJob((prev) => ({
+					...prev,
+					jobId: data.jobId,
+					track: data.track,
+					hypedditUrl: data.hypedditUrl,
+					defaultMetadata: data.defaultMetadata,
+					existingMetadata: null,
+					outputFormat: format,
+					error: null,
+				}));
+
+				if (data.defaultMetadata) {
+					setMetadata(data.defaultMetadata);
+				}
+
+				if (skipAutomaticHypedditFetch || data.needsHypedditUrl) {
+					setStep('hypeddit');
+				} else {
+					startDownload(data.jobId);
+				}
+			} catch (err) {
+				setJob((prev) => ({
+					...prev,
+					error: err instanceof Error ? err.message : 'Unknown error',
+				}));
+			} finally {
+				setIsLoading(false);
+			}
+		},
+		[skipAutomaticHypedditFetch, outputFormat, startDownload],
+	);
+
+	// Create job with SoundCloud URL
+	const handleSoundcloudSubmit = (e: React.FormEvent) => {
+		e.preventDefault();
+		void createJob(soundcloudUrl);
 	};
+
+	// Userscript / deep-link: ?url=&outputFormat= pre-fills and starts a job
+	useEffect(() => {
+		if (autoStartedFromQueryRef.current) return;
+		const params = new URLSearchParams(window.location.search);
+		let queryUrl = params.get('url') || params.get('soundcloudUrl');
+		if (!queryUrl) return;
+		autoStartedFromQueryRef.current = true;
+
+		// New SC listen layout may pass /n/artist/track — normalize to /artist/track
+		try {
+			const parsed = new URL(queryUrl);
+			const parts = parsed.pathname.split('/').filter(Boolean);
+			if (parts[0] === 'n' && parts.length >= 3) {
+				parsed.pathname = `/${parts[1]}/${parts[2]}`;
+				parsed.search = '';
+				parsed.hash = '';
+				queryUrl = parsed.toString();
+			}
+		} catch {
+			// keep queryUrl as-is
+		}
+
+		const formatParam = params.get('outputFormat');
+		const format: OutputFormat | undefined =
+			formatParam === 'original' || formatParam === 'mp3-320'
+				? formatParam
+				: undefined;
+		if (format) {
+			setOutputFormat(format);
+		}
+		setSoundcloudUrl(queryUrl);
+		void createJob(queryUrl, format);
+	}, [createJob]);
 
 	// Set Hypeddit URL and start download
 	const handleHypedditSubmit = async (e: React.FormEvent) => {
@@ -381,87 +573,6 @@ export default function App() {
 			setIsLoading(false);
 		}
 	};
-
-	// Start download process
-	const startDownload = useCallback(
-		async (jobId: string) => {
-			setStep('progress');
-			cleanupToastShownRef.current = false;
-
-			try {
-				const response = await fetch(`${API_BASE}/api/job/${jobId}/start`, {
-					method: 'POST',
-					headers: { 'Content-Type': 'application/json' },
-					body: JSON.stringify({ headless: !headfulMode }),
-				});
-
-				if (!response.ok) {
-					const data = await response.json();
-					throw new Error(data.error || 'Failed to start download');
-				}
-
-				// Connect to SSE for progress updates
-				const eventSource = new EventSource(
-					`${API_BASE}/api/job/${jobId}/events`,
-				);
-
-				eventSource.onmessage = (event) => {
-					const progress: JobProgress = JSON.parse(event.data);
-					setJob((prev) => ({ ...prev, progress }));
-
-					// Browserless downloads never touch the SoundCloud account, so there
-					// is nothing to clean up afterwards.
-					if (
-						progress.stage === 'downloading' &&
-						(progress.downloadBytes || progress.totalBytes) &&
-						!progress.browserless &&
-						!cleanupToastShownRef.current
-					) {
-						showCleanupSoundcloudToast();
-						cleanupToastShownRef.current = true;
-					}
-
-					if (progress.stage === 'ready') {
-						eventSource.close();
-						fetch(`${API_BASE}/api/job/${jobId}`)
-							.then((res) => res.json())
-							.then((data) => {
-								setJob((prev) => ({
-									...prev,
-									downloadFilename: data.downloadFilename,
-									outputFilename: data.outputFilename,
-									existingMetadata: data.existingMetadata,
-									outputFormat: data.outputFormat,
-								}));
-								setStep(
-									data.outputFormat === 'original' ? 'complete' : 'metadata',
-								);
-							})
-							.catch((err) => {
-								setJob((prev) => ({
-									...prev,
-									error:
-										err instanceof Error ? err.message : 'Failed to load job',
-								}));
-							});
-					} else if (progress.stage === 'error') {
-						eventSource.close();
-						setJob((prev) => ({ ...prev, error: progress.message }));
-					}
-				};
-
-				eventSource.onerror = () => {
-					eventSource.close();
-				};
-			} catch (err) {
-				setJob((prev) => ({
-					...prev,
-					error: err instanceof Error ? err.message : 'Unknown error',
-				}));
-			}
-		},
-		[headfulMode, showCleanupSoundcloudToast],
-	);
 
 	// Process metadata and finalize
 	const processMetadata = async (preserveMetadata = false) => {
@@ -558,6 +669,7 @@ export default function App() {
 
 	// Reset and start over
 	const handleReset = () => {
+		notifyParent('new-download');
 		setSoundcloudUrl('');
 		setHypedditUrlInput('');
 		setSkipAutomaticHypedditFetch(false);
@@ -879,6 +991,13 @@ export default function App() {
 									</span>
 								)}
 						</div>
+						<button
+							type="button"
+							className="btn-secondary btn-cancel-download"
+							onClick={() => void cancelDownload()}
+						>
+							Cancel download
+						</button>
 					</div>
 				)}
 
@@ -1122,6 +1241,7 @@ export default function App() {
 								href={`${API_BASE}/api/job/${job.jobId}/file`}
 								download
 								className="btn-primary"
+								onClick={() => notifyParent('file-download')}
 							>
 								{job.outputFormat === 'original'
 									? 'Download Original'

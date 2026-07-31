@@ -12,6 +12,7 @@ Download and tag SoundCloud tracks unlocked via Hypeddit, Droploud, GateRush, Do
 - 🎧 Converts Lossless (WAV/AIFF/FLAC) files to MP3 (320kbps)
 - 🏷️ Tags MP3 files with metadata and artwork from SoundCloud
 - 🧹 Optional cleanup of the SoundCloud account (unfollow, unlike, delete comments/reposts)
+- 🧩 Userscript (Violentmonkey) that opens the Web UI in a floating panel next to SoundCloud store/buy links
 
 ## Prerequisites
 
@@ -140,6 +141,37 @@ bun webui
 Wait for Astro to be started. It will then tell you the address it's available on, most likely [`http://localhost:4321`](http://localhost:4321).
 
 If it's the first time you're running it you will need to initialize the logins by clicking the button in the footer.
+
+You can deep-link a track with `?url=` (also accepted as `?soundcloudUrl=`) and optional `outputFormat` (`mp3-320` or `original`), which pre-fills the form and starts the job:
+
+```text
+http://localhost:4321/?url=https://soundcloud.com/artist/track&outputFormat=mp3-320
+```
+
+### Browser userscript
+
+Adds a download icon next to SoundCloud store/buy links (feed and track pages). Clicking it opens the **exact Web UI** in a floating, movable panel on the right (resizable from all edges) — the page behind stays usable (no dimmed overlay). Choose output format via the panel toolbar, or Violentmonkey → **Choose output format…**. Auto-close after the **browser file download** (Download MP3/Original) or **Start New Download** is on by default — toggle via **Auto-close after browser download**. Closing the panel (× / Escape) or **Cancel download** in the Web UI stops an in-progress job and exits the browser cleanly.
+
+**Recommended:** [Violentmonkey](https://violentmonkey.github.io/) (Firefox / Chrome / Edge). Tampermonkey also works.
+
+[![Install userscript](https://img.shields.io/badge/Install%20userscript-Violentmonkey-3b3b3b?style=for-the-badge&logo=firefoxbrowser&logoColor=white)](https://raw.githubusercontent.com/D3SOX/sc-gate-dl/main/userscript/sc-gate-dl.user.js)
+
+Or open the raw file: [`userscript/sc-gate-dl.user.js`](https://raw.githubusercontent.com/D3SOX/sc-gate-dl/main/userscript/sc-gate-dl.user.js)
+
+1. Install [Violentmonkey](https://violentmonkey.github.io/)
+2. Click **Install userscript** above (Violentmonkey will prompt to confirm)
+3. Start the Web UI locally: `bun webui`
+4. Browse SoundCloud — use the download icon beside the store/cart button
+
+Chrome may ask once to allow the page to access your local network (`localhost`). If the panel iframe is blocked, use **open in tab** in the panel toolbar.
+
+To point at a different Web UI origin (from the SoundCloud tab console):
+
+```js
+localStorage.setItem('sc-gate-dl-webui-base', 'http://localhost:4321')
+```
+
+Panel size/position is remembered in `localStorage` (`sc-gate-dl-panel-geom`).
 
 ## How It Works
 

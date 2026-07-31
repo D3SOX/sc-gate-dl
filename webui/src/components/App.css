@@ -511,6 +511,11 @@
 	color: var(--text-secondary);
 }
 
+.btn-cancel-download {
+	align-self: center;
+	margin-top: var(--space-sm);
+}
+
 /* Metadata form */
 .metadata-form {
 	padding: var(--space-xl);

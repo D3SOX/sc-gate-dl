@@ -5,5 +5,13 @@ import react from '@astrojs/react';
 
 // https://astro.build/config
 export default defineConfig({
-  integrations: [react()]
+	integrations: [react()],
+	vite: {
+		server: {
+			// Allow embedding from SoundCloud via the userscript overlay iframe
+			headers: {
+				'Access-Control-Allow-Private-Network': 'true',
+			},
+		},
+	},
 });
