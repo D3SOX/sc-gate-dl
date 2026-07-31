@@ -299,6 +299,9 @@ export class HypedditHttpDownloader {
 				}
 			}
 			await writer.end();
+			if (this.abortController.signal.aborted) {
+				throw new Error('Download cancelled');
+			}
 			await rename(tempPath, destPath);
 			succeeded = true;
 		} finally {

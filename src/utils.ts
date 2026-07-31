@@ -399,7 +399,7 @@ export function getDefaultMetadata(track: SoundcloudTrack): Metadata {
 }
 
 const LOSSLESS_EXTENSIONS = ['.wav', '.aiff', '.aif', '.flac'] as const;
-/** Lossy containers we still re-encode to MP3 when output is mp3-320. */
+/** Lossy containers we still re-encode to MP3 (bitrate chosen from the source). */
 const LOSSY_TO_MP3_EXTENSIONS = [
 	'.m4a',
 	'.aac',
@@ -407,6 +407,14 @@ const LOSSY_TO_MP3_EXTENSIONS = [
 	'.opus',
 	'.webm',
 ] as const;
+const MP3_CONVERTIBLE_EXTENSIONS = [
+	...LOSSLESS_EXTENSIONS,
+	...LOSSY_TO_MP3_EXTENSIONS,
+] as const;
+const MP3_CONVERTIBLE_EXT_PATTERN = new RegExp(
+	`\\.(${MP3_CONVERTIBLE_EXTENSIONS.map((ext) => ext.slice(1)).join('|')})$`,
+	'i',
+);
 
 function hasExtension(
 	filename: string,
@@ -424,7 +432,7 @@ export function isMp3Format(filename: string): boolean {
 	return filename.toLowerCase().endsWith('.mp3');
 }
 
-/** True when the file must be re-encoded to MP3 for the mp3-320 output path. */
+/** True when the file must be re-encoded to MP3 for the MP3 output path. */
 export function needsMp3Conversion(filename: string): boolean {
 	return (
 		isLosslessFormat(filename) ||
@@ -433,10 +441,7 @@ export function needsMp3Conversion(filename: string): boolean {
 }
 
 export function toMp3Filename(filename: string): string {
-	return filename.replace(
-		/\.(wav|aiff|aif|flac|m4a|aac|ogg|opus|webm)$/i,
-		'.mp3',
-	);
+	return filename.replace(MP3_CONVERTIBLE_EXT_PATTERN, '.mp3');
 }
 
 /** @deprecated Prefer toMp3Filename */

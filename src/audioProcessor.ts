@@ -22,51 +22,28 @@ export class AudioProcessor {
 	}
 
 	async readMp3Metadata(inputPath: string): Promise<Metadata | null> {
-		try {
-			const { stdout } = await execa(this.ffprobeBin, [
-				'-v',
-				'quiet',
-				'-print_format',
-				'json',
-				'-show_format',
-				'-show_streams',
-				inputPath,
-			]);
-
-			const probeData = JSON.parse(stdout) as {
-				format?: {
-					tags?: Record<string, string>;
-				};
-				streams?: Array<{
-					tags?: Record<string, string>;
-				}>;
-			};
-
-			const tags =
-				probeData.format?.tags || probeData.streams?.[0]?.tags || null;
-
-			if (!tags) {
-				return null;
-			}
-
-			// MP3 metadata can be in different cases
-			const getTag = (key: string): string | undefined => {
-				return tags[key] || tags[key.toUpperCase()];
-			};
-
-			return {
-				title: getTag('title'),
-				artist: getTag('artist'),
-				album: getTag('album'),
-				genre: getTag('genre'),
-			};
-		} catch (error) {
-			// If ffprobe is not found or fails, return null to fall back to normal behavior
-			console.warn(
-				`Failed to read MP3 metadata: ${error instanceof Error ? error.message : String(error)}`,
-			);
+		const probeData = await this.runFfprobe(inputPath);
+		if (!probeData) {
 			return null;
 		}
+
+		const tags = probeData.format?.tags || probeData.streams?.[0]?.tags || null;
+
+		if (!tags) {
+			return null;
+		}
+
+		// MP3 metadata can be in different cases
+		const getTag = (key: string): string | undefined => {
+			return tags[key] || tags[key.toUpperCase()];
+		};
+
+		return {
+			title: getTag('title'),
+			artist: getTag('artist'),
+			album: getTag('album'),
+			genre: getTag('genre'),
+		};
 	}
 
 	async promptForMetadata(
@@ -213,10 +190,14 @@ export class AudioProcessor {
 		}
 	}
 
-	/** Probe audio bitrate in kbps; null when unknown. */
-	private async probeAudioBitrateKbps(
-		inputPath: string,
-	): Promise<number | null> {
+	private async runFfprobe(inputPath: string): Promise<{
+		format?: { tags?: Record<string, string>; bit_rate?: string };
+		streams?: Array<{
+			tags?: Record<string, string>;
+			codec_type?: string;
+			bit_rate?: string;
+		}>;
+	} | null> {
 		try {
 			const { stdout } = await execa(this.ffprobeBin, [
 				'-v',
@@ -227,28 +208,41 @@ export class AudioProcessor {
 				'-show_streams',
 				inputPath,
 			]);
-
-			const probeData = JSON.parse(stdout) as {
-				format?: { bit_rate?: string };
-				streams?: Array<{ codec_type?: string; bit_rate?: string }>;
+			return JSON.parse(stdout) as {
+				format?: { tags?: Record<string, string>; bit_rate?: string };
+				streams?: Array<{
+					tags?: Record<string, string>;
+					codec_type?: string;
+					bit_rate?: string;
+				}>;
 			};
-
-			const audioStream = probeData.streams?.find(
-				(stream) => stream.codec_type === 'audio',
-			);
-			const raw =
-				audioStream?.bit_rate || probeData.format?.bit_rate || undefined;
-			if (!raw) return null;
-
-			const bps = Number(raw);
-			if (!Number.isFinite(bps) || bps <= 0) return null;
-			return Math.round(bps / 1000);
 		} catch (error) {
 			console.warn(
-				`Failed to probe audio bitrate: ${error instanceof Error ? error.message : String(error)}`,
+				`Failed to probe audio: ${error instanceof Error ? error.message : String(error)}`,
 			);
 			return null;
 		}
+	}
+
+	/** Probe audio bitrate in kbps; null when unknown. */
+	private async probeAudioBitrateKbps(
+		inputPath: string,
+	): Promise<number | null> {
+		const probeData = await this.runFfprobe(inputPath);
+		if (!probeData) {
+			return null;
+		}
+
+		const audioStream = probeData.streams?.find(
+			(stream) => stream.codec_type === 'audio',
+		);
+		const raw =
+			audioStream?.bit_rate || probeData.format?.bit_rate || undefined;
+		if (!raw) return null;
+
+		const bps = Number(raw);
+		if (!Number.isFinite(bps) || bps <= 0) return null;
+		return Math.round(bps / 1000);
 	}
 
 	/**
