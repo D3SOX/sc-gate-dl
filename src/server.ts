@@ -55,23 +55,34 @@ type AnyDownloader = {
 const activeDownloaders = new Map<string, AnyDownloader>();
 /** Job-scoped Chromium profiles under ./browser-data/jobs/<jobId>. */
 const jobProfileDirs = new Map<string, string>();
+/** In-flight close+profile cleanup so SIGINT cannot delete a profile mid-close. */
+const closingJobs = new Map<string, Promise<void>>();
 
 async function closeJobDownloader(jobId: string): Promise<void> {
-	const downloader = activeDownloaders.get(jobId);
-	if (downloader) {
-		activeDownloaders.delete(jobId);
-		await downloader.close().catch(() => {});
-	}
+	const existing = closingJobs.get(jobId);
+	if (existing) return existing;
 
+	const downloader = activeDownloaders.get(jobId);
 	const profileDir = jobProfileDirs.get(jobId);
-	if (profileDir) {
-		jobProfileDirs.delete(jobId);
-		await rm(profileDir, { recursive: true, force: true }).catch(() => {});
-	}
+	activeDownloaders.delete(jobId);
+	jobProfileDirs.delete(jobId);
+
+	const closing = (async () => {
+		await downloader?.close().catch(() => {});
+		if (profileDir) {
+			await rm(profileDir, { recursive: true, force: true }).catch(() => {});
+		}
+	})();
+	closingJobs.set(jobId, closing);
+	await closing.finally(() => closingJobs.delete(jobId));
 }
 
 async function closeAllDownloaders(): Promise<void> {
-	const ids = new Set([...activeDownloaders.keys(), ...jobProfileDirs.keys()]);
+	const ids = new Set([
+		...activeDownloaders.keys(),
+		...jobProfileDirs.keys(),
+		...closingJobs.keys(),
+	]);
 	await Promise.all([...ids].map((id) => closeJobDownloader(id)));
 }
 
