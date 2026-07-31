@@ -413,6 +413,20 @@ export default function App() {
 		album: '',
 		genre: '',
 	};
+	const existingTagRows = (
+		[
+			{ key: 'title', label: 'Title' },
+			{ key: 'artist', label: 'Artist' },
+			{ key: 'album', label: 'Album' },
+			{ key: 'genre', label: 'Genre' },
+		] as const
+	)
+		.map(({ key, label }) => ({
+			key,
+			label,
+			existingValue: job.existingMetadata?.[key]?.trim() || '',
+		}))
+		.filter(({ existingValue }) => existingValue);
 
 	// Reset and start over
 	const handleReset = () => {
@@ -747,74 +761,63 @@ export default function App() {
 					>
 						{job.existingMetadata && (
 							<div className="existing-metadata">
-								<div>
-									<h3>Existing MP3 Metadata</h3>
-									<p>
-										Copy a tag into the form, or keep the file’s tags unchanged
-										for the whole download.
-									</p>
-								</div>
-								<ul className="existing-metadata-list">
-									{(
-										[
-											{ key: 'title', label: 'Title' },
-											{ key: 'artist', label: 'Artist' },
-											{ key: 'album', label: 'Album' },
-											{ key: 'genre', label: 'Genre' },
-										] as const
-									)
-										.map(({ key, label }) => ({
-											key,
-											label,
-											existingValue:
-												job.existingMetadata?.[key]?.trim() || '',
-										}))
-										.filter(({ existingValue }) => existingValue)
-										.map(({ key, label, existingValue }) => (
-											<li key={key} className="existing-metadata-row">
-												<span className="existing-metadata-label">
-													{label}
-												</span>
-												<span className="existing-metadata-value">
-													{existingValue}
-												</span>
-												<button
-													type="button"
-													className="btn-copy-existing"
-													disabled={isLoading}
-													title={`Copy ${label.toLowerCase()} into the form`}
-													aria-label={`Copy ${label.toLowerCase()} into the form`}
-													onClick={() =>
-														setMetadata((prev) => ({
-															...prev,
-															[key]: existingValue,
-														}))
-													}
-												>
-													<svg
-														viewBox="0 0 24 24"
-														width="14"
-														height="14"
-														aria-hidden="true"
-														fill="none"
-														stroke="currentColor"
-														strokeWidth="2"
-														strokeLinecap="round"
-														strokeLinejoin="round"
+								{existingTagRows.length > 0 ? (
+									<>
+										<div>
+											<h3>Existing MP3 Metadata</h3>
+											<p>
+												Copy a tag into the form, or keep the file’s tags
+												unchanged for the whole download.
+											</p>
+										</div>
+										<ul className="existing-metadata-list">
+											{existingTagRows.map(({ key, label, existingValue }) => (
+												<li key={key} className="existing-metadata-row">
+													<span className="existing-metadata-label">
+														{label}
+													</span>
+													<span className="existing-metadata-value">
+														{existingValue}
+													</span>
+													<button
+														type="button"
+														className="btn-copy-existing"
+														disabled={isLoading}
+														title={`Copy ${label.toLowerCase()} into the form`}
+														aria-label={`Copy ${label.toLowerCase()} into the form`}
+														onClick={() =>
+															setMetadata((prev) => ({
+																...prev,
+																[key]: existingValue,
+															}))
+														}
 													>
-														<rect
-															x="9"
-															y="9"
-															width="13"
-															height="13"
-															rx="2"
-														/>
-														<path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
-													</svg>
-												</button>
-											</li>
-										))}
-								</ul>
+														<svg
+															viewBox="0 0 24 24"
+															width="14"
+															height="14"
+															aria-hidden="true"
+															fill="none"
+															stroke="currentColor"
+															strokeWidth="2"
+															strokeLinecap="round"
+															strokeLinejoin="round"
+														>
+															<rect
+																x="9"
+																y="9"
+																width="13"
+																height="13"
+																rx="2"
+															/>
+															<path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+														</svg>
+													</button>
+												</li>
+											))}
+										</ul>
+									</>
+								) : null}
 								<button
 									type="button"
 									className="btn-secondary"
