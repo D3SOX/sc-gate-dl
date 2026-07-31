@@ -418,7 +418,10 @@ export class GaterushDownloader {
 	}
 
 	private async handleInstagram(page: Page) {
-		while (true) {
+		const deadline = Date.now() + 120_000;
+		let previousIndex = -1;
+		let repeats = 0;
+		while (Date.now() < deadline) {
 			const nextIndex = await page.evaluate((selector) => {
 				const buttons = Array.from(
 					document.querySelectorAll<HTMLButtonElement>(selector),
@@ -430,6 +433,14 @@ export class GaterushDownloader {
 
 			if (nextIndex < 0) {
 				break;
+			}
+
+			repeats = nextIndex === previousIndex ? repeats + 1 : 0;
+			previousIndex = nextIndex;
+			if (repeats >= 3) {
+				throw new Error(
+					`GateRush Instagram step stalled on account button ${nextIndex}`,
+				);
 			}
 
 			const pagesBefore = new Set(await this.browser.pages(true));
@@ -477,6 +488,10 @@ export class GaterushDownloader {
 			await timeout(500);
 		}
 
+		if (Date.now() >= deadline) {
+			throw new Error('GateRush Instagram step timed out');
+		}
+
 		// Wait for IG step completion (server-side gate-step POST)
 		await page.waitForFunction(
 			() => {
@@ -503,9 +518,18 @@ export class GaterushDownloader {
 
 		let downloadGuid: string | null = null;
 		let downloadCompleteResolve: (value: string) => void;
-		const downloadCompletePromise = new Promise<string>((resolve) => {
+		let downloadCompleteReject: (reason: Error) => void;
+		const downloadCompletePromise = new Promise<string>((resolve, reject) => {
 			downloadCompleteResolve = resolve;
+			downloadCompleteReject = reject;
 		});
+		const downloadTimer = setTimeout(
+			() =>
+				downloadCompleteReject(
+					new Error('GateRush download did not complete in time'),
+				),
+			10 * 60_000,
+		);
 
 		const pBar = new SingleBar(
 			{
@@ -557,7 +581,7 @@ export class GaterushDownloader {
 				);
 			} else if (event.state === 'canceled') {
 				pBar.stop();
-				throw new Error('Download was canceled');
+				downloadCompleteReject(new Error('Download was canceled'));
 			}
 		});
 
@@ -578,7 +602,12 @@ export class GaterushDownloader {
 			}
 		}, 10_000);
 
-		await Promise.all([clickDownload(), downloadCompletePromise]);
-		await client.detach();
+		try {
+			await Promise.all([clickDownload(), downloadCompletePromise]);
+		} finally {
+			clearTimeout(downloadTimer);
+			pBar.stop();
+			await client.detach().catch(() => {});
+		}
 	}
 }

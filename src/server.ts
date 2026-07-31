@@ -46,10 +46,24 @@ const HYPEDDIT_EMAIL = getOptionalEnv('HYPEDDIT_EMAIL');
 const soundcloudClient = new SoundcloudClient();
 const audioProcessor = new AudioProcessor(ffmpegBin, ffprobeBin);
 
-let hypedditDownloader: HypedditDownloader | null = null;
-let droploudDownloader: DroploudDownloader | null = null;
-let gaterushDownloader: GaterushDownloader | null = null;
-let downloadgaterDownloader: DownloadgaterDownloader | null = null;
+type AnyDownloader = {
+	close(): Promise<void>;
+};
+
+/** Per-job browser handles so concurrent jobs cannot close each other. */
+const activeDownloaders = new Map<string, AnyDownloader>();
+
+async function closeJobDownloader(jobId: string): Promise<void> {
+	const downloader = activeDownloaders.get(jobId);
+	if (!downloader) return;
+	activeDownloaders.delete(jobId);
+	await downloader.close().catch(() => {});
+}
+
+async function closeAllDownloaders(): Promise<void> {
+	const ids = [...activeDownloaders.keys()];
+	await Promise.all(ids.map((id) => closeJobDownloader(id)));
+}
 
 function serializeTrack(track: SoundcloudTrack): Job['track'] {
 	return {
@@ -109,7 +123,8 @@ async function runDownloadProcess(jobId: string): Promise<void> {
 				'Launching browser for Droploud...',
 				10,
 			);
-			droploudDownloader = new DroploudDownloader(gateConfig);
+			const droploudDownloader = new DroploudDownloader(gateConfig);
+			activeDownloaders.set(jobId, droploudDownloader);
 			droploudDownloader.setProgressCallback(emitProgress);
 			await droploudDownloader.initialize();
 			jobStore.updateProgress(
@@ -119,8 +134,7 @@ async function runDownloadProcess(jobId: string): Promise<void> {
 				25,
 			);
 			downloadFilename = await droploudDownloader.downloadAudio(gateUrl);
-			await droploudDownloader.close();
-			droploudDownloader = null;
+			await closeJobDownloader(jobId);
 		} else if (provider === 'gaterush') {
 			jobStore.updateProgress(
 				jobId,
@@ -128,7 +142,8 @@ async function runDownloadProcess(jobId: string): Promise<void> {
 				'Launching browser for GateRush...',
 				10,
 			);
-			gaterushDownloader = new GaterushDownloader(gateConfig);
+			const gaterushDownloader = new GaterushDownloader(gateConfig);
+			activeDownloaders.set(jobId, gaterushDownloader);
 			gaterushDownloader.setProgressCallback(emitProgress);
 			await gaterushDownloader.initialize();
 			jobStore.updateProgress(
@@ -138,8 +153,7 @@ async function runDownloadProcess(jobId: string): Promise<void> {
 				25,
 			);
 			downloadFilename = await gaterushDownloader.downloadAudio(gateUrl);
-			await gaterushDownloader.close();
-			gaterushDownloader = null;
+			await closeJobDownloader(jobId);
 		} else if (provider === 'downloadgater') {
 			jobStore.updateProgress(
 				jobId,
@@ -147,7 +161,8 @@ async function runDownloadProcess(jobId: string): Promise<void> {
 				'Launching browser for DownloadGater...',
 				10,
 			);
-			downloadgaterDownloader = new DownloadgaterDownloader(gateConfig);
+			const downloadgaterDownloader = new DownloadgaterDownloader(gateConfig);
+			activeDownloaders.set(jobId, downloadgaterDownloader);
 			downloadgaterDownloader.setProgressCallback(emitProgress);
 			await downloadgaterDownloader.initialize();
 			jobStore.updateProgress(
@@ -157,8 +172,7 @@ async function runDownloadProcess(jobId: string): Promise<void> {
 				25,
 			);
 			downloadFilename = await downloadgaterDownloader.downloadAudio(gateUrl);
-			await downloadgaterDownloader.close();
-			downloadgaterDownloader = null;
+			await closeJobDownloader(jobId);
 		} else {
 			// Fast path: gates that are purely client-side (email + social follow/like/
 			// repost buttons) can be satisfied with plain HTTP, skipping the browser.
@@ -183,7 +197,8 @@ async function runDownloadProcess(jobId: string): Promise<void> {
 					10,
 				);
 
-				hypedditDownloader = new HypedditDownloader(gateConfig);
+				const hypedditDownloader = new HypedditDownloader(gateConfig);
+				activeDownloaders.set(jobId, hypedditDownloader);
 				hypedditDownloader.setProgressCallback(emitProgress);
 				await hypedditDownloader.initialize();
 
@@ -195,8 +210,7 @@ async function runDownloadProcess(jobId: string): Promise<void> {
 				);
 
 				downloadFilename = await hypedditDownloader.downloadAudio(gateUrl);
-				await hypedditDownloader.close();
-				hypedditDownloader = null;
+				await closeJobDownloader(jobId);
 			}
 		}
 
@@ -225,22 +239,7 @@ async function runDownloadProcess(jobId: string): Promise<void> {
 
 		jobStore.updateProgress(jobId, 'ready', 'Ready for metadata editing', 100);
 	} catch (error) {
-		if (hypedditDownloader) {
-			await hypedditDownloader.close();
-			hypedditDownloader = null;
-		}
-		if (droploudDownloader) {
-			await droploudDownloader.close();
-			droploudDownloader = null;
-		}
-		if (gaterushDownloader) {
-			await gaterushDownloader.close();
-			gaterushDownloader = null;
-		}
-		if (downloadgaterDownloader) {
-			await downloadgaterDownloader.close();
-			downloadgaterDownloader = null;
-		}
+		await closeJobDownloader(jobId);
 		const message =
 			error instanceof Error ? error.message : 'Unknown error occurred';
 		jobStore.setError(jobId, message);
@@ -747,22 +746,7 @@ const server = Bun.serve({
 	},
 	error: async (err) => {
 		console.error('Server error:', err);
-		if (hypedditDownloader) {
-			await hypedditDownloader.close();
-			hypedditDownloader = null;
-		}
-		if (droploudDownloader) {
-			await droploudDownloader.close();
-			droploudDownloader = null;
-		}
-		if (gaterushDownloader) {
-			await gaterushDownloader.close();
-			gaterushDownloader = null;
-		}
-		if (downloadgaterDownloader) {
-			await downloadgaterDownloader.close();
-			downloadgaterDownloader = null;
-		}
+		await closeAllDownloaders();
 		return jsonResponse({ error: 'Internal Server Error' }, { status: 500 });
 	},
 });

@@ -1067,9 +1067,18 @@ export class DroploudDownloader {
 
 		let downloadGuid: string | null = null;
 		let downloadCompleteResolve: (value: string) => void;
-		const downloadCompletePromise = new Promise<string>((resolve) => {
+		let downloadCompleteReject: (reason: Error) => void;
+		const downloadCompletePromise = new Promise<string>((resolve, reject) => {
 			downloadCompleteResolve = resolve;
+			downloadCompleteReject = reject;
 		});
+		const downloadTimer = setTimeout(
+			() =>
+				downloadCompleteReject(
+					new Error('Droploud download did not complete in time'),
+				),
+			10 * 60_000,
+		);
 
 		const pBar = new SingleBar(
 			{
@@ -1121,7 +1130,7 @@ export class DroploudDownloader {
 				);
 			} else if (event.state === 'canceled') {
 				pBar.stop();
-				throw new Error('Download was canceled');
+				downloadCompleteReject(new Error('Download was canceled'));
 			}
 		});
 
@@ -1155,7 +1164,12 @@ export class DroploudDownloader {
 			}
 		}, 10_000);
 
-		await Promise.all([clickDownload(), downloadCompletePromise]);
-		await client.detach();
+		try {
+			await Promise.all([clickDownload(), downloadCompletePromise]);
+		} finally {
+			clearTimeout(downloadTimer);
+			pBar.stop();
+			await client.detach().catch(() => {});
+		}
 	}
 }

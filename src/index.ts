@@ -101,42 +101,51 @@ try {
 	if (gate.provider === 'droploud') {
 		usedBrowser = true;
 		const droploudDownloader = new DroploudDownloader(gateConfig);
-		await droploudDownloader.initialize();
-		if (initializeLogins) {
-			await droploudDownloader.prepareLogins();
-			if (config) {
-				await saveConfig({ ...config, initializeLogins: false });
-				console.log('✓ Updated config.json: initializeLogins set to false');
+		try {
+			await droploudDownloader.initialize();
+			if (initializeLogins) {
+				await droploudDownloader.prepareLogins();
+				if (config) {
+					await saveConfig({ ...config, initializeLogins: false });
+					console.log('✓ Updated config.json: initializeLogins set to false');
+				}
 			}
+			downloadFilename = await droploudDownloader.downloadAudio(gateUrl);
+		} finally {
+			await droploudDownloader.close();
 		}
-		downloadFilename = await droploudDownloader.downloadAudio(gateUrl);
-		await droploudDownloader.close();
 	} else if (gate.provider === 'gaterush') {
 		usedBrowser = true;
 		const gaterushDownloader = new GaterushDownloader(gateConfig);
-		await gaterushDownloader.initialize();
-		if (initializeLogins) {
-			await gaterushDownloader.prepareLogins();
-			if (config) {
-				await saveConfig({ ...config, initializeLogins: false });
-				console.log('✓ Updated config.json: initializeLogins set to false');
+		try {
+			await gaterushDownloader.initialize();
+			if (initializeLogins) {
+				await gaterushDownloader.prepareLogins();
+				if (config) {
+					await saveConfig({ ...config, initializeLogins: false });
+					console.log('✓ Updated config.json: initializeLogins set to false');
+				}
 			}
+			downloadFilename = await gaterushDownloader.downloadAudio(gateUrl);
+		} finally {
+			await gaterushDownloader.close();
 		}
-		downloadFilename = await gaterushDownloader.downloadAudio(gateUrl);
-		await gaterushDownloader.close();
 	} else if (gate.provider === 'downloadgater') {
 		usedBrowser = true;
 		const downloadgaterDownloader = new DownloadgaterDownloader(gateConfig);
-		await downloadgaterDownloader.initialize();
-		if (initializeLogins) {
-			await downloadgaterDownloader.prepareLogins();
-			if (config) {
-				await saveConfig({ ...config, initializeLogins: false });
-				console.log('✓ Updated config.json: initializeLogins set to false');
+		try {
+			await downloadgaterDownloader.initialize();
+			if (initializeLogins) {
+				await downloadgaterDownloader.prepareLogins();
+				if (config) {
+					await saveConfig({ ...config, initializeLogins: false });
+					console.log('✓ Updated config.json: initializeLogins set to false');
+				}
 			}
+			downloadFilename = await downloadgaterDownloader.downloadAudio(gateUrl);
+		} finally {
+			await downloadgaterDownloader.close();
 		}
-		downloadFilename = await downloadgaterDownloader.downloadAudio(gateUrl);
-		await downloadgaterDownloader.close();
 	} else {
 		// Fast path: gates that are purely client-side (email + social follow/like/
 		// repost buttons) can be satisfied with plain HTTP, skipping the browser.
@@ -147,18 +156,21 @@ try {
 		if (!downloadFilename) {
 			usedBrowser = true;
 			const hypedditDownloader = new HypedditDownloader(gateConfig);
-			await hypedditDownloader.initialize();
+			try {
+				await hypedditDownloader.initialize();
 
-			if (initializeLogins) {
-				await hypedditDownloader.prepareLogins();
-				if (config) {
-					await saveConfig({ ...config, initializeLogins: false });
-					console.log('✓ Updated config.json: initializeLogins set to false');
+				if (initializeLogins) {
+					await hypedditDownloader.prepareLogins();
+					if (config) {
+						await saveConfig({ ...config, initializeLogins: false });
+						console.log('✓ Updated config.json: initializeLogins set to false');
+					}
 				}
-			}
 
-			downloadFilename = await hypedditDownloader.downloadAudio(gateUrl);
-			await hypedditDownloader.close();
+				downloadFilename = await hypedditDownloader.downloadAudio(gateUrl);
+			} finally {
+				await hypedditDownloader.close();
+			}
 		}
 	}
 

@@ -10,6 +10,14 @@ import type { HypedditConfig } from './types';
 // excluded so the caller falls back to the browser flow.
 const BROWSERLESS_STEPS = new Set(['email', 'sc', 'ig', 'tk', 'yt', 'fb']);
 
+/** Config errors must not fall through as "try the browser" — browser fails the same way. */
+export class BrowserlessConfigError extends Error {
+	constructor(message: string) {
+		super(message);
+		this.name = 'BrowserlessConfigError';
+	}
+}
+
 const HYPEDDIT_ORIGIN = 'https://hypeddit.com';
 const USER_AGENT =
 	'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36';
@@ -137,6 +145,12 @@ export class HypedditHttpDownloader {
 				return null;
 			}
 
+			if (gate.steps.includes('email') && !this.config.email) {
+				throw new BrowserlessConfigError(
+					'This Hypeddit gate requires an email. Set HYPEDDIT_EMAIL in your .env file.',
+				);
+			}
+
 			console.log(
 				`Browserless: attempting HTTP download for gates [${gate.steps.join(', ')}]`,
 			);
@@ -152,14 +166,8 @@ export class HypedditHttpDownloader {
 			});
 
 			if (gate.steps.includes('email')) {
-				if (!this.config.email) {
-					console.log(
-						'Browserless: email gate needs HYPEDDIT_EMAIL, falling back to browser',
-					);
-					return null;
-				}
 				await this.post('/verifyEmailAddress', finalUrl, {
-					validateEmailAddress: this.config.email,
+					validateEmailAddress: this.config.email as string,
 					fan_gate_id: gate.fanGateId,
 					email_name: this.config.name ?? '',
 					adcode: '',
@@ -177,6 +185,9 @@ export class HypedditHttpDownloader {
 
 			return await this.saveFile(downloadUrl);
 		} catch (error) {
+			if (error instanceof BrowserlessConfigError) {
+				throw error;
+			}
 			console.log(
 				`Browserless attempt failed (${error instanceof Error ? error.message : 'unknown error'}), falling back to browser`,
 			);

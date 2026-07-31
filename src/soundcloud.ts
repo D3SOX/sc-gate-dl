@@ -128,6 +128,14 @@ export class SoundcloudClient {
 		url.searchParams.set('oauth_token', oauthToken);
 
 		const headers = { ...this.soundcloud.api.headers };
+		const escapeCurlConfig = (value: string) =>
+			value.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+		// Keep OAuth out of argv (visible in `ps`); pass via curl --config stdin.
+		const configLines = [
+			`url = "${escapeCurlConfig(url.toString())}"`,
+			`header = "Authorization: OAuth ${escapeCurlConfig(oauthToken)}"`,
+		];
+
 		const args = [
 			'-sS',
 			'-w',
@@ -140,8 +148,6 @@ export class SoundcloudClient {
 			`Referer: ${headers.Referer ?? 'https://soundcloud.com/'}`,
 			'-H',
 			`User-Agent: ${headers['User-Agent'] ?? 'Mozilla/5.0'}`,
-			'-H',
-			`Authorization: OAuth ${oauthToken}`,
 			'-H',
 			'Accept: application/json, text/javascript, */*; q=0.01',
 		];
@@ -170,9 +176,12 @@ export class SoundcloudClient {
 			args.push('-x', proxy);
 		}
 
-		args.push(url.toString());
+		args.push('--config', '-');
 
-		const result = await execa(curlBin, args, { reject: false });
+		const result = await execa(curlBin, args, {
+			input: `${configLines.join('\n')}\n`,
+			reject: false,
+		});
 		const output = `${result.stdout}${result.stderr}`;
 		const statusMatch = output.match(/__STATUS__:(\d+)\s*$/);
 		const status = statusMatch ? Number(statusMatch[1]) : 0;
@@ -195,6 +204,7 @@ export class SoundcloudClient {
 		const response = await fetch(url, {
 			method,
 			headers: { ...this.soundcloud.api.headers },
+			signal: AbortSignal.timeout(30_000),
 		});
 		return {
 			status: response.status,
@@ -515,8 +525,18 @@ export class SoundcloudClient {
 			? [...response.collection]
 			: [];
 		let nextHref = response?.next_href as string | null | undefined;
+		const seen = new Set<string>();
+		const maxPages = 500;
+		let pages = 0;
 
 		while (nextHref) {
+			if (seen.has(nextHref) || ++pages > maxPages) {
+				console.warn(
+					`Stopped paginating ${endpoint} after ${pages} pages (repeated or excessive cursor).`,
+				);
+				break;
+			}
+			seen.add(nextHref);
 			const url = new URL(nextHref);
 			const nextParams: Record<string, string> = {};
 			for (const [key, value] of url.searchParams.entries()) {

@@ -614,9 +614,18 @@ export class DownloadgaterDownloader {
 
 		let downloadGuid: string | null = null;
 		let downloadCompleteResolve: (value: string) => void;
-		const downloadCompletePromise = new Promise<string>((resolve) => {
+		let downloadCompleteReject: (reason: Error) => void;
+		const downloadCompletePromise = new Promise<string>((resolve, reject) => {
 			downloadCompleteResolve = resolve;
+			downloadCompleteReject = reject;
 		});
+		const downloadTimer = setTimeout(
+			() =>
+				downloadCompleteReject(
+					new Error('DownloadGater download did not complete in time'),
+				),
+			5 * 60_000,
+		);
 
 		const pBar = new SingleBar(
 			{
@@ -668,7 +677,7 @@ export class DownloadgaterDownloader {
 				);
 			} else if (event.state === 'canceled') {
 				pBar.stop();
-				throw new Error('Download was canceled');
+				downloadCompleteReject(new Error('Download was canceled'));
 			}
 		});
 
@@ -694,7 +703,13 @@ export class DownloadgaterDownloader {
 			}
 		}, 10_000);
 
-		await clickDownload();
-		await downloadCompletePromise;
+		try {
+			await clickDownload();
+			await downloadCompletePromise;
+		} finally {
+			clearTimeout(downloadTimer);
+			pBar.stop();
+			await client.detach().catch(() => {});
+		}
 	}
 }
