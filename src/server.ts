@@ -1,8 +1,9 @@
-import { cp, mkdir, rename, rm } from 'node:fs/promises';
+import { cp, mkdir, rm } from 'node:fs/promises';
 import { basename, extname, join } from 'node:path';
 import type { SoundcloudTrack } from 'soundcloud.ts';
 import { AudioProcessor } from './audioProcessor';
 import { DownloadgaterDownloader } from './downloadgater';
+import { renameDownloadFileExclusive } from './downloadRename';
 import { DroploudDownloader } from './droploud';
 import { GaterushDownloader } from './gaterush';
 import { HypedditDownloader } from './hypeddit';
@@ -57,34 +58,20 @@ async function renameDownloadFile(
 	currentFilename: string,
 	desiredFilename: string,
 ): Promise<string> {
-	if (currentFilename === desiredFilename) {
-		return currentFilename;
-	}
-
-	const fromPath = join('./downloads', currentFilename);
-	let finalName = desiredFilename;
-	let toPath = join('./downloads', finalName);
-
-	const destinationBlocked =
-		jobStore.isFilenameOwnedByOtherJob(finalName, jobId) ||
-		((await Bun.file(toPath).exists()) && finalName !== currentFilename);
-
-	if (destinationBlocked) {
-		const ext = extname(desiredFilename);
-		const stem = basename(desiredFilename, ext);
-		const shortId = jobId.slice(0, 8);
-		finalName = `${stem} [${shortId}]${ext}`;
-		toPath = join('./downloads', finalName);
-		let n = 2;
-		while (await Bun.file(toPath).exists()) {
-			finalName = `${stem} [${shortId}] (${n})${ext}`;
-			toPath = join('./downloads', finalName);
-			n += 1;
-		}
-	}
-
-	await rename(fromPath, toPath);
-	return finalName;
+	return renameDownloadFileExclusive({
+		downloadsDir: './downloads',
+		jobId,
+		currentFilename,
+		desiredFilename,
+		isOwnedByOtherJob: (filename, excludeJobId) =>
+			jobStore.isFilenameOwnedByOtherJob(filename, excludeJobId),
+		claimFilenames: (id, filename) => {
+			jobStore.update(id, {
+				outputFilename: filename,
+				downloadFilename: filename,
+			});
+		},
+	});
 }
 
 type AnyDownloader = {
