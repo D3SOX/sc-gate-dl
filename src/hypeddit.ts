@@ -1,5 +1,6 @@
 import { Presets, SingleBar } from 'cli-progress';
-import puppeteer, { type Browser, type Page } from 'puppeteer';
+import type { Browser, Page } from 'puppeteer';
+import { launchAppBrowser } from './browserLaunch';
 import Selectors from './selectors';
 import type { HypedditConfig, JobProgress, JobStage } from './types';
 import { loadCookies, REPO_URL, timeout } from './utils';
@@ -99,19 +100,9 @@ export class HypedditDownloader {
 	}
 
 	async initialize() {
-		this.browser = await puppeteer.launch({
+		this.browser = await launchAppBrowser({
 			headless: this.config.headless,
-			userDataDir: './browser-data', // persistent data directory for cookies/login
-			args: [
-				'--no-sandbox',
-				'--disable-setuid-sandbox',
-				'--mute-audio',
-				'--hide-crash-restore-bubble',
-				'--no-first-run',
-				'--no-default-browser-check',
-				'--disable-restore-session-state',
-				'--window-size=1920,1080',
-			],
+			userDataDir: this.config.userDataDir ?? './browser-data',
 		});
 
 		// Load and set cookies at browser context level to make them available to all pages
@@ -361,7 +352,17 @@ export class HypedditDownloader {
 		// not all email gates require entering a name
 		const emailNameInput = await page.$(Selectors.EMAIL_NAME_INPUT);
 		if (emailNameInput) {
+			if (!this.config.name) {
+				throw new Error(
+					'This Hypeddit gate requires a name. Set HYPEDDIT_NAME in your .env file.',
+				);
+			}
 			await page.type(Selectors.EMAIL_NAME_INPUT, this.config.name);
+		}
+		if (!this.config.email) {
+			throw new Error(
+				'This Hypeddit gate requires an email. Set HYPEDDIT_EMAIL in your .env file.',
+			);
 		}
 		await page.type(Selectors.EMAIL_ADDRESS_INPUT, this.config.email);
 		await nextButton.click();

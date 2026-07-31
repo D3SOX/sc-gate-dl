@@ -30,6 +30,64 @@ export async function timeout(ms: number) {
 	return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+/** Pull a DataDome / captcha-delivery challenge URL out of an API error body. */
+export function extractCaptchaDeliveryUrl(body: string): string | undefined {
+	try {
+		const json = JSON.parse(body) as { url?: unknown };
+		if (
+			typeof json.url === 'string' &&
+			/captcha-delivery\.com/i.test(json.url)
+		) {
+			return json.url;
+		}
+	} catch {
+		// not JSON
+	}
+	const match = body.match(
+		/https?:\/\/geo\.captcha-delivery\.com\/captcha\/[^"\\\s]+/i,
+	);
+	return match?.[0]?.replace(/\\u0026/g, '&');
+}
+
+/**
+ * Parse DataDome `/captcha/check` JSON: `{ "cookie": "datadome=...; Domain=.soundcloud.com; ..." }`
+ */
+export function parseDatadomeCheckCookie(body: string): {
+	name: string;
+	value: string;
+	domain: string;
+	path: string;
+	secure: boolean;
+} | null {
+	try {
+		const json = JSON.parse(body) as { cookie?: unknown };
+		if (typeof json.cookie !== 'string' || !json.cookie.includes('datadome=')) {
+			return null;
+		}
+		const parts = json.cookie.split(';').map((p) => p.trim());
+		const nameValue = parts[0];
+		if (!nameValue) return null;
+		const eq = nameValue.indexOf('=');
+		if (eq < 0) return null;
+		const name = nameValue.slice(0, eq);
+		const value = nameValue.slice(eq + 1);
+		let domain = '.soundcloud.com';
+		let path = '/';
+		let secure = true;
+		for (const attr of parts.slice(1)) {
+			const sep = attr.indexOf('=');
+			const k = (sep >= 0 ? attr.slice(0, sep) : attr).trim();
+			const v = sep >= 0 ? attr.slice(sep + 1).trim() : '';
+			if (/^domain$/i.test(k) && v) domain = v;
+			if (/^path$/i.test(k) && v) path = v;
+			if (/^secure$/i.test(k)) secure = true;
+		}
+		return { name, value, domain, path, secure };
+	} catch {
+		return null;
+	}
+}
+
 export async function loadCookies(filename: string): Promise<CookieData[]> {
 	const cookiesData: LocalCookieData[] = JSON.parse(
 		await Bun.file(filename).text(),
@@ -66,32 +124,152 @@ export function validateSoundcloudUrl(value: string): true | string {
 	return true;
 }
 
+export type GateProvider =
+	| 'hypeddit'
+	| 'droploud'
+	| 'gaterush'
+	| 'downloadgater';
+
+export type GateUrlMatch = {
+	url: string;
+	provider: GateProvider;
+	type: 'purchase_url' | 'description';
+};
+
+const HYPEDDIT_URL_RE = /https:\/\/hypeddit\.com\/[^\s]+/;
+const DROPLOUD_URL_RE = /https:\/\/droploud\.com\/(?:gate|track)\/[0-9a-f-]+/i;
+const GATERUSH_URL_RE = /https?:\/\/(?:www\.)?gaterush\.me\/[A-Za-z0-9_-]+/i;
+const DOWNLOADGATER_URL_RE =
+	/https?:\/\/(?:www\.)?downloadgater\.com\/g\/[A-Za-z0-9_-]+/i;
+
+export function isHypedditUrl(value: string): boolean {
+	return value.startsWith('https://hypeddit.com/');
+}
+
+export function isDroploudUrl(value: string): boolean {
+	return DROPLOUD_URL_RE.test(value);
+}
+
+export function isGaterushUrl(value: string): boolean {
+	return GATERUSH_URL_RE.test(value);
+}
+
+export function isDownloadgaterUrl(value: string): boolean {
+	return DOWNLOADGATER_URL_RE.test(value);
+}
+
+export function getGateProvider(value: string): GateProvider | null {
+	if (isHypedditUrl(value)) return 'hypeddit';
+	if (isDroploudUrl(value)) return 'droploud';
+	if (isGaterushUrl(value)) return 'gaterush';
+	if (isDownloadgaterUrl(value)) return 'downloadgater';
+	return null;
+}
+
 export function validateHypedditUrl(value: string): true | string {
-	if (!value?.startsWith('https://hypeddit.com/')) {
+	if (!isHypedditUrl(value)) {
 		return 'A valid Hypeddit URL is required';
 	}
 	return true;
 }
 
-export function extractHypedditUrl(
-	track: SoundcloudTrack,
-): { url: string; type: 'purchase_url' | 'description' } | null {
+export function validateGateUrl(value: string): true | string {
+	if (!getGateProvider(value)) {
+		return 'A valid Hypeddit, Droploud, GateRush, or DownloadGater URL is required';
+	}
+	return true;
+}
+
+function normalizeGateUrl(
+	url: string,
+	provider: GateProvider,
+): { url: string; provider: GateProvider } {
+	if (provider === 'gaterush' || provider === 'downloadgater') {
+		return {
+			url: url.replace(/^http:\/\//i, 'https://'),
+			provider,
+		};
+	}
+	return { url, provider };
+}
+
+function matchGateUrl(
+	value: string,
+): { url: string; provider: GateProvider } | null {
+	if (isHypedditUrl(value)) {
+		return { url: value, provider: 'hypeddit' };
+	}
+	const droploudMatch = value.match(DROPLOUD_URL_RE)?.[0];
+	if (droploudMatch) {
+		return { url: droploudMatch, provider: 'droploud' };
+	}
+	const gaterushMatch = value.match(GATERUSH_URL_RE)?.[0];
+	if (gaterushMatch) {
+		return normalizeGateUrl(gaterushMatch, 'gaterush');
+	}
+	const downloadgaterMatch = value.match(DOWNLOADGATER_URL_RE)?.[0];
+	if (downloadgaterMatch) {
+		return normalizeGateUrl(downloadgaterMatch, 'downloadgater');
+	}
+	return null;
+}
+
+/** Prefer Hypeddit, then Droploud, GateRush, DownloadGater from purchase_url or description. */
+export function extractGateUrl(track: SoundcloudTrack): GateUrlMatch | null {
 	const { purchase_url, description } = track;
 
-	if (purchase_url?.startsWith('https://hypeddit.com/')) {
-		return { url: purchase_url, type: 'purchase_url' };
+	if (purchase_url) {
+		const fromPurchase = matchGateUrl(purchase_url);
+		if (fromPurchase) {
+			return { ...fromPurchase, type: 'purchase_url' };
+		}
 	}
 
-	if (description?.includes('https://hypeddit.com/')) {
-		const matchedUrl = description.match(
-			/https:\/\/hypeddit\.com\/[^\s]+/,
-		)?.[0];
-		if (matchedUrl) {
-			return { url: matchedUrl, type: 'description' };
+	if (description) {
+		const hypedditMatch = description.match(HYPEDDIT_URL_RE)?.[0];
+		if (hypedditMatch) {
+			return {
+				url: hypedditMatch,
+				provider: 'hypeddit',
+				type: 'description',
+			};
+		}
+		const droploudMatch = description.match(DROPLOUD_URL_RE)?.[0];
+		if (droploudMatch) {
+			return {
+				url: droploudMatch,
+				provider: 'droploud',
+				type: 'description',
+			};
+		}
+		const gaterushMatch = description.match(GATERUSH_URL_RE)?.[0];
+		if (gaterushMatch) {
+			return {
+				...normalizeGateUrl(gaterushMatch, 'gaterush'),
+				type: 'description',
+			};
+		}
+		const downloadgaterMatch = description.match(DOWNLOADGATER_URL_RE)?.[0];
+		if (downloadgaterMatch) {
+			return {
+				...normalizeGateUrl(downloadgaterMatch, 'downloadgater'),
+				type: 'description',
+			};
 		}
 	}
 
 	return null;
+}
+
+/** @deprecated Prefer extractGateUrl */
+export function extractHypedditUrl(
+	track: SoundcloudTrack,
+): { url: string; type: 'purchase_url' | 'description' } | null {
+	const gate = extractGateUrl(track);
+	if (gate?.provider !== 'hypeddit') {
+		return null;
+	}
+	return { url: gate.url, type: gate.type };
 }
 
 export function getDefaultMetadata(track: SoundcloudTrack): Metadata {
