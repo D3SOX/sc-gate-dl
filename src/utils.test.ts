@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import {
 	artistTitleFilename,
+	cookiesToNetscape,
 	previewProcessedFilename,
 	resolveGateProviderUrl,
 	sanitizeFilenamePart,
@@ -45,6 +46,33 @@ describe('resolveGateProviderUrl', () => {
 			url: 'https://hypeddit.com/foo',
 			provider: 'hypeddit',
 		});
+	});
+});
+
+describe('cookiesToNetscape', () => {
+	test('emits Netscape rows with subdomain flag from leading dot', () => {
+		const text = cookiesToNetscape([
+			{
+				name: 'oauth_token',
+				value: 'tok',
+				domain: 'soundcloud.com',
+				path: '/',
+				secure: true,
+				expirationDate: 1700000000.5,
+			},
+			{
+				name: 'datadome',
+				value: 'dd',
+				domain: '.soundcloud.com',
+				path: '/',
+				secure: false,
+			},
+		]);
+		expect(text.startsWith('# Netscape HTTP Cookie File\n')).toBe(true);
+		expect(text).toContain(
+			'soundcloud.com\tFALSE\t/\tTRUE\t1700000000\toauth_token\ttok',
+		);
+		expect(text).toContain('.soundcloud.com\tTRUE\t/\tFALSE\t0\tdatadome\tdd');
 	});
 });
 

@@ -978,6 +978,7 @@ export default function App() {
 									<input
 										type="file"
 										accept="image/*"
+										disabled={isLoading}
 										onChange={(e) =>
 											setCustomArtwork(e.target.files?.[0] || null)
 										}
@@ -1037,6 +1038,7 @@ export default function App() {
 													id={`meta-${key}`}
 													type="text"
 													value={currentValue}
+													disabled={isLoading}
 													onChange={(e) =>
 														setMetadata((prev) => ({
 															...prev,

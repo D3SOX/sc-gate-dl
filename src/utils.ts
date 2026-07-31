@@ -1,3 +1,5 @@
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { lookpath } from 'find-bin';
 import type { CookieData } from 'puppeteer';
 import type { SoundcloudTrack } from 'soundcloud.ts';
@@ -115,6 +117,52 @@ export async function loadCookies(filename: string): Promise<CookieData[]> {
 
 		return puppeteerCookie;
 	});
+}
+
+/**
+ * Convert EditThisCookie-style JSON cookies to Netscape/Mozilla cookie file
+ * text (required by yt-dlp `--cookies`).
+ */
+export function cookiesToNetscape(cookies: LocalCookieData[]): string {
+	const lines = ['# Netscape HTTP Cookie File'];
+	for (const cookie of cookies) {
+		const domain = cookie.domain || '';
+		const includeSubdomains = domain.startsWith('.') ? 'TRUE' : 'FALSE';
+		const path = cookie.path || '/';
+		const secure = cookie.secure ? 'TRUE' : 'FALSE';
+		const expires = Math.floor(cookie.expirationDate ?? 0);
+		lines.push(
+			[
+				domain,
+				includeSubdomains,
+				path,
+				secure,
+				String(expires),
+				cookie.name,
+				cookie.value,
+			].join('\t'),
+		);
+	}
+	return `${lines.join('\n')}\n`;
+}
+
+/** Write `soundcloud-cookies.json` as a Netscape cookie file for yt-dlp. */
+export async function writeSoundcloudNetscapeCookies(
+	jsonPath = 'soundcloud-cookies.json',
+	outPath?: string,
+): Promise<string | null> {
+	const file = Bun.file(jsonPath);
+	if (!(await file.exists())) {
+		return null;
+	}
+	const cookies: LocalCookieData[] = JSON.parse(await file.text());
+	if (!Array.isArray(cookies) || cookies.length === 0) {
+		return null;
+	}
+	const dest =
+		outPath ?? join(tmpdir(), `sc-gate-dl-cookies-${process.pid}.txt`);
+	await Bun.write(dest, cookiesToNetscape(cookies));
+	return dest;
 }
 
 export function isSoundcloudUrl(value: string): boolean {

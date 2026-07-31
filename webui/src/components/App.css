@@ -688,6 +688,20 @@
 	color: var(--neon-cyan);
 }
 
+.artwork-upload:has(input:disabled) {
+	cursor: not-allowed;
+}
+
+.artwork-upload:has(input:disabled) span {
+	opacity: 0.6;
+	pointer-events: none;
+}
+
+.artwork-upload:has(input:disabled):hover span {
+	border-color: var(--border-subtle);
+	color: var(--text-secondary);
+}
+
 .btn-artwork-action {
 	cursor: pointer;
 }

@@ -75,6 +75,8 @@ Install the [EditThisCookie (fork)](https://chromewebstore.google.com/detail/edi
 
 #### SoundCloud Cookies (Required)
 
+Used for SoundCloud API/session automation and for **yt-dlp** when downloading a SoundCloud track directly (so downloadable tracks can fetch the original upload, not only the 128k stream).
+
 **Steps:**
 
 1. Go to [soundcloud.com](https://soundcloud.com) and log in
