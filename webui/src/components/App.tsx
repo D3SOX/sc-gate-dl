@@ -888,65 +888,53 @@ export default function App() {
 						onSubmit={handleMetadataSubmit}
 						className="form metadata-form animate-slide-up"
 					>
-						{job.existingMetadata && (
+						{existingTagRows.length > 0 ? (
 							<div className="existing-metadata">
-								{existingTagRows.length > 0 ? (
-									<>
-										<div>
-											<h3>Existing MP3 Metadata</h3>
-											<p>
-												Copy a tag into the form, or keep the file’s tags
-												unchanged for the whole download.
-											</p>
-										</div>
-										<ul className="existing-metadata-list">
-											{existingTagRows.map(({ key, label, existingValue }) => (
-												<li key={key} className="existing-metadata-row">
-													<span className="existing-metadata-label">
-														{label}
-													</span>
-													<span className="existing-metadata-value">
-														{existingValue}
-													</span>
-													<button
-														type="button"
-														className="btn-copy-existing"
-														disabled={isLoading}
-														title={`Copy ${label.toLowerCase()} into the form`}
-														aria-label={`Copy ${label.toLowerCase()} into the form`}
-														onClick={() =>
-															setMetadata((prev) => ({
-																...prev,
-																[key]: existingValue,
-															}))
-														}
-													>
-														<svg
-															viewBox="0 0 24 24"
-															width="14"
-															height="14"
-															aria-hidden="true"
-															fill="none"
-															stroke="currentColor"
-															strokeWidth="2"
-															strokeLinecap="round"
-															strokeLinejoin="round"
-														>
-															<rect
-																x="9"
-																y="9"
-																width="13"
-																height="13"
-																rx="2"
-															/>
-															<path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
-														</svg>
-													</button>
-												</li>
-											))}
-										</ul>
-									</>
-								) : null}
+								<div>
+									<h3>Existing MP3 Metadata</h3>
+									<p>
+										Copy a tag into the form, or keep the file’s tags unchanged
+										for the whole download.
+									</p>
+								</div>
+								<ul className="existing-metadata-list">
+									{existingTagRows.map(({ key, label, existingValue }) => (
+										<li key={key} className="existing-metadata-row">
+											<span className="existing-metadata-label">{label}</span>
+											<span className="existing-metadata-value">
+												{existingValue}
+											</span>
+											<button
+												type="button"
+												className="btn-copy-existing"
+												disabled={isLoading}
+												title={`Copy ${label.toLowerCase()} into the form`}
+												aria-label={`Copy ${label.toLowerCase()} into the form`}
+												onClick={() =>
+													setMetadata((prev) => ({
+														...prev,
+														[key]: existingValue,
+													}))
+												}
+											>
+												<svg
+													viewBox="0 0 24 24"
+													width="14"
+													height="14"
+													aria-hidden="true"
+													fill="none"
+													stroke="currentColor"
+													strokeWidth="2"
+													strokeLinecap="round"
+													strokeLinejoin="round"
+												>
+													<rect x="9" y="9" width="13" height="13" rx="2" />
+													<path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+												</svg>
+											</button>
+										</li>
+									))}
+								</ul>
 								<button
 									type="button"
 									className="btn-secondary"
@@ -956,7 +944,7 @@ export default function App() {
 									Use this metadata as-is
 								</button>
 							</div>
-						)}
+						) : null}
 						<div className="metadata-grid">
 							<div className="artwork-section">
 								<div className="artwork-preview">
