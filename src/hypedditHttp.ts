@@ -291,7 +291,7 @@ export class HypedditHttpDownloader {
 						this.progressCallback?.(
 							'downloading',
 							`Downloading... ${(receivedBytes / 1024 / 1024).toFixed(1)} / ${(totalBytes / 1024 / 1024).toFixed(1)} MB`,
-							(receivedBytes / totalBytes) * 100,
+							0,
 							{ downloadBytes: receivedBytes, totalBytes, browserless: true },
 						);
 					}

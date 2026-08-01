@@ -1942,12 +1942,10 @@ export class DroploudDownloader {
 				} else {
 					pBar.start(totalBytes, receivedBytes, { prefix: 'Downloading' });
 				}
-				const downloadPercent =
-					totalBytes > 0 ? (receivedBytes / totalBytes) * 100 : 0;
 				this.emitProgress(
 					'downloading',
 					`Downloading... ${(receivedBytes / 1024 / 1024).toFixed(1)} / ${(totalBytes / 1024 / 1024).toFixed(1)} MB`,
-					downloadPercent,
+					0,
 					{ downloadBytes: receivedBytes, totalBytes },
 				);
 			} else if (event.state === 'canceled') {
