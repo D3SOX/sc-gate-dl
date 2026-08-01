@@ -103,7 +103,7 @@ export class DirectDownloader {
 	async downloadAudio(url: string): Promise<string> {
 		const downloadUrl = normalizeDirectDownloadUrl(url);
 		console.log(`Downloading direct file: ${downloadUrl}`);
-		this.progressCallback?.('downloading', 'Downloading direct file...', 40, {
+		this.progressCallback?.('downloading', 'Downloading direct file...', 0, {
 			browserless: true,
 		});
 

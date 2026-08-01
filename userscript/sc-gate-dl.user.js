@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         sc-gate-dl
 // @namespace    https://github.com/D3SOX/sc-gate-dl
-// @version      1.10.1
+// @version      1.10.2
 // @description  Add sc-gate-dl download controls and remember your position in the SoundCloud feed
 // @author       D3SOX
 // @match        https://soundcloud.com/*
@@ -11,6 +11,7 @@
 // @grant        GM_unregisterMenuCommand
 // @grant        GM_getValue
 // @grant        GM_setValue
+// @grant        GM_deleteValue
 // @connect      localhost
 // @connect      127.0.0.1
 // @run-at       document-idle
@@ -59,6 +60,7 @@
 
 	/** @type {{ url: string, label: string }[]} */
 	const downloadQueue = [];
+	const feedTrackUrlCache = new WeakMap();
 
 	const RESERVED_FIRST = new Set([
 		'you',
@@ -282,22 +284,32 @@
 
 	/** Feed/search cards only — track pages use the current URL. */
 	function trackUrlFromCard(el) {
-		const sound = el?.closest?.(
+		const closest = el?.closest?.(
 			'.sound, .soundList__item, .userStreamItem, .searchItem__trackItem, .listenContext',
 		);
-		if (!sound) return null;
+		if (!closest) return null;
+		const sound = closest.matches('.sound')
+			? closest
+			: closest.querySelector('.sound') || closest;
+		if (feedTrackUrlCache.has(sound)) return feedTrackUrlCache.get(sound);
+		let trackUrl = null;
 		const titleLink = sound.querySelector(
 			'a.soundTitle__title, a[href][class*="soundTitle"]',
 		);
 		if (titleLink?.href) {
 			const fromTitle = normalizeTrackUrl(titleLink.href);
-			if (fromTitle) return fromTitle;
+			if (fromTitle) trackUrl = fromTitle;
 		}
-		for (const a of sound.querySelectorAll('a[href]')) {
-			const fromA = normalizeTrackUrl(a.href);
-			if (fromA) return fromA;
+		if (!trackUrl) {
+			for (const a of sound.querySelectorAll('a[href]')) {
+				const fromA = normalizeTrackUrl(a.href);
+				if (!fromA) continue;
+				trackUrl = fromA;
+				break;
+			}
 		}
-		return null;
+		if (trackUrl) feedTrackUrlCache.set(sound, trackUrl);
+		return trackUrl;
 	}
 
 	function isFeedPage() {
@@ -393,7 +405,9 @@
 
 	function resetFeedCheckpoints() {
 		try {
-			if (typeof GM_setValue === 'function') {
+			if (typeof GM_deleteValue === 'function') {
+				GM_deleteValue(FEED_CHECKPOINT_KEY);
+			} else if (typeof GM_setValue === 'function') {
 				GM_setValue(FEED_CHECKPOINT_KEY, null);
 			}
 		} catch {
@@ -438,17 +452,23 @@
 		const savedCard = findFeedCard(saved.url);
 		if (!savedCard) return false;
 		const cards = feedCards();
+		const candidateIndex = cards.indexOf(card);
+		const savedIndex = cards.indexOf(savedCard);
+		if (candidateIndex < 0 || savedIndex < 0) return false;
 		return direction === 'newer'
-			? cards.indexOf(card) <= cards.indexOf(savedCard)
-			: cards.indexOf(card) >= cards.indexOf(savedCard);
+			? candidateIndex <= savedIndex
+			: candidateIndex >= savedIndex;
 	}
 
 	function saveFeedCheckpointFromCard(card) {
 		if (!isFeedPage() || !(card instanceof Element)) return;
-		const url = trackUrlFromCard(card);
+		const feedCard = card.matches('.sound')
+			? card
+			: card.querySelector('.sound') || card;
+		const url = trackUrlFromCard(feedCard);
 		if (!url) return;
-		const timestamp = feedTimestamp(card);
-		const label = checkpointLabelFromCard(card, url);
+		const timestamp = feedTimestamp(feedCard);
+		const label = checkpointLabelFromCard(feedCard, url);
 		const checkpoints = loadFeedCheckpoints() ?? { newer: null, older: null };
 		const candidate = {
 			url,
@@ -459,7 +479,7 @@
 		let changed = false;
 		for (const direction of ['newer', 'older']) {
 			const saved = checkpoints[direction];
-			if (!shouldAdvanceCheckpoint(saved, card, timestamp, direction)) continue;
+			if (!shouldAdvanceCheckpoint(saved, feedCard, timestamp, direction)) continue;
 			if (saved?.url === url) {
 				if (saved.label !== label) {
 					checkpoints[direction] = { ...saved, label };
@@ -476,19 +496,28 @@
 		}
 	}
 
+	let lastRecordedPlayingUrl = null;
+
 	function recordPlayingFeedTrack() {
 		if (!isFeedPage()) return;
 		const playing = document.querySelector(
 			'.playControls .playControl.playing, .playControls__play.playing, .playControls button[title^="Pause"], .playControls button[aria-label^="Pause"]',
 		);
-		if (!playing) return;
+		if (!playing) {
+			lastRecordedPlayingUrl = null;
+			return;
+		}
 		const link = document.querySelector(
 			'.playbackSoundBadge__titleLink[href], .playbackSoundBadge a[href][class*="title"]',
 		);
 		const url =
 			link instanceof HTMLAnchorElement ? normalizeTrackUrl(link.href) : null;
+		if (!url || url === lastRecordedPlayingUrl) return;
 		const card = url ? findFeedCard(url) : null;
-		if (card) saveFeedCheckpointFromCard(card);
+		if (card) {
+			saveFeedCheckpointFromCard(card);
+			lastRecordedPlayingUrl = url;
+		}
 	}
 
 	let feedSearchToken = 0;
@@ -527,12 +556,14 @@
 	function waitForMoreFeed(snapshot, token, targetUrl) {
 		return new Promise((resolve) => {
 			let finished = false;
+			let mutationTimer = 0;
 			const finish = (grew) => {
 				if (finished) return;
 				finished = true;
 				observer.disconnect();
 				window.clearInterval(bottomTimer);
 				window.clearTimeout(timeoutTimer);
+				window.clearTimeout(mutationTimer);
 				resolve(grew);
 			};
 			const hasChanged = () => {
@@ -548,7 +579,13 @@
 					finish(true);
 				}
 			};
-			const observer = new MutationObserver(hasChanged);
+			const observer = new MutationObserver(() => {
+				if (mutationTimer) return;
+				mutationTimer = window.setTimeout(() => {
+					mutationTimer = 0;
+					hasChanged();
+				}, 100);
+			});
 			observer.observe(document.body, { childList: true, subtree: true });
 			const bottomTimer = window.setInterval(() => {
 				window.scrollTo(0, document.documentElement.scrollHeight);

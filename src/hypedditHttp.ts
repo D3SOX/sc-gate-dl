@@ -246,7 +246,7 @@ export class HypedditHttpDownloader {
 	}
 
 	private async saveFile(downloadUrl: string): Promise<string> {
-		this.progressCallback?.('downloading', 'Downloading file...', 76);
+		this.progressCallback?.('downloading', 'Downloading file...', 0);
 		const response = await fetch(downloadUrl, {
 			signal: this.abortController.signal,
 		});
@@ -288,11 +288,10 @@ export class HypedditHttpDownloader {
 					const now = Date.now();
 					if (now - lastEmit > 250 && totalBytes > 0) {
 						lastEmit = now;
-						const downloadPercent = receivedBytes / totalBytes;
 						this.progressCallback?.(
 							'downloading',
 							`Downloading... ${(receivedBytes / 1024 / 1024).toFixed(1)} / ${(totalBytes / 1024 / 1024).toFixed(1)} MB`,
-							76 + downloadPercent * 8,
+							(receivedBytes / totalBytes) * 100,
 							{ downloadBytes: receivedBytes, totalBytes, browserless: true },
 						);
 					}
@@ -316,7 +315,7 @@ export class HypedditHttpDownloader {
 		}
 
 		console.log(`Browserless: downloaded ${filename}`);
-		this.progressCallback?.('downloading', 'Download complete', 85);
+		this.progressCallback?.('downloading', 'Download complete', 100);
 		return filename;
 	}
 

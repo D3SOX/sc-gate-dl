@@ -691,7 +691,7 @@ export class HypedditDownloader {
 			this.emitProgress(
 				'downloading',
 				`Downloading ${this.downloadFilename}...`,
-				76,
+				0,
 			);
 		});
 
@@ -701,7 +701,7 @@ export class HypedditDownloader {
 				if (event.state === 'completed') {
 					pBar.stop();
 					console.log('Download completed');
-					this.emitProgress('downloading', 'Download complete', 85);
+					this.emitProgress('downloading', 'Download complete', 100);
 					downloadCompleteResolve(this.downloadFilename);
 				} else if (event.state === 'inProgress') {
 					const { receivedBytes, totalBytes } = event;
@@ -716,12 +716,11 @@ export class HypedditDownloader {
 					}
 
 					const downloadPercent =
-						totalBytes > 0 ? receivedBytes / totalBytes : 0;
-					const scaledPercent = 76 + downloadPercent * 8;
+						totalBytes > 0 ? (receivedBytes / totalBytes) * 100 : 0;
 					this.emitProgress(
 						'downloading',
 						`Downloading... ${(receivedBytes / 1024 / 1024).toFixed(1)} / ${(totalBytes / 1024 / 1024).toFixed(1)} MB`,
-						scaledPercent,
+						downloadPercent,
 						{
 							downloadBytes: receivedBytes,
 							totalBytes: totalBytes,

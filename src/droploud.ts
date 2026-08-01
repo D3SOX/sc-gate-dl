@@ -1921,7 +1921,7 @@ export class DroploudDownloader {
 			this.emitProgress(
 				'downloading',
 				`Downloading ${this.downloadFilename}...`,
-				76,
+				0,
 			);
 		});
 
@@ -1930,7 +1930,7 @@ export class DroploudDownloader {
 			if (event.state === 'completed') {
 				pBar.stop();
 				console.log('Download completed');
-				this.emitProgress('downloading', 'Download complete', 85);
+				this.emitProgress('downloading', 'Download complete', 100);
 				downloadCompleteResolve(this.downloadFilename);
 			} else if (event.state === 'inProgress') {
 				const { receivedBytes, totalBytes } = event;
@@ -1942,11 +1942,12 @@ export class DroploudDownloader {
 				} else {
 					pBar.start(totalBytes, receivedBytes, { prefix: 'Downloading' });
 				}
-				const downloadPercent = totalBytes > 0 ? receivedBytes / totalBytes : 0;
+				const downloadPercent =
+					totalBytes > 0 ? (receivedBytes / totalBytes) * 100 : 0;
 				this.emitProgress(
 					'downloading',
 					`Downloading... ${(receivedBytes / 1024 / 1024).toFixed(1)} / ${(totalBytes / 1024 / 1024).toFixed(1)} MB`,
-					76 + downloadPercent * 8,
+					downloadPercent,
 					{ downloadBytes: receivedBytes, totalBytes },
 				);
 			} else if (event.state === 'canceled') {

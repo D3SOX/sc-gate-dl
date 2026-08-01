@@ -172,7 +172,7 @@ export class YtDlpDownloader {
 		this.progressCallback?.(
 			'downloading',
 			`Downloading from ${this.sourceLabel} via yt-dlp...`,
-			50,
+			0,
 			{ browserless: true },
 		);
 		console.log(`${this.sourceLabel}: downloading via yt-dlp → ${downloadUrl}`);
@@ -259,7 +259,7 @@ export class YtDlpDownloader {
 		}
 
 		console.log(`${this.sourceLabel}: downloaded ${filename}`);
-		this.progressCallback?.('downloading', 'Download complete', 85, {
+		this.progressCallback?.('downloading', 'Download complete', 100, {
 			browserless: true,
 		});
 		return filename;
@@ -274,7 +274,7 @@ export class YtDlpDownloader {
 		const matchingLabel = matchTitle
 			? `Matching “${matchTitle}” on Bandcamp album...`
 			: 'Listing Bandcamp album tracks...';
-		this.progressCallback?.('downloading', matchingLabel, 45, {
+		this.progressCallback?.('handling_gates', matchingLabel, 45, {
 			browserless: true,
 		});
 		console.log(

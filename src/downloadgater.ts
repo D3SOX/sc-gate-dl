@@ -266,24 +266,35 @@ export class DownloadgaterDownloader {
 	}
 
 	/**
-	 * Honor-system Spotify gate: open the requested Spotify page, close the new
-	 * tab, then confirm on DownloadGater. No Spotify OAuth is required.
+	 * Shared honor-system gate flow: open the requested social page, wait for
+	 * DownloadGater's confirmation, close the popup, and confirm completion.
 	 */
-	private async handleSpotifyStep(page: Page) {
-		for (let attempt = 0; attempt < 4; attempt++) {
-			if ((await this.detectPane(page)) !== 'spotify') return;
+	private async handleHonorSystemPopupStep(
+		page: Page,
+		options: {
+			pane: 'instagram' | 'spotify';
+			actionButtonPattern: string;
+			confirmButtonPattern: string;
+			popupUrlPattern: string;
+			maxAttempts: number;
+			confirmationTimeoutMs: number;
+		},
+	) {
+		for (let attempt = 0; attempt < options.maxAttempts; attempt++) {
+			if ((await this.detectPane(page)) !== options.pane) return;
+			if (await this.hasDownloadButton(page)) return;
 
 			const pagesBefore = new Set(await this.browser.pages(true));
-			const opened = await page.evaluate(() => {
+			const opened = await page.evaluate((pattern) => {
+				const actionPattern = new RegExp(pattern, 'i');
 				const btn = Array.from(document.querySelectorAll('button')).find(
 					(el) =>
-						/^(follow|save|open).*spotify$/i.test(
-							(el.textContent || '').trim(),
-						) && !(el as HTMLButtonElement).disabled,
+						actionPattern.test((el.textContent || '').trim()) &&
+						!(el as HTMLButtonElement).disabled,
 				) as HTMLButtonElement | undefined;
 				btn?.click();
 				return !!btn;
-			});
+			}, options.actionButtonPattern);
 
 			if (!opened) {
 				await timeout(500);
@@ -293,22 +304,33 @@ export class DownloadgaterDownloader {
 			let popup: Page | undefined;
 			const popupDeadline = Date.now() + 8_000;
 			while (!popup && Date.now() < popupDeadline) {
-				popup = (await this.browser.pages(true)).find(
-					(candidate) => candidate !== page && !pagesBefore.has(candidate),
+				const pages = await this.browser.pages(true);
+				popup = pages.find(
+					(candidate) =>
+						candidate !== page &&
+						!pagesBefore.has(candidate) &&
+						candidate.url() !== 'about:blank',
+				);
+				popup ??= pages.find(
+					(candidate) =>
+						candidate !== page &&
+						new RegExp(options.popupUrlPattern, 'i').test(candidate.url()),
 				);
 				if (!popup) await timeout(200);
 			}
 
 			await page
 				.waitForFunction(
-					() =>
-						Array.from(document.querySelectorAll('button')).some(
+					(pattern) => {
+						const confirmPattern = new RegExp(pattern, 'i');
+						return Array.from(document.querySelectorAll('button')).some(
 							(el) =>
-								/^(i followed|i saved it|i opened it|i['’]?(?:ve)? done it)$/i.test(
-									(el.textContent || '').trim(),
-								) && !(el as HTMLButtonElement).disabled,
-						),
-					{ timeout: 8_000 },
+								confirmPattern.test((el.textContent || '').trim()) &&
+								!(el as HTMLButtonElement).disabled,
+						);
+					},
+					{ timeout: options.confirmationTimeoutMs },
+					options.confirmButtonPattern,
 				)
 				.catch(() => {});
 
@@ -316,24 +338,37 @@ export class DownloadgaterDownloader {
 				await popup.close().catch(() => {});
 			}
 
-			const confirmed = await page.evaluate(() => {
+			const confirmed = await page.evaluate((pattern) => {
+				const confirmPattern = new RegExp(pattern, 'i');
 				const btn = Array.from(document.querySelectorAll('button')).find(
 					(el) =>
-						/^(i followed|i saved it|i opened it|i['’]?(?:ve)? done it)$/i.test(
-							(el.textContent || '').trim(),
-						) && !(el as HTMLButtonElement).disabled,
+						confirmPattern.test((el.textContent || '').trim()) &&
+						!(el as HTMLButtonElement).disabled,
 				) as HTMLButtonElement | undefined;
 				btn?.click();
 				return !!btn;
-			});
+			}, options.confirmButtonPattern);
 
-			if (confirmed) await timeout(800);
-			if ((await this.detectPane(page)) !== 'spotify') return;
+			await timeout(confirmed ? 800 : 500);
+			if ((await this.detectPane(page)) !== options.pane) return;
 		}
 
 		throw new Error(
-			'DownloadGater Spotify step did not advance. Allow popups and retry.',
+			`DownloadGater ${options.pane} step did not advance. Allow popups and retry.`,
 		);
+	}
+
+	/** Honor-system Spotify gate; no Spotify OAuth is required. */
+	private async handleSpotifyStep(page: Page) {
+		await this.handleHonorSystemPopupStep(page, {
+			pane: 'spotify',
+			actionButtonPattern: '^(follow|save|open).*spotify$',
+			confirmButtonPattern:
+				"^(i followed|i saved it|i opened it|i['’]?(?:ve)? done it)$",
+			popupUrlPattern: 'open\\.spotify\\.com',
+			maxAttempts: 4,
+			confirmationTimeoutMs: 8_000,
+		});
 	}
 
 	private async clickUnlockFinishIfPresent(page: Page): Promise<boolean> {
@@ -361,76 +396,14 @@ export class DownloadgaterDownloader {
 	 * timer, then confirm. Multiple IG targets are served one at a time.
 	 */
 	private async handleInstagramStep(page: Page) {
-		for (let attempt = 0; attempt < 8; attempt++) {
-			if ((await this.detectPane(page)) !== 'instagram') return;
-			if (await this.hasDownloadButton(page)) return;
-
-			const pagesBefore = new Set(await this.browser.pages(true));
-
-			const followClicked = await page.evaluate(() => {
-				const btn = Array.from(document.querySelectorAll('button')).find(
-					(el) =>
-						/follow on instagram/i.test(el.textContent || '') &&
-						!(el as HTMLButtonElement).disabled,
-				) as HTMLButtonElement | undefined;
-				btn?.click();
-				return !!btn;
-			});
-
-			if (followClicked) {
-				let popup: Page | undefined;
-				const started = Date.now();
-				while (!popup && Date.now() - started < 8_000) {
-					const pages = await this.browser.pages(true);
-					popup = pages.find(
-						(candidate) =>
-							candidate !== page &&
-							!pagesBefore.has(candidate) &&
-							candidate.url() !== 'about:blank',
-					);
-					if (!popup) {
-						popup = pages.find(
-							(candidate) =>
-								candidate !== page && /instagram\.com/i.test(candidate.url()),
-						);
-					}
-					if (!popup) await timeout(200);
-				}
-
-				// Site unlocks after ~5s with the popup open.
-				await timeout(5_500);
-
-				if (popup && !popup.isClosed()) {
-					try {
-						await popup.close();
-					} catch {
-						// ignore
-					}
-				}
-			}
-
-			const confirmed = await page.evaluate(() => {
-				const btn = Array.from(document.querySelectorAll('button')).find(
-					(el) =>
-						/^(i followed|i opened it)$/i.test((el.textContent || '').trim()) &&
-						!(el as HTMLButtonElement).disabled,
-				) as HTMLButtonElement | undefined;
-				btn?.click();
-				return !!btn;
-			});
-
-			if (confirmed) {
-				await timeout(800);
-			} else {
-				await timeout(500);
-			}
-
-			if ((await this.detectPane(page)) !== 'instagram') return;
-		}
-
-		throw new Error(
-			'DownloadGater Instagram step did not advance. Allow popups and retry.',
-		);
+		await this.handleHonorSystemPopupStep(page, {
+			pane: 'instagram',
+			actionButtonPattern: 'follow on instagram',
+			confirmButtonPattern: '^(i followed|i opened it)$',
+			popupUrlPattern: 'instagram\\.com',
+			maxAttempts: 8,
+			confirmationTimeoutMs: 8_000,
+		});
 	}
 
 	private async handleSoundcloudConnect(page: Page) {
@@ -727,7 +700,7 @@ export class DownloadgaterDownloader {
 			this.emitProgress(
 				'downloading',
 				`Downloading ${this.downloadFilename}...`,
-				76,
+				0,
 			);
 		});
 
@@ -736,7 +709,7 @@ export class DownloadgaterDownloader {
 			if (event.state === 'completed') {
 				pBar.stop();
 				console.log('Download completed');
-				this.emitProgress('downloading', 'Download complete', 85);
+				this.emitProgress('downloading', 'Download complete', 100);
 				downloadCompleteResolve(this.downloadFilename);
 			} else if (event.state === 'inProgress') {
 				const { receivedBytes, totalBytes } = event;
@@ -748,11 +721,12 @@ export class DownloadgaterDownloader {
 				} else {
 					pBar.start(totalBytes, receivedBytes, { prefix: 'Downloading' });
 				}
-				const downloadPercent = totalBytes > 0 ? receivedBytes / totalBytes : 0;
+				const downloadPercent =
+					totalBytes > 0 ? (receivedBytes / totalBytes) * 100 : 0;
 				this.emitProgress(
 					'downloading',
 					`Downloading... ${(receivedBytes / 1024 / 1024).toFixed(1)} / ${(totalBytes / 1024 / 1024).toFixed(1)} MB`,
-					76 + downloadPercent * 8,
+					downloadPercent,
 					{ downloadBytes: receivedBytes, totalBytes },
 				);
 			} else if (event.state === 'canceled') {

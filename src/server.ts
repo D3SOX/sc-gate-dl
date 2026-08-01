@@ -216,8 +216,6 @@ async function runDownloadProcess(jobId: string): Promise<void> {
 						100,
 						Math.max(0, (extra.downloadBytes / extra.totalBytes) * 100),
 					);
-				} else {
-					stagePercent = /download complete/i.test(message) ? 100 : 0;
 				}
 			}
 			jobStore.updateProgress(jobId, stage, message, stagePercent, extra);
@@ -248,8 +246,10 @@ async function runDownloadProcess(jobId: string): Promise<void> {
 			const sourceLabel = provider === 'bandcamp' ? 'Bandcamp' : 'SoundCloud';
 			jobStore.updateProgress(
 				jobId,
-				'downloading',
-				`Downloading from ${sourceLabel} via yt-dlp...`,
+				provider === 'bandcamp' ? 'handling_gates' : 'downloading',
+				provider === 'bandcamp'
+					? 'Resolving Bandcamp track...'
+					: 'Downloading from SoundCloud via yt-dlp...',
 				0,
 				{ browserless: true },
 			);
@@ -288,8 +288,8 @@ async function runDownloadProcess(jobId: string): Promise<void> {
 						jobStore.update(jobId, { bandcampAlbumTracks: null });
 						jobStore.updateProgress(
 							jobId,
-							'downloading',
-							`Downloading from ${sourceLabel} via yt-dlp...`,
+							'handling_gates',
+							'Resolving selected Bandcamp track...',
 							0,
 							{ browserless: true },
 						);
