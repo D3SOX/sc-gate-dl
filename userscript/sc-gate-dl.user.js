@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         sc-gate-dl
 // @namespace    https://github.com/D3SOX/sc-gate-dl
-// @version      1.10.0
+// @version      1.10.1
 // @description  Add sc-gate-dl download controls and remember your position in the SoundCloud feed
 // @author       D3SOX
 // @match        https://soundcloud.com/*
@@ -507,19 +507,20 @@
 		const checkpoints = loadFeedCheckpoints();
 		const resumeNewer = nav.querySelector('.sc-gate-dl-feed-resume-newer');
 		const resumeOlder = nav.querySelector('.sc-gate-dl-feed-resume-older');
+		const cancel = nav.querySelector('.sc-gate-dl-feed-cancel');
 		const find = nav.querySelector('.sc-gate-dl-feed-find');
 		const updateResumeButton = (button, checkpoint, label) => {
 			if (!(button instanceof HTMLButtonElement)) return;
-			button.disabled = !feedSearchActive && !checkpoint;
-			button.textContent = feedSearchActive
-				? 'Cancel scrolling'
-				: checkpoint
-					? `Resume ${label}: ${checkpoint.label}`
-					: 'No listened track saved yet';
+			button.hidden = feedSearchActive;
+			button.disabled = !checkpoint;
+			button.textContent = checkpoint
+				? `Resume ${label}: ${checkpoint.label}`
+				: 'No listened track saved yet';
 			button.title = checkpoint?.url || '';
 		};
 		updateResumeButton(resumeNewer, checkpoints?.newer, 'farthest up');
 		updateResumeButton(resumeOlder, checkpoints?.older, 'farthest down');
+		if (cancel instanceof HTMLButtonElement) cancel.hidden = !feedSearchActive;
 		if (find instanceof HTMLButtonElement) find.disabled = feedSearchActive;
 	}
 
@@ -655,6 +656,7 @@
 				</div>
 				<button type="button" class="sc-gate-dl-feed-resume-newer"></button>
 				<button type="button" class="sc-gate-dl-feed-resume-older"></button>
+				<button type="button" class="sc-gate-dl-feed-cancel" hidden>Cancel scrolling</button>
 				<button type="button" class="sc-gate-dl-feed-find">Find track URL…</button>
 				<button type="button" class="sc-gate-dl-feed-reset">Reset saved positions</button>
 				<div class="sc-gate-dl-feed-status" aria-live="polite"></div>
@@ -674,6 +676,9 @@
 						if (checkpoint) void scrollToFeedTrack(checkpoint.url);
 					});
 			}
+			nav
+				.querySelector('.sc-gate-dl-feed-cancel')
+				?.addEventListener('click', cancelFeedSearch);
 			nav
 				.querySelector('.sc-gate-dl-feed-find')
 				?.addEventListener('click', () => {
@@ -1179,6 +1184,7 @@
 	font-size: 18px;
 	line-height: 1;
 }
+#${FEED_NAV_ID} button[hidden] { display: none !important; }
 #${FEED_NAV_ID} button:hover:not(:disabled) { border-color: #f50; color: #fff; }
 #${FEED_NAV_ID} button:disabled { color: #777; cursor: default; }
 #${FEED_NAV_ID} .sc-gate-dl-feed-find { text-align: center; }
