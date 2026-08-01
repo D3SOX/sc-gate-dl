@@ -42,6 +42,7 @@ export class DroploudDownloader {
 	async initialize() {
 		this.browser = await launchAppBrowser({
 			headless: this.config.headless,
+			xvfb: this.config.xvfb,
 			userDataDir: this.config.userDataDir ?? './browser-data',
 		});
 

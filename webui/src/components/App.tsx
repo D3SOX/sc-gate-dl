@@ -4,6 +4,7 @@ import './App.css';
 
 type Step = 'url' | 'gate' | 'download' | 'metadata' | 'complete';
 type OutputFormat = 'original' | 'mp3-320';
+type BrowserMode = 'headless' | 'xvfb' | 'headed';
 
 interface Metadata {
 	title?: string;
@@ -198,7 +199,7 @@ export default function App() {
 	const [hypedditUrlInput, setHypedditUrlInput] = useState('');
 	const [skipAutomaticHypedditFetch, setSkipAutomaticHypedditFetch] =
 		useState(false);
-	const [headfulMode, setHeadfulMode] = useState(false);
+	const [browserMode, setBrowserMode] = useState<BrowserMode>('headless');
 	const [outputFormat, setOutputFormat] = useState<OutputFormat>('mp3-320');
 	const [job, setJob] = useState<JobState>({
 		jobId: null,
@@ -313,7 +314,10 @@ export default function App() {
 				const response = await fetch(`${API_BASE}/api/job/${jobId}/start`, {
 					method: 'POST',
 					headers: { 'Content-Type': 'application/json' },
-					body: JSON.stringify({ headless: !headfulMode }),
+					body: JSON.stringify({
+						headless: browserMode !== 'headed',
+						xvfb: browserMode === 'xvfb',
+					}),
 				});
 
 				if (!response.ok) {
@@ -417,7 +421,7 @@ export default function App() {
 				}));
 			}
 		},
-		[headfulMode, showCleanupSoundcloudToast],
+		[browserMode, showCleanupSoundcloudToast],
 	);
 
 	const cancelDownload = useCallback(async () => {
@@ -775,7 +779,7 @@ export default function App() {
 		setSoundcloudUrl('');
 		setHypedditUrlInput('');
 		setSkipAutomaticHypedditFetch(false);
-		setHeadfulMode(false);
+		setBrowserMode('headless');
 		setJob({
 			jobId: null,
 			track: null,
@@ -954,6 +958,21 @@ export default function App() {
 									<option value="original">Original file</option>
 								</select>
 							</div>
+							<div className="form-group url-settings-format">
+								<label htmlFor="browser-mode">Browser Mode</label>
+								<select
+									id="browser-mode"
+									value={browserMode}
+									onChange={(e) =>
+										setBrowserMode(e.target.value as BrowserMode)
+									}
+									disabled={isLoading}
+								>
+									<option value="headless">Headless</option>
+									<option value="xvfb">Invisible headed (Xvfb)</option>
+									<option value="headed">Visible headed window</option>
+								</select>
+							</div>
 							<div className="checkbox-settings">
 								<label className="checkbox-row" htmlFor="skip-hypeddit-fetch">
 									<input
@@ -966,16 +985,6 @@ export default function App() {
 										disabled={isLoading}
 									/>
 									<span>Skip automatic gate link fetching</span>
-								</label>
-								<label className="checkbox-row" htmlFor="headful-mode">
-									<input
-										id="headful-mode"
-										type="checkbox"
-										checked={headfulMode}
-										onChange={(e) => setHeadfulMode(e.target.checked)}
-										disabled={isLoading}
-									/>
-									<span>Show browser window (headful)</span>
 								</label>
 							</div>
 						</div>
@@ -1018,16 +1027,21 @@ export default function App() {
 									disabled={isLoading}
 								/>
 							</div>
-							<label className="checkbox-row" htmlFor="headful-mode-gate">
-								<input
-									id="headful-mode-gate"
-									type="checkbox"
-									checked={headfulMode}
-									onChange={(e) => setHeadfulMode(e.target.checked)}
+							<div className="form-group url-settings-format">
+								<label htmlFor="browser-mode-gate">Browser Mode</label>
+								<select
+									id="browser-mode-gate"
+									value={browserMode}
+									onChange={(e) =>
+										setBrowserMode(e.target.value as BrowserMode)
+									}
 									disabled={isLoading}
-								/>
-								<span>Show browser window (headful)</span>
-							</label>
+								>
+									<option value="headless">Headless</option>
+									<option value="xvfb">Invisible headed (Xvfb)</option>
+									<option value="headed">Visible headed window</option>
+								</select>
+							</div>
 							<button
 								type="submit"
 								className="btn-primary"

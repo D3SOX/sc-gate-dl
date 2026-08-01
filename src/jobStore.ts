@@ -25,6 +25,7 @@ class JobStore {
 			hypedditUrl: null,
 			bandcampAlbumTracks: null,
 			headless: process.env.BROWSER_HEADLESS !== 'false',
+			xvfb: false,
 			outputFormat,
 			cancelled: false,
 			track: null,

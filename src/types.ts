@@ -16,6 +16,8 @@ export interface HypedditConfig {
 	email?: string;
 	comment: string;
 	headless: boolean;
+	/** Use headed Chromium in an invisible Xvfb display. */
+	xvfb?: boolean;
 	/** Persistent Chromium profile. Defaults to `./browser-data`. */
 	userDataDir?: string;
 }
@@ -74,6 +76,8 @@ export interface Job {
 	bandcampAlbumTracks: BandcampAlbumTrackChoice[] | null;
 	/** Whether browser automation runs headless. Defaults to true. */
 	headless: boolean;
+	/** Whether headed Chromium runs in an invisible Xvfb display. */
+	xvfb: boolean;
 	outputFormat: OutputFormat;
 	/** Set when the user cancels; download loop should stop and close the browser. */
 	cancelled: boolean;

@@ -121,6 +121,16 @@ try {
 					message: 'Run headless? (no browser window)',
 					default: true,
 				});
+	const xvfb =
+		!isBrowserless && headless
+			? config
+				? config.xvfb
+				: await confirm({
+						message:
+							'Use Xvfb for stronger anti-bot protection? (invisible headed browser)',
+						default: false,
+					})
+			: false;
 
 	const initializeLogins = isBrowserless
 		? false
@@ -137,6 +147,7 @@ try {
 		email: HYPEDDIT_EMAIL,
 		comment: SC_COMMENT,
 		headless,
+		xvfb,
 	};
 
 	let downloadFilename: string | null = null;

@@ -102,6 +102,16 @@ If you want to use the CLI and not be prompted for values every time, you can cr
 cp config.example.json config.json
 ```
 
+Set `xvfb` to `true` to keep the browser window invisible while running
+CloakBrowser in headed mode. This avoids Chromium's detectable headless rendering
+path. Install `xorg-server-xvfb` on Arch Linux (`xvfb` on Debian/Ubuntu) first.
+
+For anti-bot sites, configure a residential proxy with
+`CLOAKBROWSER_PROXY` (SOCKS5 is preferred when available). Proxy GeoIP matching
+and humanized browser input are enabled automatically; set
+`CLOAKBROWSER_GEOIP=false` only to opt out. The Web UI also exposes Xvfb mode
+next to its headful-browser option.
+
 ## Usage
 
 ### CLI

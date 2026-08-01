@@ -226,6 +226,7 @@ async function runDownloadProcess(jobId: string): Promise<void> {
 			email: HYPEDDIT_EMAIL,
 			comment: SC_COMMENT,
 			headless: job.headless,
+			xvfb: job.xvfb,
 		};
 
 		const prepareBrowserConfig = async () => {
@@ -897,9 +898,15 @@ const server = Bun.serve({
 					jobStore.clearCancelled(jobId);
 
 					try {
-						const body = (await req.json()) as { headless?: boolean };
+						const body = (await req.json()) as {
+							headless?: boolean;
+							xvfb?: boolean;
+						};
 						if (typeof body.headless === 'boolean') {
 							jobStore.update(jobId, { headless: body.headless });
+						}
+						if (typeof body.xvfb === 'boolean') {
+							jobStore.update(jobId, { xvfb: body.xvfb });
 						}
 					} catch {
 						// No/empty JSON body — keep job default / BROWSER_HEADLESS
