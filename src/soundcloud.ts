@@ -10,8 +10,19 @@ import Soundcloud, {
 import {
 	extractAndResolveGateUrl,
 	extractCaptchaDeliveryUrl,
+	type GateProvider,
 	loadCookies,
 } from './utils';
+
+const GATE_PROVIDER_LABELS: Record<GateProvider, string> = {
+	droploud: 'Droploud',
+	gaterush: 'GateRush',
+	downloadgater: 'DownloadGater',
+	direct: 'direct download',
+	bandcamp: 'Bandcamp',
+	soundcloud: 'SoundCloud',
+	hypeddit: 'Hypeddit',
+};
 
 interface SoundcloudCredentials {
 	clientId: string;
@@ -522,20 +533,7 @@ export class SoundcloudClient {
 		if (!gate) {
 			return null;
 		}
-		const providerLabel =
-			gate.provider === 'droploud'
-				? 'Droploud'
-				: gate.provider === 'gaterush'
-					? 'GateRush'
-					: gate.provider === 'downloadgater'
-						? 'DownloadGater'
-						: gate.provider === 'direct'
-							? 'direct download'
-							: gate.provider === 'bandcamp'
-								? 'Bandcamp'
-								: gate.provider === 'soundcloud'
-									? 'SoundCloud'
-									: 'Hypeddit';
+		const providerLabel = GATE_PROVIDER_LABELS[gate.provider];
 		const sourceLabel =
 			gate.type === 'purchase_url' ? 'purchase URL' : 'description';
 		console.log(

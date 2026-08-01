@@ -9,7 +9,7 @@ import {
 	normalizeDirectDownloadParsedUrl,
 	urlLooksLikeDirectDownload,
 } from './directLinkRules';
-import { assertSafeOutboundUrl } from './safeOutboundUrl';
+import { safeFetch } from './safeOutboundUrl';
 import type { LocalCookieData, Metadata } from './types';
 
 export const REPO_URL = packageJson.repository.url;
@@ -466,14 +466,11 @@ export async function resolveUnknownGateUrl(
 
 	try {
 		for (let hop = 0; hop < maxHops; hop++) {
-			await assertSafeOutboundUrl(current);
-
 			const known = matchKnownDownloadGateUrl(current);
 			if (known) return known;
 			if (isSoundcloudUrl(current)) return null;
 
-			const response = await fetch(current, {
-				redirect: 'manual',
+			const { response } = await safeFetch(current, {
 				signal: AbortSignal.timeout(15_000),
 				headers: {
 					'user-agent': GATE_RESOLVE_USER_AGENT,
@@ -484,15 +481,18 @@ export async function resolveUnknownGateUrl(
 
 			if (response.status >= 300 && response.status < 400) {
 				const location = response.headers.get('location');
+				await response.body?.cancel().catch(() => {});
 				if (!location) return null;
 				current = trimExtractedUrl(new URL(location, current).toString());
 				continue;
 			}
 
-			const finalUrl = trimExtractedUrl(response.url || current);
-			await assertSafeOutboundUrl(finalUrl);
+			const finalUrl = trimExtractedUrl(current);
 			const fromFinal = matchKnownDownloadGateUrl(finalUrl);
-			if (fromFinal) return fromFinal;
+			if (fromFinal) {
+				await response.body?.cancel().catch(() => {});
+				return fromFinal;
+			}
 
 			const html = await response.text();
 			return findKnownGateInHtml(html);

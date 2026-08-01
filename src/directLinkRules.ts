@@ -11,8 +11,7 @@ export function isKnownDirectDownloadHost(hostname: string): boolean {
 	return (
 		/(?:^|\.)dropbox\.com$/i.test(host) ||
 		/(?:^|\.)dropboxusercontent\.com$/i.test(host) ||
-		/(?:^|\.)drive\.google\.com$/i.test(host) ||
-		/(?:^|\.)docs\.google\.com$/i.test(host)
+		/(?:^|\.)drive\.google\.com$/i.test(host)
 	);
 }
 
@@ -21,9 +20,6 @@ export function urlLooksLikeDirectDownload(url: URL): boolean {
 	if (!/^https?:$/i.test(url.protocol)) return false;
 	if (isKnownDirectDownloadHost(url.hostname)) return true;
 	if (AUDIO_OR_ARCHIVE_EXT_RE.test(url.pathname)) return true;
-	// Dropbox preview links often use dl=0; treat any dl= as a download intent.
-	if (url.searchParams.has('dl')) return true;
-	if (url.searchParams.has('raw')) return true;
 	return false;
 }
 

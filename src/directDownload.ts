@@ -1,18 +1,19 @@
-import { mkdir } from 'node:fs/promises';
+import { mkdir, unlink } from 'node:fs/promises';
 import { basename, join } from 'node:path';
 import {
 	normalizeDirectDownloadParsedUrl,
 	urlLooksLikeDirectDownload,
 } from './directLinkRules';
 import type { ProgressCallback } from './hypeddit';
-import { assertSafeOutboundUrl } from './safeOutboundUrl';
+import { safeFetch } from './safeOutboundUrl';
 import { sanitizeFilenamePart, trimExtractedUrl } from './utils';
 
 const USER_AGENT =
 	'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36';
 
 const FETCH_TIMEOUT_MS = 60_000;
-/** Cap buffered downloads (audio / zip packages). */
+const MAX_REDIRECTS = 10;
+/** Cap downloads (audio / zip packages). */
 const MAX_DOWNLOAD_BYTES = 512 * 1024 * 1024;
 
 /**
@@ -54,6 +55,39 @@ function safeDownloadFilename(raw: string | null): string | null {
 	return cleaned || null;
 }
 
+async function writeBodyWithSizeLimit(
+	body: ReadableStream<Uint8Array>,
+	target: string,
+	maxBytes: number,
+): Promise<void> {
+	const writer = Bun.file(target).writer();
+	const reader = body.getReader();
+	let total = 0;
+	try {
+		while (true) {
+			const { done, value } = await reader.read();
+			if (done) break;
+			total += value.byteLength;
+			if (total > maxBytes) {
+				await reader.cancel();
+				throw new Error(
+					`Direct download too large (${total} bytes; max ${maxBytes})`,
+				);
+			}
+			writer.write(value);
+		}
+		await writer.end();
+	} catch (error) {
+		try {
+			writer.end();
+		} catch {
+			// ignore
+		}
+		await unlink(target).catch(() => {});
+		throw error;
+	}
+}
+
 export class DirectDownloader {
 	private progressCallback: ProgressCallback | null = null;
 
@@ -63,41 +97,76 @@ export class DirectDownloader {
 
 	async downloadAudio(url: string): Promise<string> {
 		const downloadUrl = normalizeDirectDownloadUrl(url);
-		await assertSafeOutboundUrl(downloadUrl);
 		console.log(`Downloading direct file: ${downloadUrl}`);
 		this.progressCallback?.('downloading', 'Downloading direct file...', 40, {
 			browserless: true,
 		});
 
 		await mkdir('./downloads', { recursive: true });
-		const response = await fetch(downloadUrl, {
-			redirect: 'follow',
-			signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
-			headers: {
-				'user-agent': USER_AGENT,
-				accept: '*/*',
-			},
-		});
+
+		let current = downloadUrl;
+		let response: Response | null = null;
+		let finalUrl = current;
+
+		for (let hop = 0; hop < MAX_REDIRECTS; hop++) {
+			const result = await safeFetch(current, {
+				signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+				headers: {
+					'user-agent': USER_AGENT,
+					accept: '*/*',
+				},
+			});
+			finalUrl = result.url;
+			response = result.response;
+
+			if (response.status >= 300 && response.status < 400) {
+				const location = response.headers.get('location');
+				await response.body?.cancel().catch(() => {});
+				if (!location) {
+					throw new Error(
+						`Direct download redirect missing Location from ${current}`,
+					);
+				}
+				current = new URL(location, current).toString();
+				continue;
+			}
+			break;
+		}
+
+		if (!response) {
+			throw new Error(`Direct download failed for ${downloadUrl}`);
+		}
+		if (response.status >= 300 && response.status < 400) {
+			throw new Error(
+				`Direct download exceeded ${MAX_REDIRECTS} redirects for ${downloadUrl}`,
+			);
+		}
 		if (!response.ok) {
 			throw new Error(
-				`Direct download failed: HTTP ${response.status} for ${downloadUrl}`,
+				`Direct download failed: HTTP ${response.status} for ${finalUrl}`,
 			);
 		}
 
-		await assertSafeOutboundUrl(response.url);
-
 		const contentType = response.headers.get('content-type') ?? '';
 		if (/text\/html/i.test(contentType)) {
+			await response.body?.cancel().catch(() => {});
 			throw new Error(
 				'Direct download returned HTML instead of a file — check that the link is a direct download (e.g. Dropbox with dl=1).',
 			);
 		}
 
-		const contentLength = Number(response.headers.get('content-length') ?? '');
-		if (Number.isFinite(contentLength) && contentLength > MAX_DOWNLOAD_BYTES) {
-			throw new Error(
-				`Direct download too large (${contentLength} bytes; max ${MAX_DOWNLOAD_BYTES})`,
-			);
+		const contentLengthHeader = response.headers.get('content-length');
+		if (contentLengthHeader) {
+			const contentLength = Number(contentLengthHeader);
+			if (
+				Number.isFinite(contentLength) &&
+				contentLength > MAX_DOWNLOAD_BYTES
+			) {
+				await response.body?.cancel().catch(() => {});
+				throw new Error(
+					`Direct download too large (${contentLength} bytes; max ${MAX_DOWNLOAD_BYTES})`,
+				);
+			}
 		}
 
 		const fromHeader = safeDownloadFilename(
@@ -106,7 +175,7 @@ export class DirectDownloader {
 			),
 		);
 		const urlName = safeDownloadFilename(
-			decodeURIComponent(basename(new URL(response.url).pathname)),
+			decodeURIComponent(basename(new URL(finalUrl).pathname)),
 		);
 		const filename =
 			fromHeader ||
@@ -114,15 +183,12 @@ export class DirectDownloader {
 				? urlName
 				: `direct-download-${Date.now()}.bin`);
 
-		const body = await response.arrayBuffer();
-		if (body.byteLength > MAX_DOWNLOAD_BYTES) {
-			throw new Error(
-				`Direct download too large (${body.byteLength} bytes; max ${MAX_DOWNLOAD_BYTES})`,
-			);
+		if (!response.body) {
+			throw new Error(`Direct download returned an empty body for ${finalUrl}`);
 		}
 
 		const target = join('./downloads', filename);
-		await Bun.write(target, body);
+		await writeBodyWithSizeLimit(response.body, target, MAX_DOWNLOAD_BYTES);
 		console.log(`Saved ${filename}`);
 		return filename;
 	}
