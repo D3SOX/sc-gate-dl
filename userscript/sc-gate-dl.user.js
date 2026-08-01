@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         sc-gate-dl
 // @namespace    https://github.com/D3SOX/sc-gate-dl
-// @version      1.7.0
-// @description  Open the sc-gate-dl Web UI in a floating panel next to SoundCloud store/buy links
+// @version      1.9.0
+// @description  Add sc-gate-dl download controls and remember your position in the SoundCloud feed
 // @author       D3SOX
 // @match        https://soundcloud.com/*
 // @match        https://www.soundcloud.com/*
@@ -29,6 +29,8 @@
 	const QUEUE_GEOM_KEY = 'sc-gate-dl-queue-geom';
 	const OUTPUT_FORMAT_KEY = 'sc-gate-dl-output-format';
 	const AUTO_CLOSE_KEY = 'sc-gate-dl-auto-close';
+	const FEED_CHECKPOINT_KEY = 'sc-gate-dl-feed-checkpoint';
+	const FEED_DIRECTION_KEY = 'sc-gate-dl-feed-direction';
 	const DEFAULT_WEBUI_BASE = 'http://localhost:4321';
 	const BUTTON_ATTR = 'data-sc-gate-dl-btn';
 	const WRAP_ATTR = 'data-sc-gate-dl-wrap';
@@ -36,9 +38,12 @@
 	const QUEUE_ID = 'sc-gate-dl-queue';
 	const STYLE_ID = 'sc-gate-dl-styles';
 	const TOOLTIP_ID = 'sc-gate-dl-tooltip';
+	const FEED_NAV_ID = 'sc-gate-dl-feed-nav';
 	const TOOLTIP_LABEL = 'Download with sc-gate-dl';
 	const MIN_PANEL_W = 280;
 	const MIN_PANEL_H = 240;
+	const FEED_CARD_SELECTOR = '.sound, .soundList__item, .userStreamItem';
+	const FEED_LOAD_TIMEOUT_MS = 15_000;
 
 	const DEFAULT_GEOM = {
 		width: 400,
@@ -203,6 +208,9 @@
 
 	function registerMenuCommands() {
 		if (typeof GM_registerMenuCommand !== 'function') return;
+		GM_registerMenuCommand('Feed position controls…', () => {
+			toggleFeedNavigator();
+		});
 		GM_registerMenuCommand('Choose output format…', () => {
 			openFormatDialog();
 		});
@@ -276,7 +284,7 @@
 	/** Feed/search cards only — track pages use the current URL. */
 	function trackUrlFromCard(el) {
 		const sound = el?.closest?.(
-			'.sound, .soundList__item, .searchItem__trackItem, .listenContext',
+			'.sound, .soundList__item, .userStreamItem, .searchItem__trackItem, .listenContext',
 		);
 		if (!sound) return null;
 		const titleLink = sound.querySelector(
@@ -291,6 +299,417 @@
 			if (fromA) return fromA;
 		}
 		return null;
+	}
+
+	function isFeedPage() {
+		return /^\/(?:you\/stream|feed)\/?$/i.test(document.location.pathname);
+	}
+
+	function feedCards() {
+		const sounds = Array.from(
+			document.querySelectorAll(
+				'.userStream .sound, .stream__list .sound, .soundList__item .sound',
+			),
+		);
+		return sounds.length > 0
+			? sounds
+			: Array.from(
+					document.querySelectorAll('.soundList__item, .userStreamItem'),
+				);
+	}
+
+	function findFeedCard(trackUrl) {
+		const normalized = normalizeTrackUrl(trackUrl);
+		if (!normalized) return null;
+		return (
+			feedCards().find((card) => trackUrlFromCard(card) === normalized) || null
+		);
+	}
+
+	function feedTimestamp(card) {
+		const time = card.querySelector(
+			'.sound__header time[datetime], .soundTitle time[datetime], time[datetime]',
+		);
+		if (!(time instanceof HTMLTimeElement)) return null;
+		const timestamp = Date.parse(time.dateTime);
+		return Number.isFinite(timestamp) ? timestamp : null;
+	}
+
+	function loadFeedCheckpoint() {
+		let raw = null;
+		try {
+			if (typeof GM_getValue === 'function') {
+				raw = GM_getValue(FEED_CHECKPOINT_KEY, null);
+			}
+		} catch {
+			// ignore
+		}
+		try {
+			raw ??= localStorage.getItem(FEED_CHECKPOINT_KEY);
+			const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
+			const url = normalizeTrackUrl(parsed?.url || '');
+			if (!url) return null;
+			return {
+				url,
+				label:
+					typeof parsed.label === 'string'
+						? parsed.label
+						: trackLabelFromUrl(url),
+				feedTimestamp:
+					typeof parsed.feedTimestamp === 'number'
+						? parsed.feedTimestamp
+						: null,
+				savedAt: typeof parsed.savedAt === 'number' ? parsed.savedAt : 0,
+			};
+		} catch {
+			return null;
+		}
+	}
+
+	function persistFeedCheckpoint(checkpoint) {
+		const raw = JSON.stringify(checkpoint);
+		try {
+			if (typeof GM_setValue === 'function') {
+				GM_setValue(FEED_CHECKPOINT_KEY, raw);
+			}
+		} catch {
+			// ignore
+		}
+		try {
+			localStorage.setItem(FEED_CHECKPOINT_KEY, raw);
+		} catch {
+			// ignore
+		}
+	}
+
+	function resetFeedCheckpoint() {
+		try {
+			if (typeof GM_setValue === 'function') {
+				GM_setValue(FEED_CHECKPOINT_KEY, null);
+			}
+		} catch {
+			// ignore
+		}
+		try {
+			localStorage.removeItem(FEED_CHECKPOINT_KEY);
+		} catch {
+			// ignore
+		}
+		setFeedStatus('Checkpoint reset. The next played track will be saved.');
+		updateFeedNavigator();
+	}
+
+	function getFeedDirection() {
+		let value = null;
+		try {
+			if (typeof GM_getValue === 'function') {
+				value = GM_getValue(FEED_DIRECTION_KEY, null);
+			}
+		} catch {
+			// ignore
+		}
+		try {
+			value ??= localStorage.getItem(FEED_DIRECTION_KEY);
+		} catch {
+			// ignore
+		}
+		return value === 'older' ? 'older' : 'newer';
+	}
+
+	function setFeedDirection(direction) {
+		const value = direction === 'older' ? 'older' : 'newer';
+		try {
+			if (typeof GM_setValue === 'function') {
+				GM_setValue(FEED_DIRECTION_KEY, value);
+			}
+		} catch {
+			// ignore
+		}
+		try {
+			localStorage.setItem(FEED_DIRECTION_KEY, value);
+		} catch {
+			// ignore
+		}
+		setFeedStatus(
+			value === 'newer'
+				? 'Tracking the farthest-up (newest) played track.'
+				: 'Tracking the farthest-down (oldest) played track.',
+		);
+		updateFeedNavigator();
+	}
+
+	function checkpointLabelFromCard(card, url) {
+		const title = card
+			.querySelector('a.soundTitle__title, a[href][class*="soundTitle"]')
+			?.textContent?.trim();
+		const artist = card
+			.querySelector('.soundTitle__username, a.soundTitle__username')
+			?.textContent?.trim();
+		return title
+			? artist
+				? `${artist} — ${title}`
+				: title
+			: trackLabelFromUrl(url);
+	}
+
+	function shouldAdvanceCheckpoint(saved, card, candidateTimestamp) {
+		if (!saved || saved.url === trackUrlFromCard(card)) return true;
+		const direction = getFeedDirection();
+		if (saved.feedTimestamp != null && candidateTimestamp != null) {
+			return direction === 'newer'
+				? candidateTimestamp >= saved.feedTimestamp
+				: candidateTimestamp <= saved.feedTimestamp;
+		}
+		const savedCard = findFeedCard(saved.url);
+		if (!savedCard) return false;
+		const cards = feedCards();
+		return direction === 'newer'
+			? cards.indexOf(card) <= cards.indexOf(savedCard)
+			: cards.indexOf(card) >= cards.indexOf(savedCard);
+	}
+
+	function saveFeedCheckpointFromCard(card) {
+		if (!isFeedPage() || !(card instanceof Element)) return;
+		const url = trackUrlFromCard(card);
+		if (!url) return;
+		const saved = loadFeedCheckpoint();
+		const timestamp = feedTimestamp(card);
+		if (!shouldAdvanceCheckpoint(saved, card, timestamp)) return;
+		if (saved?.url === url) return;
+		persistFeedCheckpoint({
+			url,
+			label: checkpointLabelFromCard(card, url),
+			feedTimestamp: timestamp,
+			savedAt: Date.now(),
+		});
+		updateFeedNavigator();
+	}
+
+	function recordPlayingFeedTrack() {
+		if (!isFeedPage()) return;
+		const playing = document.querySelector(
+			'.playControls .playControl.playing, .playControls__play.playing, .playControls button[title^="Pause"], .playControls button[aria-label^="Pause"]',
+		);
+		if (!playing) return;
+		const link = document.querySelector(
+			'.playbackSoundBadge__titleLink[href], .playbackSoundBadge a[href][class*="title"]',
+		);
+		const url =
+			link instanceof HTMLAnchorElement ? normalizeTrackUrl(link.href) : null;
+		const card = url ? findFeedCard(url) : null;
+		if (card) saveFeedCheckpointFromCard(card);
+	}
+
+	let feedSearchToken = 0;
+	let feedSearchActive = false;
+
+	function setFeedStatus(message) {
+		const status = document.querySelector(
+			`#${FEED_NAV_ID} .sc-gate-dl-feed-status`,
+		);
+		if (status) status.textContent = message;
+	}
+
+	function updateFeedNavigator() {
+		const nav = document.getElementById(FEED_NAV_ID);
+		if (!nav) return;
+		const checkpoint = loadFeedCheckpoint();
+		const resume = nav.querySelector('.sc-gate-dl-feed-resume');
+		const find = nav.querySelector('.sc-gate-dl-feed-find');
+		const direction = nav.querySelector('.sc-gate-dl-feed-direction');
+		if (resume instanceof HTMLButtonElement) {
+			resume.disabled = !feedSearchActive && !checkpoint;
+			resume.textContent = feedSearchActive
+				? 'Cancel scrolling'
+				: checkpoint
+					? `Resume: ${checkpoint.label}`
+					: 'No listened track saved yet';
+			resume.title = checkpoint?.url || '';
+		}
+		if (find instanceof HTMLButtonElement) find.disabled = feedSearchActive;
+		if (direction instanceof HTMLSelectElement) {
+			direction.value = getFeedDirection();
+			direction.disabled = feedSearchActive;
+		}
+	}
+
+	function waitForMoreFeed(snapshot, token, targetUrl) {
+		return new Promise((resolve) => {
+			let finished = false;
+			const finish = (grew) => {
+				if (finished) return;
+				finished = true;
+				observer.disconnect();
+				window.clearInterval(bottomTimer);
+				window.clearTimeout(timeoutTimer);
+				resolve(grew);
+			};
+			const hasChanged = () => {
+				if (token !== feedSearchToken) return finish(false);
+				if (findFeedCard(targetUrl)) return finish(true);
+				const cards = feedCards();
+				const lastUrl = trackUrlFromCard(cards.at(-1));
+				if (
+					cards.length > snapshot.count ||
+					(lastUrl && lastUrl !== snapshot.lastUrl) ||
+					document.documentElement.scrollHeight > snapshot.height + 20
+				) {
+					finish(true);
+				}
+			};
+			const observer = new MutationObserver(hasChanged);
+			observer.observe(document.body, { childList: true, subtree: true });
+			const bottomTimer = window.setInterval(() => {
+				window.scrollTo(0, document.documentElement.scrollHeight);
+				hasChanged();
+			}, 750);
+			const timeoutTimer = window.setTimeout(
+				() => finish(false),
+				FEED_LOAD_TIMEOUT_MS,
+			);
+		});
+	}
+
+	async function scrollToFeedTrack(trackUrl) {
+		const url = normalizeTrackUrl(trackUrl);
+		if (!url) {
+			setFeedStatus('Enter a valid SoundCloud track URL.');
+			return;
+		}
+		if (!isFeedPage()) {
+			setFeedStatus('Open your SoundCloud Stream first.');
+			return;
+		}
+		const token = ++feedSearchToken;
+		feedSearchActive = true;
+		updateFeedNavigator();
+		let stalledLoads = 0;
+
+		while (token === feedSearchToken && isFeedPage()) {
+			const card = findFeedCard(url);
+			if (card instanceof HTMLElement) {
+				card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+				window.setTimeout(() => {
+					if (card.isConnected) card.scrollIntoView({ block: 'center' });
+				}, 450);
+				card.classList.add('sc-gate-dl-feed-target');
+				window.setTimeout(
+					() => card.classList.remove('sc-gate-dl-feed-target'),
+					2400,
+				);
+				setFeedStatus('Track found and centered.');
+				break;
+			}
+
+			const cards = feedCards();
+			setFeedStatus(
+				`Loading more tracks… ${cards.length.toLocaleString()} checked`,
+			);
+			const snapshot = {
+				count: cards.length,
+				lastUrl: trackUrlFromCard(cards.at(-1)),
+				height: document.documentElement.scrollHeight,
+			};
+			window.scrollTo(0, document.documentElement.scrollHeight);
+			const grew = await waitForMoreFeed(snapshot, token, url);
+			stalledLoads = grew ? 0 : stalledLoads + 1;
+			if (stalledLoads >= 2) {
+				setFeedStatus('Track was not found in the available feed.');
+				break;
+			}
+		}
+
+		if (token === feedSearchToken) {
+			feedSearchActive = false;
+			updateFeedNavigator();
+		}
+	}
+
+	function cancelFeedSearch() {
+		if (!feedSearchActive) return;
+		feedSearchToken++;
+		feedSearchActive = false;
+		setFeedStatus('Scrolling cancelled.');
+		updateFeedNavigator();
+	}
+
+	function toggleFeedNavigator() {
+		const nav = document.getElementById(FEED_NAV_ID);
+		if (nav && !nav.hidden) {
+			if (feedSearchActive) cancelFeedSearch();
+			nav.hidden = true;
+			return;
+		}
+		ensureFeedNavigator(true);
+	}
+
+	function ensureFeedNavigator(open = false) {
+		let nav = document.getElementById(FEED_NAV_ID);
+		if (!isFeedPage()) {
+			if (feedSearchActive) cancelFeedSearch();
+			if (nav) nav.hidden = true;
+			if (open) {
+				alert('sc-gate-dl: open your SoundCloud Stream first.');
+			}
+			return;
+		}
+		if (!open) return;
+		if (!nav) {
+			nav = document.createElement('aside');
+			nav.id = FEED_NAV_ID;
+			nav.setAttribute('aria-label', 'SoundCloud feed position');
+			nav.innerHTML = `
+				<div class="sc-gate-dl-feed-heading">
+					<span>Feed position</span>
+					<button type="button" class="sc-gate-dl-feed-close" aria-label="Close" title="Close">×</button>
+				</div>
+				<button type="button" class="sc-gate-dl-feed-resume"></button>
+				<button type="button" class="sc-gate-dl-feed-find">Find track URL…</button>
+				<label class="sc-gate-dl-feed-setting">
+					<span>Keep</span>
+					<select class="sc-gate-dl-feed-direction" aria-label="Saved-track direction">
+						<option value="newer">Farthest up (newest)</option>
+						<option value="older">Farthest down (oldest)</option>
+					</select>
+				</label>
+				<button type="button" class="sc-gate-dl-feed-reset">Reset saved track</button>
+				<div class="sc-gate-dl-feed-status" aria-live="polite"></div>
+			`;
+			nav
+				.querySelector('.sc-gate-dl-feed-close')
+				?.addEventListener('click', () => toggleFeedNavigator());
+			nav
+				.querySelector('.sc-gate-dl-feed-resume')
+				?.addEventListener('click', () => {
+					if (feedSearchActive) {
+						cancelFeedSearch();
+						return;
+					}
+					const checkpoint = loadFeedCheckpoint();
+					if (checkpoint) void scrollToFeedTrack(checkpoint.url);
+				});
+			nav
+				.querySelector('.sc-gate-dl-feed-find')
+				?.addEventListener('click', () => {
+					const input = window.prompt(
+						'SoundCloud track URL to find in your feed:',
+					);
+					if (input?.trim()) void scrollToFeedTrack(input.trim());
+				});
+			nav
+				.querySelector('.sc-gate-dl-feed-direction')
+				?.addEventListener('change', (event) => {
+					if (event.target instanceof HTMLSelectElement) {
+						setFeedDirection(event.target.value);
+					}
+				});
+			nav
+				.querySelector('.sc-gate-dl-feed-reset')
+				?.addEventListener('click', resetFeedCheckpoint);
+			document.documentElement.appendChild(nav);
+		}
+		nav.hidden = false;
+		updateFeedNavigator();
 	}
 
 	function resolveTrackUrl(el) {
@@ -728,6 +1147,90 @@
 #${PANEL_ID} .sc-gate-dl-rh[data-dir="nw"] { top: 0; left: 0; width: 10px; height: 10px; cursor: nw-resize; }
 #${PANEL_ID} .sc-gate-dl-rh[data-dir="se"] { bottom: 0; right: 0; width: 10px; height: 10px; cursor: se-resize; }
 #${PANEL_ID} .sc-gate-dl-rh[data-dir="sw"] { bottom: 0; left: 0; width: 10px; height: 10px; cursor: sw-resize; }
+
+/* Feed checkpoint and deep-scroll controls */
+#${FEED_NAV_ID} {
+	position: fixed;
+	right: 16px;
+	bottom: 72px;
+	z-index: 2147483644;
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+	box-sizing: border-box;
+	width: min(300px, calc(100vw - 32px));
+	padding: 8px;
+	background: #16161c;
+	border: 1px solid rgba(255, 255, 255, 0.12);
+	border-radius: 8px;
+	box-shadow: 0 8px 28px rgba(0, 0, 0, 0.4);
+	font: 500 12px/1.3 Interstate, "Lucida Grande", Arial, sans-serif;
+}
+#${FEED_NAV_ID}[hidden] { display: none !important; }
+#${FEED_NAV_ID} .sc-gate-dl-feed-heading {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	color: #eee;
+	font-weight: 700;
+}
+#${FEED_NAV_ID} button {
+	appearance: none;
+	box-sizing: border-box;
+	width: 100%;
+	min-height: 30px;
+	padding: 6px 9px;
+	overflow: hidden;
+	border: 1px solid rgba(255, 255, 255, 0.14);
+	border-radius: 6px;
+	background: #0f0f12;
+	color: #eee;
+	font: inherit;
+	text-align: left;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	cursor: pointer;
+}
+#${FEED_NAV_ID} button.sc-gate-dl-feed-close {
+	width: auto;
+	min-height: 0;
+	padding: 0 5px;
+	border: 0;
+	background: transparent;
+	font-size: 18px;
+	line-height: 1;
+}
+#${FEED_NAV_ID} button:hover:not(:disabled) { border-color: #f50; color: #fff; }
+#${FEED_NAV_ID} button:disabled { color: #777; cursor: default; }
+#${FEED_NAV_ID} .sc-gate-dl-feed-find { text-align: center; }
+#${FEED_NAV_ID} .sc-gate-dl-feed-reset { color: #aaa; text-align: center; }
+#${FEED_NAV_ID} .sc-gate-dl-feed-setting {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	color: #aaa;
+}
+#${FEED_NAV_ID} .sc-gate-dl-feed-setting select {
+	flex: 1;
+	min-width: 0;
+	padding: 5px 7px;
+	border: 1px solid rgba(255, 255, 255, 0.14);
+	border-radius: 6px;
+	background: #0f0f12;
+	color: #eee;
+	font: inherit;
+}
+#${FEED_NAV_ID} .sc-gate-dl-feed-status:empty { display: none; }
+#${FEED_NAV_ID} .sc-gate-dl-feed-status {
+	padding: 1px 2px;
+	color: #aaa;
+	font-size: 11px;
+}
+.sc-gate-dl-feed-target {
+	outline: 3px solid #f50 !important;
+	outline-offset: 5px;
+	transition: outline-color 300ms ease;
+}
 
 /* Match SoundCloud .tooltip (rgb(48,48,48) / #303030) */
 #${TOOLTIP_ID} {
@@ -1582,6 +2085,21 @@ button[${BUTTON_ATTR}="mui"] svg {
 
 	ensureStyles();
 	scan();
+	ensureFeedNavigator();
+
+	document.addEventListener(
+		'click',
+		(event) => {
+			if (!isFeedPage() || !(event.target instanceof Element)) return;
+			const playControl = event.target.closest(
+				'button.playControl, button.sc-button-play, button.sc-button-pause, .soundTitle__playButton, .sound__coverArt .playButton',
+			);
+			if (!playControl) return;
+			const card = playControl.closest(FEED_CARD_SELECTOR);
+			if (card) saveFeedCheckpointFromCard(card);
+		},
+		true,
+	);
 
 	const observer = new MutationObserver((mutations) => {
 		let shouldScan = false;
@@ -1603,7 +2121,9 @@ button[${BUTTON_ATTR}="mui"] svg {
 		if (location.href !== lastHref) {
 			lastHref = location.href;
 			scan();
+			ensureFeedNavigator();
 		}
+		recordPlayingFeedTrack();
 	}, 1000);
 
 	registerMenuCommands();
