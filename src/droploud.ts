@@ -1877,7 +1877,7 @@ export class DroploudDownloader {
 	}
 
 	private async handleDownload(page: Page) {
-		this.emitProgress('downloading', 'Preparing Droploud download...', 75);
+		this.emitProgress('handling_gates', 'Preparing Droploud download...', 75);
 
 		const client = await page.createCDPSession();
 		await client.send('Browser.setDownloadBehavior', {
@@ -1921,7 +1921,7 @@ export class DroploudDownloader {
 			this.emitProgress(
 				'downloading',
 				`Downloading ${this.downloadFilename}...`,
-				76,
+				0,
 			);
 		});
 
@@ -1930,7 +1930,7 @@ export class DroploudDownloader {
 			if (event.state === 'completed') {
 				pBar.stop();
 				console.log('Download completed');
-				this.emitProgress('downloading', 'Download complete', 85);
+				this.emitProgress('downloading', 'Download complete', 100);
 				downloadCompleteResolve(this.downloadFilename);
 			} else if (event.state === 'inProgress') {
 				const { receivedBytes, totalBytes } = event;
@@ -1942,11 +1942,10 @@ export class DroploudDownloader {
 				} else {
 					pBar.start(totalBytes, receivedBytes, { prefix: 'Downloading' });
 				}
-				const downloadPercent = totalBytes > 0 ? receivedBytes / totalBytes : 0;
 				this.emitProgress(
 					'downloading',
 					`Downloading... ${(receivedBytes / 1024 / 1024).toFixed(1)} / ${(totalBytes / 1024 / 1024).toFixed(1)} MB`,
-					76 + downloadPercent * 8,
+					0,
 					{ downloadBytes: receivedBytes, totalBytes },
 				);
 			} else if (event.state === 'canceled') {

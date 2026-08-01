@@ -649,7 +649,7 @@ export class HypedditDownloader {
 			throw new Error('Download button not found');
 		}
 		console.log('Download button found, setting up CDP session...');
-		this.emitProgress('downloading', 'Preparing download...', 75);
+		this.emitProgress('handling_gates', 'Preparing download...', 75);
 
 		// configure CDP session to allow monitoring download events
 		const client = await page.createCDPSession();
@@ -691,7 +691,7 @@ export class HypedditDownloader {
 			this.emitProgress(
 				'downloading',
 				`Downloading ${this.downloadFilename}...`,
-				76,
+				0,
 			);
 		});
 
@@ -701,7 +701,7 @@ export class HypedditDownloader {
 				if (event.state === 'completed') {
 					pBar.stop();
 					console.log('Download completed');
-					this.emitProgress('downloading', 'Download complete', 85);
+					this.emitProgress('downloading', 'Download complete', 100);
 					downloadCompleteResolve(this.downloadFilename);
 				} else if (event.state === 'inProgress') {
 					const { receivedBytes, totalBytes } = event;
@@ -715,13 +715,10 @@ export class HypedditDownloader {
 						pBar.start(totalBytes, receivedBytes, { prefix: 'Downloading' });
 					}
 
-					const downloadPercent =
-						totalBytes > 0 ? receivedBytes / totalBytes : 0;
-					const scaledPercent = 76 + downloadPercent * 8;
 					this.emitProgress(
 						'downloading',
 						`Downloading... ${(receivedBytes / 1024 / 1024).toFixed(1)} / ${(totalBytes / 1024 / 1024).toFixed(1)} MB`,
-						scaledPercent,
+						0,
 						{
 							downloadBytes: receivedBytes,
 							totalBytes: totalBytes,

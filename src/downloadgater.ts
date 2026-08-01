@@ -83,80 +83,88 @@ export class DownloadgaterDownloader {
 		);
 
 		const page = await this.browser.newPage();
-		await page.setViewport({ width: 1920, height: 1080 });
-		await page.goto(url, { waitUntil: 'domcontentloaded' });
 		try {
-			await page.waitForNetworkIdle({ timeout: 15_000, idleTime: 10 });
-		} catch {
-			// continue
-		}
-
-		await this.clickFreeDownload(page);
-
-		let soundcloudAttempted = false;
-		const deadline = Date.now() + 180_000;
-		while (Date.now() < deadline) {
-			if (await this.hasDownloadButton(page)) break;
-
-			// Post-OAuth UI can show "Verified unlock" / Finish before Download file.
-			await this.clickUnlockFinishIfPresent(page);
-			if (await this.hasDownloadButton(page)) break;
-
-			const pane = await this.detectPane(page);
-			console.log('DownloadGater pane:', pane);
-
-			if (pane === 'instagram') {
-				this.emitProgress(
-					'handling_gates',
-					'Handling DownloadGater Instagram follows...',
-					40,
-					{ currentGate: 'ig' },
-				);
-				await this.handleInstagramStep(page);
-				continue;
+			await page.setViewport({ width: 1920, height: 1080 });
+			await page.goto(url, { waitUntil: 'domcontentloaded' });
+			try {
+				await page.waitForNetworkIdle({ timeout: 15_000, idleTime: 10 });
+			} catch {
+				// continue
 			}
 
-			if (pane === 'soundcloud') {
-				if (soundcloudAttempted) {
-					const urlError = await this.readSoundcloudUrlError(page);
-					if (urlError) {
-						throw new Error(
-							`DownloadGater SoundCloud unlock failed: ${urlError}`,
-						);
-					}
-					// Still hydrating unlock → Download file; do not re-click Connect.
-					await timeout(500);
+			await this.clickFreeDownload(page);
+
+			let soundcloudAttempted = false;
+			const deadline = Date.now() + 180_000;
+			while (Date.now() < deadline) {
+				if (await this.hasDownloadButton(page)) break;
+
+				// Post-OAuth UI can show "Verified unlock" / Finish before Download file.
+				await this.clickUnlockFinishIfPresent(page);
+				if (await this.hasDownloadButton(page)) break;
+
+				const pane = await this.detectPane(page);
+				console.log('DownloadGater pane:', pane);
+
+				if (pane === 'instagram') {
+					this.emitProgress(
+						'handling_gates',
+						'Handling DownloadGater Instagram follows...',
+						40,
+						{ currentGate: 'ig' },
+					);
+					await this.handleInstagramStep(page);
 					continue;
 				}
-				soundcloudAttempted = true;
-				this.emitProgress(
-					'handling_gates',
-					'Connecting SoundCloud on DownloadGater...',
-					55,
-					{ currentGate: 'sc' },
-				);
-				await this.handleSoundcloudConnect(page);
-				continue;
+
+				if (pane === 'soundcloud') {
+					if (soundcloudAttempted) {
+						const urlError = await this.readSoundcloudUrlError(page);
+						if (urlError) {
+							throw new Error(
+								`DownloadGater SoundCloud unlock failed: ${urlError}`,
+							);
+						}
+						// Still hydrating unlock → Download file; do not re-click Connect.
+						await timeout(500);
+						continue;
+					}
+					soundcloudAttempted = true;
+					this.emitProgress(
+						'handling_gates',
+						'Connecting SoundCloud on DownloadGater...',
+						55,
+						{ currentGate: 'sc' },
+					);
+					await this.handleSoundcloudConnect(page);
+					continue;
+				}
+
+				if (pane === 'spotify') {
+					this.emitProgress(
+						'handling_gates',
+						'Handling DownloadGater Spotify step...',
+						35,
+						{ currentGate: 'sp' },
+					);
+					await this.handleSpotifyStep(page);
+					continue;
+				}
+
+				await timeout(500);
 			}
 
-			if (pane === 'spotify') {
+			if (!(await this.hasDownloadButton(page))) {
 				throw new Error(
-					'This DownloadGater gate requires Spotify OAuth, which is not supported yet.',
+					'DownloadGater download button never appeared after completing gates.',
 				);
 			}
 
-			await timeout(500);
+			await this.handleDownload(page);
+			return this.downloadFilename;
+		} finally {
+			await page.close().catch(() => {});
 		}
-
-		if (!(await this.hasDownloadButton(page))) {
-			throw new Error(
-				'DownloadGater download button never appeared after completing gates.',
-			);
-		}
-
-		await this.handleDownload(page);
-		await page.close();
-		return this.downloadFilename;
 	}
 
 	async close() {
@@ -260,6 +268,112 @@ export class DownloadgaterDownloader {
 		);
 	}
 
+	/**
+	 * Shared honor-system gate flow: open the requested social page, wait for
+	 * DownloadGater's confirmation, close the popup, and confirm completion.
+	 */
+	private async handleHonorSystemPopupStep(
+		page: Page,
+		options: {
+			pane: 'instagram' | 'spotify';
+			actionButtonPattern: string;
+			confirmButtonPattern: string;
+			popupUrlPattern: string;
+			maxAttempts: number;
+			confirmationTimeoutMs: number;
+		},
+	) {
+		const popupUrlPattern = new RegExp(options.popupUrlPattern, 'i');
+		for (let attempt = 0; attempt < options.maxAttempts; attempt++) {
+			if ((await this.detectPane(page)) !== options.pane) return;
+			if (await this.hasDownloadButton(page)) return;
+
+			const pagesBefore = new Set(await this.browser.pages(true));
+			const opened = await page.evaluate((pattern) => {
+				const actionPattern = new RegExp(pattern, 'i');
+				const btn = Array.from(document.querySelectorAll('button')).find(
+					(el) =>
+						actionPattern.test((el.textContent || '').trim()) &&
+						!(el as HTMLButtonElement).disabled,
+				) as HTMLButtonElement | undefined;
+				btn?.click();
+				return !!btn;
+			}, options.actionButtonPattern);
+
+			if (!opened) {
+				await timeout(500);
+				continue;
+			}
+
+			let popup: Page | undefined;
+			const popupDeadline = Date.now() + 8_000;
+			while (!popup && Date.now() < popupDeadline) {
+				const pages = await this.browser.pages(true);
+				popup = pages.find(
+					(candidate) =>
+						candidate !== page &&
+						!pagesBefore.has(candidate) &&
+						popupUrlPattern.test(candidate.url()),
+				);
+				if (!popup) await timeout(200);
+			}
+			if (!popup) {
+				await timeout(500);
+				continue;
+			}
+
+			await page
+				.waitForFunction(
+					(pattern) => {
+						const confirmPattern = new RegExp(pattern, 'i');
+						return Array.from(document.querySelectorAll('button')).some(
+							(el) =>
+								confirmPattern.test((el.textContent || '').trim()) &&
+								!(el as HTMLButtonElement).disabled,
+						);
+					},
+					{ timeout: options.confirmationTimeoutMs },
+					options.confirmButtonPattern,
+				)
+				.catch(() => {});
+
+			if (popup && !popup.isClosed()) {
+				await popup.close().catch(() => {});
+			}
+
+			const confirmed = await page.evaluate((pattern) => {
+				const confirmPattern = new RegExp(pattern, 'i');
+				const btn = Array.from(document.querySelectorAll('button')).find(
+					(el) =>
+						confirmPattern.test((el.textContent || '').trim()) &&
+						!(el as HTMLButtonElement).disabled,
+				) as HTMLButtonElement | undefined;
+				btn?.click();
+				return !!btn;
+			}, options.confirmButtonPattern);
+
+			await timeout(confirmed ? 800 : 500);
+			if ((await this.detectPane(page)) !== options.pane) return;
+		}
+
+		throw new Error(
+			`DownloadGater ${options.pane} step did not advance. Allow popups and retry.`,
+		);
+	}
+
+	/** Honor-system Spotify gate; no Spotify OAuth is required. */
+	private async handleSpotifyStep(page: Page) {
+		await this.handleHonorSystemPopupStep(page, {
+			pane: 'spotify',
+			actionButtonPattern: '^(follow|save|open).*spotify$',
+			confirmButtonPattern:
+				"^(i followed|i saved it|i opened it|i['’]?(?:ve)? done it)$",
+			popupUrlPattern: 'open\\.spotify\\.com',
+			maxAttempts: 4,
+			confirmationTimeoutMs: 8_000,
+		});
+	}
+
 	private async clickUnlockFinishIfPresent(page: Page): Promise<boolean> {
 		return page.evaluate(() => {
 			const btn = Array.from(document.querySelectorAll('button')).find(
@@ -285,76 +399,14 @@ export class DownloadgaterDownloader {
 	 * timer, then confirm. Multiple IG targets are served one at a time.
 	 */
 	private async handleInstagramStep(page: Page) {
-		for (let attempt = 0; attempt < 8; attempt++) {
-			if ((await this.detectPane(page)) !== 'instagram') return;
-			if (await this.hasDownloadButton(page)) return;
-
-			const pagesBefore = new Set(await this.browser.pages(true));
-
-			const followClicked = await page.evaluate(() => {
-				const btn = Array.from(document.querySelectorAll('button')).find(
-					(el) =>
-						/follow on instagram/i.test(el.textContent || '') &&
-						!(el as HTMLButtonElement).disabled,
-				) as HTMLButtonElement | undefined;
-				btn?.click();
-				return !!btn;
-			});
-
-			if (followClicked) {
-				let popup: Page | undefined;
-				const started = Date.now();
-				while (!popup && Date.now() - started < 8_000) {
-					const pages = await this.browser.pages(true);
-					popup = pages.find(
-						(candidate) =>
-							candidate !== page &&
-							!pagesBefore.has(candidate) &&
-							candidate.url() !== 'about:blank',
-					);
-					if (!popup) {
-						popup = pages.find(
-							(candidate) =>
-								candidate !== page && /instagram\.com/i.test(candidate.url()),
-						);
-					}
-					if (!popup) await timeout(200);
-				}
-
-				// Site unlocks after ~5s with the popup open.
-				await timeout(5_500);
-
-				if (popup && !popup.isClosed()) {
-					try {
-						await popup.close();
-					} catch {
-						// ignore
-					}
-				}
-			}
-
-			const confirmed = await page.evaluate(() => {
-				const btn = Array.from(document.querySelectorAll('button')).find(
-					(el) =>
-						/^(i followed|i opened it)$/i.test((el.textContent || '').trim()) &&
-						!(el as HTMLButtonElement).disabled,
-				) as HTMLButtonElement | undefined;
-				btn?.click();
-				return !!btn;
-			});
-
-			if (confirmed) {
-				await timeout(800);
-			} else {
-				await timeout(500);
-			}
-
-			if ((await this.detectPane(page)) !== 'instagram') return;
-		}
-
-		throw new Error(
-			'DownloadGater Instagram step did not advance. Allow popups and retry.',
-		);
+		await this.handleHonorSystemPopupStep(page, {
+			pane: 'instagram',
+			actionButtonPattern: 'follow on instagram',
+			confirmButtonPattern: '^(i followed|i opened it)$',
+			popupUrlPattern: 'instagram\\.com',
+			maxAttempts: 8,
+			confirmationTimeoutMs: 8_000,
+		});
 	}
 
 	private async handleSoundcloudConnect(page: Page) {
@@ -603,7 +655,11 @@ export class DownloadgaterDownloader {
 	}
 
 	private async handleDownload(page: Page) {
-		this.emitProgress('downloading', 'Preparing DownloadGater download...', 75);
+		this.emitProgress(
+			'handling_gates',
+			'Preparing DownloadGater download...',
+			75,
+		);
 
 		const client = await page.createCDPSession();
 		await client.send('Browser.setDownloadBehavior', {
@@ -647,7 +703,7 @@ export class DownloadgaterDownloader {
 			this.emitProgress(
 				'downloading',
 				`Downloading ${this.downloadFilename}...`,
-				76,
+				0,
 			);
 		});
 
@@ -656,7 +712,7 @@ export class DownloadgaterDownloader {
 			if (event.state === 'completed') {
 				pBar.stop();
 				console.log('Download completed');
-				this.emitProgress('downloading', 'Download complete', 85);
+				this.emitProgress('downloading', 'Download complete', 100);
 				downloadCompleteResolve(this.downloadFilename);
 			} else if (event.state === 'inProgress') {
 				const { receivedBytes, totalBytes } = event;
@@ -668,11 +724,10 @@ export class DownloadgaterDownloader {
 				} else {
 					pBar.start(totalBytes, receivedBytes, { prefix: 'Downloading' });
 				}
-				const downloadPercent = totalBytes > 0 ? receivedBytes / totalBytes : 0;
 				this.emitProgress(
 					'downloading',
 					`Downloading... ${(receivedBytes / 1024 / 1024).toFixed(1)} / ${(totalBytes / 1024 / 1024).toFixed(1)} MB`,
-					76 + downloadPercent * 8,
+					0,
 					{ downloadBytes: receivedBytes, totalBytes },
 				);
 			} else if (event.state === 'canceled') {
