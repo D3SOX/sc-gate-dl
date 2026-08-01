@@ -1,6 +1,5 @@
 import { mkdir, rm } from 'node:fs/promises';
 import { basename, join } from 'node:path';
-import { execa } from 'execa';
 import { lookpath } from 'find-bin';
 import type { BandcampAlbumTrackChoice, JobProgress } from './types';
 import {
@@ -44,6 +43,36 @@ export type YtDlpProgress = {
 	totalBytes?: number;
 	percent: number;
 };
+
+export async function readProcessLines(
+	stdout: ReadableStream<Uint8Array>,
+	onLine?: (line: string) => boolean,
+): Promise<string[]> {
+	const reader = stdout.getReader();
+	const decoder = new TextDecoder();
+	const outputLines: string[] = [];
+	let buffered = '';
+
+	const handleLine = (line: string) => {
+		if (!onLine || onLine(line)) outputLines.push(line);
+	};
+
+	try {
+		while (true) {
+			const { done, value } = await reader.read();
+			if (done) break;
+			buffered += decoder.decode(value, { stream: true });
+			const lines = buffered.split(/\r?\n/);
+			buffered = lines.pop() ?? '';
+			for (const line of lines) handleLine(line);
+		}
+		buffered += decoder.decode();
+		if (buffered) handleLine(buffered);
+		return outputLines;
+	} finally {
+		reader.releaseLock();
+	}
+}
 
 function parseProgressNumber(value: string | undefined): number | undefined {
 	if (!value || value === 'NA') return undefined;
@@ -164,7 +193,7 @@ export function titleMatchScore(candidate: string, wanted: string): number {
 export class YtDlpDownloader {
 	private progressCallback: ProgressCallback | null = null;
 	private sourceLabel: string;
-	private activeProcess: ReturnType<typeof execa> | null = null;
+	private activeProcess: Bun.Subprocess<'ignore', 'pipe', 'pipe'> | null = null;
 	private closed = false;
 
 	constructor(sourceLabel = 'yt-dlp') {
@@ -191,22 +220,36 @@ export class YtDlpDownloader {
 		if (this.closed) {
 			throw new Error('yt-dlp downloader is closed');
 		}
-		const subprocess = execa(ytDlpBin, args, {
+		const subprocess = Bun.spawn([ytDlpBin, ...args], {
+			stdin: 'ignore',
+			stdout: 'pipe',
+			stderr: 'pipe',
 			timeout,
 			killSignal: 'SIGTERM',
 		});
 		this.activeProcess = subprocess;
+		const stderrPromise = new Response(subprocess.stderr).text();
 		try {
-			if (onStdoutLine) {
-				const outputLines: string[] = [];
-				for await (const line of subprocess) {
-					if (onStdoutLine(line)) outputLines.push(line);
-				}
-				await subprocess;
-				return outputLines.join('\n');
+			const outputLines = await readProcessLines(
+				subprocess.stdout,
+				onStdoutLine,
+			);
+			const exitCode = await subprocess.exited;
+			const stderr = await stderrPromise;
+			if (exitCode !== 0) {
+				const reason = subprocess.signalCode
+					? `signal ${subprocess.signalCode}`
+					: `code ${exitCode}`;
+				throw new Error(
+					`yt-dlp exited with ${reason}${stderr.trim() ? `: ${stderr.trim().slice(-1_000)}` : ''}`,
+				);
 			}
-			const { stdout } = await subprocess;
-			return stdout;
+			return outputLines.join('\n');
+		} catch (error) {
+			if (subprocess.exitCode === null) subprocess.kill('SIGTERM');
+			await subprocess.exited.catch(() => {});
+			await stderrPromise.catch(() => '');
+			throw error;
 		} finally {
 			if (this.activeProcess === subprocess) {
 				this.activeProcess = null;

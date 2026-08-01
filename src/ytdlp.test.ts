@@ -1,5 +1,37 @@
 import { describe, expect, test } from 'bun:test';
-import { parseYtDlpProgressLine } from './ytdlp';
+import { parseYtDlpProgressLine, readProcessLines } from './ytdlp';
+
+const streamChunks = (...chunks: string[]) =>
+	new ReadableStream<Uint8Array>({
+		start(controller) {
+			for (const chunk of chunks) {
+				controller.enqueue(new TextEncoder().encode(chunk));
+			}
+			controller.close();
+		},
+	});
+
+describe('readProcessLines', () => {
+	test('splits chunked output and filters handled progress lines', async () => {
+		const handled: string[] = [];
+		const output = await readProcessLines(
+			streamChunks('SC_GATE_', 'PROGRESS\n./downloads/', 'track.flac\n'),
+			(line) => {
+				handled.push(line);
+				return !line.startsWith('SC_GATE_PROGRESS');
+			},
+		);
+
+		expect(handled).toEqual(['SC_GATE_PROGRESS', './downloads/track.flac']);
+		expect(output).toEqual(['./downloads/track.flac']);
+	});
+
+	test('preserves a final line without a newline', async () => {
+		expect(await readProcessLines(streamChunks('metadata json'))).toEqual([
+			'metadata json',
+		]);
+	});
+});
 
 describe('parseYtDlpProgressLine', () => {
 	test('calculates byte progress using the exact total', () => {

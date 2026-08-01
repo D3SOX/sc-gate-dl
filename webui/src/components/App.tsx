@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Toaster, toast } from 'sonner';
-import { type BrowserMode, isBrowserMode } from '../../../src/types';
+import type { BrowserMode } from '../../../src/types';
 import './App.css';
-import { shouldAutoStartDeepLink } from './deepLink';
+import { readStoredBrowserMode, shouldAutoStartDeepLink } from './deepLink';
 
 type Step = 'url' | 'gate' | 'download' | 'metadata' | 'complete';
 type OutputFormat = 'original' | 'mp3-320' | 'flac';
@@ -232,8 +232,11 @@ export default function App() {
 
 	useEffect(() => {
 		try {
-			const storedMode = localStorage.getItem(BROWSER_MODE_STORAGE_KEY);
-			if (isBrowserMode(storedMode)) setBrowserMode(storedMode);
+			const storedMode = readStoredBrowserMode(
+				localStorage,
+				BROWSER_MODE_STORAGE_KEY,
+			);
+			if (storedMode) setBrowserMode(storedMode);
 		} catch {
 			// Storage may be blocked when the Web UI is embedded cross-origin.
 		} finally {

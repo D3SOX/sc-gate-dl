@@ -1,14 +1,39 @@
 import { describe, expect, test } from 'bun:test';
-import { shouldAutoStartDeepLink } from '../webui/src/components/deepLink';
-import { isBrowserMode } from './types';
+import {
+	readStoredBrowserMode,
+	shouldAutoStartDeepLink,
+} from '../webui/src/components/deepLink';
 
-describe('deep-link browser mode hydration', () => {
-	test('waits until a stored Xvfb mode has been applied', () => {
+describe('deep-link startup predicate', () => {
+	test('waits for browser-mode hydration', () => {
 		const queryUrl = 'https://soundcloud.com/artist/track';
 		expect(shouldAutoStartDeepLink(false, false, queryUrl)).toBeFalse();
-
-		const storedMode = 'xvfb';
-		expect(isBrowserMode(storedMode)).toBeTrue();
 		expect(shouldAutoStartDeepLink(true, false, queryUrl)).toBeTrue();
+	});
+
+	test('does not restart an already-started deep link', () => {
+		expect(
+			shouldAutoStartDeepLink(
+				true,
+				true,
+				'https://soundcloud.com/artist/track',
+			),
+		).toBeFalse();
+	});
+
+	test('requires a query URL', () => {
+		expect(shouldAutoStartDeepLink(true, false, null)).toBeFalse();
+	});
+});
+
+describe('browser-mode preference hydration', () => {
+	test('reads stored Xvfb through the same helper used by the UI', () => {
+		const storage = { getItem: () => 'xvfb' };
+		expect(readStoredBrowserMode(storage, 'browser-mode')).toBe('xvfb');
+	});
+
+	test('ignores invalid stored modes', () => {
+		const storage = { getItem: () => 'invalid' };
+		expect(readStoredBrowserMode(storage, 'browser-mode')).toBeNull();
 	});
 });
