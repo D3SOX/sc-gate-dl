@@ -507,7 +507,7 @@ export class GaterushDownloader {
 	}
 
 	private async handleDownload(page: Page) {
-		this.emitProgress('downloading', 'Preparing GateRush download...', 75);
+		this.emitProgress('handling_gates', 'Preparing GateRush download...', 75);
 
 		const client = await page.createCDPSession();
 		await client.send('Browser.setDownloadBehavior', {

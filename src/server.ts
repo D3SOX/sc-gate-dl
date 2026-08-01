@@ -205,7 +205,22 @@ async function runDownloadProcess(jobId: string): Promise<void> {
 			extra?: Partial<Job['progress']>,
 		) => {
 			if (jobStore.isCancelled(jobId)) return;
-			jobStore.updateProgress(jobId, stage, message, percent, extra);
+			let stagePercent = percent;
+			if (stage === 'downloading') {
+				if (
+					extra?.downloadBytes !== undefined &&
+					extra.totalBytes !== undefined &&
+					extra.totalBytes > 0
+				) {
+					stagePercent = Math.min(
+						100,
+						Math.max(0, (extra.downloadBytes / extra.totalBytes) * 100),
+					);
+				} else {
+					stagePercent = /download complete/i.test(message) ? 100 : 0;
+				}
+			}
+			jobStore.updateProgress(jobId, stage, message, stagePercent, extra);
 		};
 
 		const gateConfigBase = {
@@ -235,7 +250,7 @@ async function runDownloadProcess(jobId: string): Promise<void> {
 				jobId,
 				'downloading',
 				`Downloading from ${sourceLabel} via yt-dlp...`,
-				40,
+				0,
 				{ browserless: true },
 			);
 			const ytDlpDownloader = new YtDlpDownloader(sourceLabel);
@@ -275,7 +290,7 @@ async function runDownloadProcess(jobId: string): Promise<void> {
 							jobId,
 							'downloading',
 							`Downloading from ${sourceLabel} via yt-dlp...`,
-							50,
+							0,
 							{ browserless: true },
 						);
 						return selectedUrl;
@@ -357,7 +372,7 @@ async function runDownloadProcess(jobId: string): Promise<void> {
 				jobId,
 				'downloading',
 				'Downloading direct file...',
-				40,
+				0,
 				{ browserless: true },
 			);
 			const directDownloader = new DirectDownloader();

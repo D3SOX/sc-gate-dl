@@ -59,6 +59,8 @@ async function writeBodyWithSizeLimit(
 	body: ReadableStream<Uint8Array>,
 	target: string,
 	maxBytes: number,
+	totalBytes: number,
+	onProgress: (receivedBytes: number, totalBytes: number) => void,
 ): Promise<void> {
 	const writer = Bun.file(target).writer();
 	const reader = body.getReader();
@@ -75,6 +77,9 @@ async function writeBodyWithSizeLimit(
 				);
 			}
 			writer.write(value);
+			if (totalBytes > 0) {
+				onProgress(total, totalBytes);
+			}
 		}
 		await writer.end();
 	} catch (error) {
@@ -156,8 +161,8 @@ export class DirectDownloader {
 		}
 
 		const contentLengthHeader = response.headers.get('content-length');
+		const contentLength = Number(contentLengthHeader) || 0;
 		if (contentLengthHeader) {
-			const contentLength = Number(contentLengthHeader);
 			if (
 				Number.isFinite(contentLength) &&
 				contentLength > MAX_DOWNLOAD_BYTES
@@ -188,7 +193,27 @@ export class DirectDownloader {
 		}
 
 		const target = join('./downloads', filename);
-		await writeBodyWithSizeLimit(response.body, target, MAX_DOWNLOAD_BYTES);
+		let lastProgressEmit = 0;
+		await writeBodyWithSizeLimit(
+			response.body,
+			target,
+			MAX_DOWNLOAD_BYTES,
+			contentLength,
+			(receivedBytes, totalBytes) => {
+				const now = Date.now();
+				if (now - lastProgressEmit < 250 && receivedBytes < totalBytes) return;
+				lastProgressEmit = now;
+				this.progressCallback?.(
+					'downloading',
+					`Downloading... ${(receivedBytes / 1024 / 1024).toFixed(1)} / ${(totalBytes / 1024 / 1024).toFixed(1)} MB`,
+					0,
+					{ downloadBytes: receivedBytes, totalBytes, browserless: true },
+				);
+			},
+		);
+		this.progressCallback?.('downloading', 'Download complete', 100, {
+			browserless: true,
+		});
 		console.log(`Saved ${filename}`);
 		return filename;
 	}

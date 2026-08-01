@@ -603,7 +603,11 @@ export class DownloadgaterDownloader {
 	}
 
 	private async handleDownload(page: Page) {
-		this.emitProgress('downloading', 'Preparing DownloadGater download...', 75);
+		this.emitProgress(
+			'handling_gates',
+			'Preparing DownloadGater download...',
+			75,
+		);
 
 		const client = await page.createCDPSession();
 		await client.send('Browser.setDownloadBehavior', {

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Toaster, toast } from 'sonner';
 import './App.css';
 
-type Step = 'url' | 'hypeddit' | 'progress' | 'metadata' | 'complete';
+type Step = 'url' | 'gate' | 'download' | 'metadata' | 'complete';
 type OutputFormat = 'original' | 'mp3-320';
 
 interface Metadata {
@@ -29,6 +29,13 @@ interface JobProgress {
 	browserless?: boolean;
 	bandcampAlbumTracks?: BandcampAlbumTrackChoice[];
 }
+
+const GATE_PROGRESS_STAGES = new Set([
+	'initializing_browser',
+	'preparing_logins',
+	'handling_gates',
+	'waiting_bandcamp_track',
+]);
 
 interface BandcampAlbumTrackChoice {
 	title: string;
@@ -288,7 +295,15 @@ export default function App() {
 	// Start download process
 	const startDownload = useCallback(
 		async (jobId: string) => {
-			setStep('progress');
+			setStep('gate');
+			setJob((prev) => ({
+				...prev,
+				progress: {
+					stage: 'handling_gates',
+					message: 'Entering gate...',
+					percent: 0,
+				},
+			}));
 			cleanupToastShownRef.current = false;
 			eventSourceRef.current?.close();
 			eventSourceRef.current = null;
@@ -315,6 +330,14 @@ export default function App() {
 				eventSource.onmessage = (event) => {
 					const progress: JobProgress = JSON.parse(event.data);
 					setJob((prev) => ({ ...prev, progress }));
+
+					if (progress.stage === 'downloading') {
+						setStep('download');
+					} else if (progress.stage === 'processing_audio') {
+						setStep('metadata');
+					} else if (GATE_PROGRESS_STAGES.has(progress.stage)) {
+						setStep('gate');
+					}
 
 					// Browserless downloads never touch the SoundCloud account, so there
 					// is nothing to clean up afterwards.
@@ -496,7 +519,7 @@ export default function App() {
 				}
 
 				if (skipAutomaticHypedditFetch || data.needsHypedditUrl) {
-					setStep('hypeddit');
+					setStep('gate');
 				} else {
 					startDownload(data.jobId);
 				}
@@ -729,6 +752,8 @@ export default function App() {
 		artist: metadata.artist,
 		title: metadata.title,
 	});
+	const isHandlingGate =
+		step === 'gate' && GATE_PROGRESS_STAGES.has(job.progress?.stage ?? '');
 	const existingTagRows = (
 		[
 			{ key: 'title', label: 'Title' },
@@ -825,21 +850,21 @@ export default function App() {
 			{/* Step indicator */}
 			<div className="steps">
 				<div
-					className={`step ${step === 'url' ? 'active' : ''} ${['hypeddit', 'progress', 'metadata', 'complete'].includes(step) ? 'completed' : ''}`}
+					className={`step ${step === 'url' ? 'active' : ''} ${['gate', 'download', 'metadata', 'complete'].includes(step) ? 'completed' : ''}`}
 				>
 					<span className="step-number">1</span>
 					<span className="step-label">SoundCloud</span>
 				</div>
 				<div className="step-connector" />
 				<div
-					className={`step ${step === 'hypeddit' ? 'active' : ''} ${['progress', 'metadata', 'complete'].includes(step) ? 'completed' : ''}`}
+					className={`step ${step === 'gate' ? 'active' : ''} ${['download', 'metadata', 'complete'].includes(step) ? 'completed' : ''}`}
 				>
 					<span className="step-number">2</span>
 					<span className="step-label">Gate</span>
 				</div>
 				<div className="step-connector" />
 				<div
-					className={`step ${step === 'progress' ? 'active' : ''} ${['metadata', 'complete'].includes(step) ? 'completed' : ''}`}
+					className={`step ${step === 'download' ? 'active' : ''} ${['metadata', 'complete'].includes(step) ? 'completed' : ''}`}
 				>
 					<span className="step-number">3</span>
 					<span className="step-label">Download</span>
@@ -968,7 +993,7 @@ export default function App() {
 				)}
 
 				{/* Step 2: Gate URL (if needed) */}
-				{step === 'hypeddit' && (
+				{step === 'gate' && !isHandlingGate && (
 					<div className="form animate-slide-up">
 						<div className="notice">
 							<span className="notice-icon">i</span>
@@ -1039,8 +1064,8 @@ export default function App() {
 					</div>
 				)}
 
-				{/* Step 3: Progress */}
-				{step === 'progress' && (
+				{/* Steps 2–3: Gate handling, then download progress */}
+				{(isHandlingGate || step === 'download') && (
 					<div className="progress-container animate-slide-up">
 						{job.progress?.stage === 'waiting_bandcamp_track' ? (
 							<div className="bandcamp-track-picker">
@@ -1083,7 +1108,9 @@ export default function App() {
 							<>
 								<div className="progress-stage">
 									<span className="stage-label">
-										{job.progress?.message || 'Initializing...'}
+										{job.progress?.downloadBytes !== undefined
+											? 'Downloading...'
+											: job.progress?.message || 'Initializing...'}
 									</span>
 									{job.progress?.currentGate && (
 										<span className="gate-badge">
@@ -1091,23 +1118,27 @@ export default function App() {
 										</span>
 									)}
 								</div>
-								<div className="progress-bar">
-									<div
-										className="progress-fill"
-										style={{ width: `${job.progress?.percent || 0}%` }}
-									/>
-								</div>
-								<div className="progress-stats">
-									<span>{formatPercent(job.progress?.percent)}%</span>
-									{job.progress?.downloadBytes !== undefined &&
-										job.progress?.totalBytes !== undefined && (
-											<span>
-												{(job.progress.downloadBytes / 1024 / 1024).toFixed(1)}{' '}
-												/{' '}
-												{(job.progress.totalBytes / 1024 / 1024).toFixed(1)} MB
-											</span>
-										)}
-								</div>
+								{step === 'download' && (
+									<>
+										<div className="progress-bar">
+											<div
+												className="progress-fill"
+												style={{ width: `${job.progress?.percent || 0}%` }}
+											/>
+										</div>
+										<div className="progress-stats">
+											<span>{formatPercent(job.progress?.percent)}%</span>
+											{job.progress?.downloadBytes !== undefined &&
+												job.progress?.totalBytes !== undefined && (
+													<span>
+														{(job.progress.downloadBytes / 1024 / 1024).toFixed(1)}{' '}
+														/{' '}
+														{(job.progress.totalBytes / 1024 / 1024).toFixed(1)} MB
+													</span>
+												)}
+										</div>
+									</>
+								)}
 								<button
 									type="button"
 									className="btn-secondary btn-cancel-download"
@@ -1121,7 +1152,14 @@ export default function App() {
 				)}
 
 				{/* Step 4: Metadata */}
-				{step === 'metadata' && (
+				{step === 'metadata' && job.progress?.stage === 'processing_audio' && (
+					<div className="progress-container animate-slide-up">
+						<div className="progress-stage">
+							<span className="stage-label">{job.progress.message}</span>
+						</div>
+					</div>
+				)}
+				{step === 'metadata' && job.progress?.stage !== 'processing_audio' && (
 					<form
 						onSubmit={handleMetadataSubmit}
 						className="form metadata-form animate-slide-up"

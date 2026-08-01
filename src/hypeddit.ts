@@ -649,7 +649,7 @@ export class HypedditDownloader {
 			throw new Error('Download button not found');
 		}
 		console.log('Download button found, setting up CDP session...');
-		this.emitProgress('downloading', 'Preparing download...', 75);
+		this.emitProgress('handling_gates', 'Preparing download...', 75);
 
 		// configure CDP session to allow monitoring download events
 		const client = await page.createCDPSession();

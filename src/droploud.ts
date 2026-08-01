@@ -1877,7 +1877,7 @@ export class DroploudDownloader {
 	}
 
 	private async handleDownload(page: Page) {
-		this.emitProgress('downloading', 'Preparing Droploud download...', 75);
+		this.emitProgress('handling_gates', 'Preparing Droploud download...', 75);
 
 		const client = await page.createCDPSession();
 		await client.send('Browser.setDownloadBehavior', {
