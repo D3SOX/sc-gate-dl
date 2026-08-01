@@ -140,9 +140,14 @@ export class DownloadgaterDownloader {
 			}
 
 			if (pane === 'spotify') {
-				throw new Error(
-					'This DownloadGater gate requires Spotify OAuth, which is not supported yet.',
+				this.emitProgress(
+					'handling_gates',
+					'Handling DownloadGater Spotify step...',
+					35,
+					{ currentGate: 'sp' },
 				);
+				await this.handleSpotifyStep(page);
+				continue;
 			}
 
 			await timeout(500);
@@ -257,6 +262,77 @@ export class DownloadgaterDownloader {
 			Array.from(document.querySelectorAll('button')).some((btn) =>
 				/^(download file|download zip)$/i.test((btn.textContent || '').trim()),
 			),
+		);
+	}
+
+	/**
+	 * Honor-system Spotify gate: open the requested Spotify page, close the new
+	 * tab, then confirm on DownloadGater. No Spotify OAuth is required.
+	 */
+	private async handleSpotifyStep(page: Page) {
+		for (let attempt = 0; attempt < 4; attempt++) {
+			if ((await this.detectPane(page)) !== 'spotify') return;
+
+			const pagesBefore = new Set(await this.browser.pages(true));
+			const opened = await page.evaluate(() => {
+				const btn = Array.from(document.querySelectorAll('button')).find(
+					(el) =>
+						/^(follow|save|open).*spotify$/i.test(
+							(el.textContent || '').trim(),
+						) && !(el as HTMLButtonElement).disabled,
+				) as HTMLButtonElement | undefined;
+				btn?.click();
+				return !!btn;
+			});
+
+			if (!opened) {
+				await timeout(500);
+				continue;
+			}
+
+			let popup: Page | undefined;
+			const popupDeadline = Date.now() + 8_000;
+			while (!popup && Date.now() < popupDeadline) {
+				popup = (await this.browser.pages(true)).find(
+					(candidate) => candidate !== page && !pagesBefore.has(candidate),
+				);
+				if (!popup) await timeout(200);
+			}
+
+			await page
+				.waitForFunction(
+					() =>
+						Array.from(document.querySelectorAll('button')).some(
+							(el) =>
+								/^(i followed|i saved it|i opened it|i['’]?(?:ve)? done it)$/i.test(
+									(el.textContent || '').trim(),
+								) && !(el as HTMLButtonElement).disabled,
+						),
+					{ timeout: 8_000 },
+				)
+				.catch(() => {});
+
+			if (popup && !popup.isClosed()) {
+				await popup.close().catch(() => {});
+			}
+
+			const confirmed = await page.evaluate(() => {
+				const btn = Array.from(document.querySelectorAll('button')).find(
+					(el) =>
+						/^(i followed|i saved it|i opened it|i['’]?(?:ve)? done it)$/i.test(
+							(el.textContent || '').trim(),
+						) && !(el as HTMLButtonElement).disabled,
+				) as HTMLButtonElement | undefined;
+				btn?.click();
+				return !!btn;
+			});
+
+			if (confirmed) await timeout(800);
+			if ((await this.detectPane(page)) !== 'spotify') return;
+		}
+
+		throw new Error(
+			'DownloadGater Spotify step did not advance. Allow popups and retry.',
 		);
 	}
 
