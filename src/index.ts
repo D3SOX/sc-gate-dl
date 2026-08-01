@@ -1,6 +1,7 @@
 import { confirm, input, select } from '@inquirer/prompts';
 import { AudioProcessor } from './audioProcessor';
 import { loadConfig, saveConfig } from './config';
+import { DirectDownloader } from './directDownload';
 import { DownloadgaterDownloader } from './downloadgater';
 import { DroploudDownloader } from './droploud';
 import { GaterushDownloader } from './gaterush';
@@ -10,7 +11,7 @@ import { SoundcloudClient } from './soundcloud';
 import {
 	getFfmpegBin,
 	getFfprobeBin,
-	resolveGateProviderUrl,
+	resolveGateUrlOrFollow,
 	validateSoundcloudUrl,
 } from './utils';
 import { YtDlpDownloader } from './ytdlp';
@@ -65,7 +66,7 @@ try {
 					value: 'ytdlp' as const,
 				},
 				{
-					name: 'Enter a Hypeddit / Droploud / GateRush / DownloadGater / Bandcamp URL',
+					name: 'Enter a gate / Bandcamp / direct download / resolvable URL',
 					value: 'manual' as const,
 				},
 			],
@@ -77,16 +78,16 @@ try {
 		} else {
 			gateUrl = await input({
 				message:
-					'Enter the Hypeddit, Droploud, GateRush, DownloadGater, or Bandcamp URL',
-				validate: (value) => {
-					const resolved = resolveGateProviderUrl(value);
+					'Enter a Hypeddit, Droploud, GateRush, DownloadGater, Bandcamp, direct download, or smart-link URL',
+				validate: async (value) => {
+					const resolved = await resolveGateUrlOrFollow(value);
 					if (!resolved || resolved.provider === 'soundcloud') {
-						return 'A valid Hypeddit, Droploud, GateRush, DownloadGater, or Bandcamp URL is required';
+						return 'A valid Hypeddit, Droploud, GateRush, DownloadGater, Bandcamp, direct download, or resolvable gate URL is required';
 					}
 					return true;
 				},
 			});
-			const resolved = resolveGateProviderUrl(gateUrl);
+			const resolved = await resolveGateUrlOrFollow(gateUrl);
 			gate =
 				resolved && resolved.provider !== 'soundcloud'
 					? {
@@ -103,14 +104,16 @@ try {
 
 	if (!gateUrl || !gate) {
 		throw new Error(
-			'A valid Hypeddit, Droploud, GateRush, DownloadGater, Bandcamp, or SoundCloud URL is required',
+			'A valid Hypeddit, Droploud, GateRush, DownloadGater, Bandcamp, direct download, or SoundCloud URL is required',
 		);
 	}
 
-	const isYtDlp =
-		gate.provider === 'bandcamp' || gate.provider === 'soundcloud';
+	const isBrowserless =
+		gate.provider === 'bandcamp' ||
+		gate.provider === 'soundcloud' ||
+		gate.provider === 'direct';
 
-	const headless = isYtDlp
+	const headless = isBrowserless
 		? true
 		: config
 			? config.headless
@@ -119,7 +122,7 @@ try {
 					default: true,
 				});
 
-	const initializeLogins = isYtDlp
+	const initializeLogins = isBrowserless
 		? false
 		: config
 			? config.initializeLogins
@@ -145,7 +148,25 @@ try {
 		const ytDlpDownloader = new YtDlpDownloader(sourceLabel);
 		downloadFilename = await ytDlpDownloader.downloadAudio(gateUrl, {
 			matchTitle: track.title,
+			onAlbumMatchFailed: async (error) => {
+				const selected = await select({
+					message: error.matchTitle
+						? `Could not match “${error.matchTitle}”. Pick a Bandcamp album track:`
+						: 'Pick a track from the Bandcamp album:',
+					choices: error.tracks.map((t) => ({
+						name:
+							t.score > 0
+								? `${t.title} (${Math.round(t.score * 100)}% match)`
+								: t.title,
+						value: t.url,
+					})),
+				});
+				return selected;
+			},
 		});
+	} else if (gate.provider === 'direct') {
+		const directDownloader = new DirectDownloader();
+		downloadFilename = await directDownloader.downloadAudio(gateUrl);
 	} else if (gate.provider === 'droploud') {
 		usedBrowser = true;
 		const droploudDownloader = new DroploudDownloader(gateConfig);

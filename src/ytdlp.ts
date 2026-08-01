@@ -2,7 +2,7 @@ import { mkdir, rm } from 'node:fs/promises';
 import { basename, join } from 'node:path';
 import { execa } from 'execa';
 import { lookpath } from 'find-bin';
-import type { JobProgress } from './types';
+import type { BandcampAlbumTrackChoice, JobProgress } from './types';
 import {
 	isBandcampAlbumUrl,
 	isSoundcloudUrl,
@@ -19,11 +19,17 @@ type ProgressCallback = (
 export type YtDlpDownloadOptions = {
 	/** Prefer this title when the URL is a Bandcamp album (or multi-entry). */
 	matchTitle?: string;
+	/**
+	 * Called when auto title-match fails (or no title was given).
+	 * Return a track URL from `error.tracks` to continue; throw/reject to abort.
+	 */
+	onAlbumMatchFailed?: (error: BandcampAlbumMatchError) => Promise<string>;
 };
 
 const DOWNLOADS_DIR = './downloads';
 const YTDLP_DOWNLOAD_TIMEOUT_MS = 10 * 60_000;
 const YTDLP_METADATA_TIMEOUT_MS = 60_000;
+const ALBUM_MATCH_THRESHOLD = 0.5;
 
 type FlatEntry = {
 	id?: string;
@@ -31,6 +37,26 @@ type FlatEntry = {
 	url?: string;
 	webpage_url?: string;
 };
+
+/** Thrown when a Bandcamp album cannot be auto-matched to a single track. */
+export class BandcampAlbumMatchError extends Error {
+	readonly albumUrl: string;
+	readonly matchTitle: string | undefined;
+	readonly tracks: BandcampAlbumTrackChoice[];
+
+	constructor(
+		message: string,
+		albumUrl: string,
+		matchTitle: string | undefined,
+		tracks: BandcampAlbumTrackChoice[],
+	) {
+		super(message);
+		this.name = 'BandcampAlbumMatchError';
+		this.albumUrl = albumUrl;
+		this.matchTitle = matchTitle;
+		this.tracks = tracks;
+	}
+}
 
 export async function getYtDlpBin(): Promise<string> {
 	const ytDlpBin = await lookpath('yt-dlp');
@@ -80,7 +106,8 @@ export function titleMatchScore(candidate: string, wanted: string): number {
  *
  * Bandcamp album URLs: when `matchTitle` is set, resolves the best-matching
  * track on the album and downloads only that entry (avoids grabbing the whole
- * album and offering the wrong file).
+ * album and offering the wrong file). If matching fails, `onAlbumMatchFailed`
+ * (when provided) can pick a track; otherwise a `BandcampAlbumMatchError` is thrown.
  */
 export class YtDlpDownloader {
 	private progressCallback: ProgressCallback | null = null;
@@ -133,15 +160,12 @@ export class YtDlpDownloader {
 		const ytDlpBin = await getYtDlpBin();
 		let downloadUrl = url;
 
-		if (isBandcampAlbumUrl(url) && options.matchTitle) {
+		if (isBandcampAlbumUrl(url)) {
 			downloadUrl = await this.resolveBandcampAlbumTrack(
 				ytDlpBin,
 				url,
 				options.matchTitle,
-			);
-		} else if (isBandcampAlbumUrl(url) && !options.matchTitle) {
-			throw new Error(
-				'Bandcamp album URL needs a track title to pick the right song. Re-fetch the SoundCloud track and try again.',
+				options.onAlbumMatchFailed,
 			);
 		}
 
@@ -244,16 +268,19 @@ export class YtDlpDownloader {
 	private async resolveBandcampAlbumTrack(
 		ytDlpBin: string,
 		albumUrl: string,
-		matchTitle: string,
+		matchTitle: string | undefined,
+		onAlbumMatchFailed?: (error: BandcampAlbumMatchError) => Promise<string>,
 	): Promise<string> {
-		this.progressCallback?.(
-			'downloading',
-			`Matching “${matchTitle}” on Bandcamp album...`,
-			45,
-			{ browserless: true },
-		);
+		const matchingLabel = matchTitle
+			? `Matching “${matchTitle}” on Bandcamp album...`
+			: 'Listing Bandcamp album tracks...';
+		this.progressCallback?.('downloading', matchingLabel, 45, {
+			browserless: true,
+		});
 		console.log(
-			`${this.sourceLabel}: album URL — matching track “${matchTitle}”…`,
+			matchTitle
+				? `${this.sourceLabel}: album URL — matching track “${matchTitle}”…`
+				: `${this.sourceLabel}: album URL — no title to match; listing tracks…`,
 		);
 
 		const stdout = await this.runYtDlp(
@@ -275,33 +302,60 @@ export class YtDlpDownloader {
 			throw new Error(`No tracks found on Bandcamp album: ${albumUrl}`);
 		}
 
-		const ranked = entries
-			.map((entry) => ({
-				entry,
-				score: titleMatchScore(entry.title, matchTitle),
-			}))
+		const tracks: BandcampAlbumTrackChoice[] = entries
+			.map((entry) => {
+				const url = entry.url || entry.webpage_url;
+				if (!url) return null;
+				return {
+					title: entry.title,
+					url,
+					score: matchTitle ? titleMatchScore(entry.title, matchTitle) : 0,
+				};
+			})
+			.filter((t): t is BandcampAlbumTrackChoice => t !== null)
 			.sort((a, b) => b.score - a.score);
 
-		const best = ranked[0];
-		if (!best || best.score < 0.5) {
-			const available = entries.map((e) => e.title).join(', ');
+		if (tracks.length === 0) {
 			throw new Error(
-				`Could not match SoundCloud title “${matchTitle}” to a track on the Bandcamp album. Available: ${available}`,
+				`Bandcamp album listed tracks but yt-dlp did not provide track URLs: ${albumUrl}`,
 			);
 		}
 
-		const finalUrl = best.entry.url || best.entry.webpage_url;
-		if (!finalUrl) {
-			throw new Error(
-				`Matched “${best.entry.title}” but yt-dlp did not provide a track URL`,
+		const best = matchTitle ? tracks[0] : undefined;
+		if (best && best.score >= ALBUM_MATCH_THRESHOLD) {
+			console.log(
+				`${this.sourceLabel}: matched “${best.title}” (score ${best.score.toFixed(2)}) → ${best.url}`,
 			);
+			return best.url;
 		}
 
-		console.log(
-			`${this.sourceLabel}: matched “${best.entry.title}” (score ${best.score.toFixed(2)}) → ${finalUrl}`,
+		const available = tracks.map((t) => t.title).join(', ');
+		const message = matchTitle
+			? `Could not match SoundCloud title “${matchTitle}” to a track on the Bandcamp album. Available: ${available}`
+			: `Bandcamp album URL needs a track pick (no SoundCloud title to match). Available: ${available}`;
+
+		const matchError = new BandcampAlbumMatchError(
+			message,
+			albumUrl,
+			matchTitle,
+			tracks,
 		);
 
-		return finalUrl;
+		if (onAlbumMatchFailed) {
+			const selectedUrl = await onAlbumMatchFailed(matchError);
+			if (!selectedUrl) {
+				throw new Error('No Bandcamp album track selected');
+			}
+			const picked = tracks.find((t) => t.url === selectedUrl);
+			console.log(
+				picked
+					? `${this.sourceLabel}: user selected “${picked.title}” → ${selectedUrl}`
+					: `${this.sourceLabel}: user selected track URL → ${selectedUrl}`,
+			);
+			return selectedUrl;
+		}
+
+		throw matchError;
 	}
 }
 

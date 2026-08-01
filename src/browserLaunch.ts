@@ -4,13 +4,14 @@ import type { Browser } from 'puppeteer';
 export type AppBrowserLaunchOptions = {
 	headless?: boolean;
 	userDataDir?: string;
+	/** Extra Chromium/CloakBrowser flags merged onto the defaults. */
 	args?: string[];
 	/** Passed through to Puppeteer via cloakbrowser `launchOptions`. */
 	defaultViewport?: { width: number; height: number } | null;
 	humanize?: boolean;
 };
 
-const DEFAULT_ARGS = [
+export const DEFAULT_BROWSER_ARGS = [
 	'--no-sandbox',
 	'--disable-setuid-sandbox',
 	'--mute-audio',
@@ -38,12 +39,14 @@ export async function launchAppBrowser(
 
 	const geoip = Boolean(proxy) && process.env.CLOAKBROWSER_GEOIP === 'true';
 
+	const args = [...DEFAULT_BROWSER_ARGS, ...(options.args ?? [])];
+
 	const launchOpts = {
 		headless: options.headless ?? true,
 		humanize: options.humanize ?? true,
 		stealthArgs: true,
 		...(proxy ? { proxy, ...(geoip ? { geoip: true } : {}) } : {}),
-		args: options.args ?? DEFAULT_ARGS,
+		args,
 		launchOptions: {
 			...(options.defaultViewport !== undefined
 				? { defaultViewport: options.defaultViewport }

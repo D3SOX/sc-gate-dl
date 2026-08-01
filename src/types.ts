@@ -34,6 +34,7 @@ export type JobStage =
 	| 'pending'
 	| 'fetching_track'
 	| 'waiting_hypeddit'
+	| 'waiting_bandcamp_track'
 	| 'initializing_browser'
 	| 'preparing_logins'
 	| 'handling_gates'
@@ -42,6 +43,14 @@ export type JobStage =
 	| 'ready'
 	| 'error'
 	| 'cancelled';
+
+/** Candidate track on a Bandcamp album when auto title-match fails. */
+export interface BandcampAlbumTrackChoice {
+	title: string;
+	url: string;
+	/** 0–1 fuzzy score against the SoundCloud title (0 when no title to match). */
+	score: number;
+}
 
 export interface JobProgress {
 	stage: JobStage;
@@ -53,12 +62,16 @@ export interface JobProgress {
 	// True when the download was handled without a browser. Such downloads never
 	// touch the SoundCloud account, so the UI can skip the cleanup prompt.
 	browserless?: boolean;
+	/** Present while stage is `waiting_bandcamp_track`. */
+	bandcampAlbumTracks?: BandcampAlbumTrackChoice[];
 }
 
 export interface Job {
 	id: string;
 	soundcloudUrl: string;
 	hypedditUrl: string | null;
+	/** Candidates when Bandcamp album auto-match fails (cleared after pick). */
+	bandcampAlbumTracks: BandcampAlbumTrackChoice[] | null;
 	/** Whether browser automation runs headless. Defaults to true. */
 	headless: boolean;
 	outputFormat: OutputFormat;

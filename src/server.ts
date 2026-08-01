@@ -3,6 +3,7 @@ import { cp, mkdir, rm } from 'node:fs/promises';
 import { basename, extname, join } from 'node:path';
 import type { SoundcloudTrack } from 'soundcloud.ts';
 import { AudioProcessor } from './audioProcessor';
+import { DirectDownloader } from './directDownload';
 import { DownloadgaterDownloader } from './downloadgater';
 import { renameDownloadFileExclusive } from './downloadRename';
 import { DroploudDownloader } from './droploud';
@@ -14,12 +15,12 @@ import { SoundcloudClient } from './soundcloud';
 import type { Job, Metadata, OutputFormat } from './types';
 import {
 	artistTitleFilename,
-	extractGateUrl,
+	extractAndResolveGateUrl,
 	getDefaultMetadata,
 	getFfmpegBin,
 	getFfprobeBin,
 	isMp3Format,
-	resolveGateProviderUrl,
+	resolveGateUrlOrFollow,
 	validateGateUrl,
 	validateSoundcloudUrl,
 } from './utils';
@@ -180,11 +181,13 @@ async function runDownloadProcess(jobId: string): Promise<void> {
 	const job = jobStore.get(jobId);
 	if (!job?.hypedditUrl) return;
 
-	const gateUrl = job.hypedditUrl;
-	const resolved = resolveGateProviderUrl(gateUrl);
+	const resolved = await resolveGateUrlOrFollow(job.hypedditUrl);
 	if (!resolved) {
 		jobStore.setError(jobId, 'Unsupported gate URL');
 		return;
+	}
+	if (resolved.url !== job.hypedditUrl) {
+		jobStore.update(jobId, { hypedditUrl: resolved.url });
 	}
 	const { url: downloadSourceUrl, provider } = resolved;
 
@@ -242,6 +245,41 @@ async function runDownloadProcess(jobId: string): Promise<void> {
 				downloadSourceUrl,
 				{
 					matchTitle: job.track?.title,
+					onAlbumMatchFailed: async (error) => {
+						throwIfCancelled();
+						jobStore.update(jobId, {
+							bandcampAlbumTracks: error.tracks,
+							error: null,
+						});
+						const message = error.matchTitle
+							? `Could not match “${error.matchTitle}” — pick a Bandcamp track`
+							: 'Pick a track from the Bandcamp album';
+						jobStore.updateProgress(
+							jobId,
+							'waiting_bandcamp_track',
+							message,
+							45,
+							{
+								browserless: true,
+								bandcampAlbumTracks: error.tracks,
+							},
+						);
+						const selectedUrl =
+							await jobStore.waitForBandcampTrackSelection(jobId);
+						throwIfCancelled();
+						if (!selectedUrl) {
+							throw new Error('Download cancelled');
+						}
+						jobStore.update(jobId, { bandcampAlbumTracks: null });
+						jobStore.updateProgress(
+							jobId,
+							'downloading',
+							`Downloading from ${sourceLabel} via yt-dlp...`,
+							50,
+							{ browserless: true },
+						);
+						return selectedUrl;
+					},
 				},
 			);
 			throwIfCancelled();
@@ -313,6 +351,20 @@ async function runDownloadProcess(jobId: string): Promise<void> {
 			);
 			downloadFilename =
 				await downloadgaterDownloader.downloadAudio(downloadSourceUrl);
+			throwIfCancelled();
+		} else if (provider === 'direct') {
+			jobStore.updateProgress(
+				jobId,
+				'downloading',
+				'Downloading direct file...',
+				40,
+				{ browserless: true },
+			);
+			const directDownloader = new DirectDownloader();
+			activeDownloaders.set(jobId, directDownloader);
+			directDownloader.setProgressCallback(emitProgress);
+			downloadFilename =
+				await directDownloader.downloadAudio(downloadSourceUrl);
 			throwIfCancelled();
 		} else {
 			// Hypeddit: always try plain HTTP first (email + social skip gates).
@@ -647,7 +699,7 @@ const server = Bun.serve({
 
 					const hypedditUrl = skipAutomaticHypedditFetch
 						? null
-						: extractGateUrl(track);
+						: await extractAndResolveGateUrl(track);
 					const defaultMetadata = getDefaultMetadata(track);
 
 					const updatedJob = jobStore.update(job.id, {
@@ -716,7 +768,7 @@ const server = Bun.serve({
 						return jsonResponse({ error: validation }, { status: 400 });
 					}
 
-					const resolved = resolveGateProviderUrl(hypedditUrl);
+					const resolved = await resolveGateUrlOrFollow(hypedditUrl);
 					if (!resolved) {
 						return jsonResponse(
 							{ error: 'Could not extract a supported URL' },
@@ -727,6 +779,69 @@ const server = Bun.serve({
 					jobStore.update(jobId, { hypedditUrl: resolved.url });
 
 					return jsonResponse({ success: true, hypedditUrl: resolved.url });
+				} catch (error) {
+					return jsonResponse(
+						{
+							error: error instanceof Error ? error.message : 'Unknown error',
+						},
+						{ status: 500 },
+					);
+				}
+			},
+		},
+
+		'/api/job/:id/bandcamp-track': {
+			POST: async (req) => {
+				try {
+					const jobId = req.params.id;
+					const job = jobStore.get(jobId);
+
+					if (!job) {
+						return jsonResponse({ error: 'Job not found' }, { status: 404 });
+					}
+
+					if (job.progress.stage !== 'waiting_bandcamp_track') {
+						return jsonResponse(
+							{ error: 'Job is not waiting for a Bandcamp track selection' },
+							{ status: 400 },
+						);
+					}
+
+					const body = await req.json();
+					const { trackUrl } = body as { trackUrl?: string };
+
+					if (!trackUrl || typeof trackUrl !== 'string') {
+						return jsonResponse(
+							{ error: 'trackUrl is required' },
+							{ status: 400 },
+						);
+					}
+
+					const allowed = job.bandcampAlbumTracks ?? [];
+					const match = allowed.find((t) => t.url === trackUrl);
+					if (!match) {
+						return jsonResponse(
+							{ error: 'trackUrl is not one of the listed album tracks' },
+							{ status: 400 },
+						);
+					}
+
+					const resolved = jobStore.resolveBandcampTrackSelection(
+						jobId,
+						match.url,
+					);
+					if (!resolved) {
+						return jsonResponse(
+							{ error: 'No pending Bandcamp track selection' },
+							{ status: 409 },
+						);
+					}
+
+					return jsonResponse({
+						success: true,
+						trackUrl: match.url,
+						title: match.title,
+					});
 				} catch (error) {
 					return jsonResponse(
 						{
@@ -933,6 +1048,7 @@ const server = Bun.serve({
 					id: job.id,
 					soundcloudUrl: job.soundcloudUrl,
 					hypedditUrl: job.hypedditUrl,
+					bandcampAlbumTracks: job.bandcampAlbumTracks,
 					track: job.track,
 					defaultMetadata: job.defaultMetadata,
 					existingMetadata: job.existingMetadata,

@@ -1,6 +1,7 @@
 import type { Job, JobProgress, JobStage, OutputFormat } from './types';
 
 type ProgressListener = (progress: JobProgress) => void;
+type BandcampTrackResolver = (url: string | null) => void;
 
 /**
  * In-memory job store for single-user Web UI
@@ -8,6 +9,9 @@ type ProgressListener = (progress: JobProgress) => void;
 class JobStore {
 	private jobs: Map<string, Job> = new Map();
 	private listeners: Map<string, Set<ProgressListener>> = new Map();
+	/** Pending Bandcamp album-track picks (mid-download pause). */
+	private bandcampTrackResolvers: Map<string, BandcampTrackResolver> =
+		new Map();
 
 	/**
 	 * Creates a new job and returns its ID
@@ -19,6 +23,7 @@ class JobStore {
 			id,
 			soundcloudUrl,
 			hypedditUrl: null,
+			bandcampAlbumTracks: null,
 			headless: process.env.BROWSER_HEADLESS !== 'false',
 			outputFormat,
 			cancelled: false,
@@ -138,14 +143,41 @@ class JobStore {
 
 		job.cancelled = true;
 		job.error = null;
+		job.bandcampAlbumTracks = null;
 		job.progress = {
 			stage: 'cancelled',
 			message,
 			percent: job.progress.percent,
 		};
 		job.updatedAt = new Date();
+		this.resolveBandcampTrackSelection(id, null);
 		this.notifyListeners(id, job.progress);
 		return job;
+	}
+
+	/**
+	 * Pause until the user picks a Bandcamp album track (or cancel → null).
+	 */
+	waitForBandcampTrackSelection(id: string): Promise<string | null> {
+		const existing = this.bandcampTrackResolvers.get(id);
+		if (existing) {
+			existing(null);
+			this.bandcampTrackResolvers.delete(id);
+		}
+		return new Promise((resolve) => {
+			this.bandcampTrackResolvers.set(id, resolve);
+		});
+	}
+
+	/**
+	 * Resolve a pending Bandcamp album-track wait with a track URL, or null.
+	 */
+	resolveBandcampTrackSelection(id: string, url: string | null): boolean {
+		const resolve = this.bandcampTrackResolvers.get(id);
+		if (!resolve) return false;
+		this.bandcampTrackResolvers.delete(id);
+		resolve(url);
+		return true;
 	}
 
 	/**
@@ -193,6 +225,7 @@ class JobStore {
 	 * Delete a job
 	 */
 	delete(id: string): boolean {
+		this.resolveBandcampTrackSelection(id, null);
 		this.listeners.delete(id);
 		return this.jobs.delete(id);
 	}
