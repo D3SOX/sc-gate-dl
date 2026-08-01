@@ -62,7 +62,21 @@ export function normalizeDirectDownloadParsedUrl(url: URL): string {
 				`Malformed Google Drive link (missing valid file id): ${url}`,
 			);
 		}
-		return `https://drive.google.com/uc?export=download&id=${id}`;
+		const download = new URL('https://drive.google.com/uc');
+		download.searchParams.set('export', 'download');
+		download.searchParams.set('id', id);
+		// Link-shared files may require resourcekey alongside the file id.
+		let resourceKey: string | null = null;
+		for (const [key, value] of url.searchParams) {
+			if (key.toLowerCase() === 'resourcekey' && value) {
+				resourceKey = value;
+				break;
+			}
+		}
+		if (resourceKey) {
+			download.searchParams.set('resourcekey', resourceKey);
+		}
+		return download.toString();
 	}
 	return url.toString();
 }

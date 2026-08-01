@@ -95,6 +95,17 @@ describe('resolveGateProviderUrl', () => {
 		});
 	});
 
+	test('preserves Google Drive resourcekey on normalized download URLs', () => {
+		expect(
+			resolveGateProviderUrl(
+				'https://drive.google.com/file/d/abcdefghijklmnopqrstuvwx/view?usp=sharing&resourcekey=abc-123',
+			),
+		).toEqual({
+			url: 'https://drive.google.com/uc?export=download&id=abcdefghijklmnopqrstuvwx&resourcekey=abc-123',
+			provider: 'direct',
+		});
+	});
+
 	test('does not treat malformed Google Drive URLs as direct downloads', () => {
 		expect(
 			resolveGateProviderUrl('https://drive.google.com/drive/my-drive'),
