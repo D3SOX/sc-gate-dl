@@ -40,6 +40,23 @@ export const DEFAULT_BROWSER_ARGS = [
 	'--window-size=1920,1080',
 ];
 
+export function buildXvfbBrowserEnv(
+	display: string,
+	env: Record<string, string | undefined> = process.env,
+): Record<string, string> {
+	return Object.fromEntries(
+		Object.entries({
+			...env,
+			DISPLAY: display,
+			WAYLAND_DISPLAY: undefined,
+			XDG_SESSION_TYPE: 'x11',
+			OZONE_PLATFORM: 'x11',
+		}).filter(
+			(entry): entry is [string, string] => typeof entry[1] === 'string',
+		),
+	);
+}
+
 async function readXvfbDisplay(
 	stdout: ReadableStream<Uint8Array>,
 ): Promise<string> {
@@ -165,7 +182,12 @@ export async function launchAppBrowser(
 	const useXvfb = options.xvfb ?? false;
 	const xvfb = useXvfb ? await acquireXvfb() : null;
 
-	const args = [...DEFAULT_BROWSER_ARGS, ...(options.args ?? [])];
+	const args = [
+		...DEFAULT_BROWSER_ARGS,
+		...(options.args ?? []),
+		// Plasma Wayland otherwise lets Chromium bypass DISPLAY and open visibly.
+		...(useXvfb ? ['--ozone-platform=x11'] : []),
+	];
 
 	const launchOpts = {
 		// Xvfb keeps the browser invisible while preserving headed-mode signals.
@@ -177,12 +199,7 @@ export async function launchAppBrowser(
 		launchOptions: {
 			...(xvfb
 				? {
-						env: Object.fromEntries(
-							Object.entries({ ...process.env, DISPLAY: xvfb.display }).filter(
-								(entry): entry is [string, string] =>
-									typeof entry[1] === 'string',
-							),
-						),
+						env: buildXvfbBrowserEnv(xvfb.display),
 					}
 				: {}),
 			...(options.defaultViewport !== undefined
