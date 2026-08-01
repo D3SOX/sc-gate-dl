@@ -33,7 +33,7 @@ export interface Metadata {
 	genre?: string;
 }
 
-export type OutputFormat = 'original' | 'mp3-320';
+export type OutputFormat = 'original' | 'mp3-320' | 'flac';
 
 // Job system types for Web UI
 export type JobStage =
@@ -103,6 +103,8 @@ export interface Job {
 	progress: JobProgress;
 	downloadFilename: string | null;
 	outputFilename: string | null;
+	/** Whether the downloaded source codec is lossless, when probed for FLAC output. */
+	sourceIsLossless: boolean | null;
 	artworkBuffer: ArrayBuffer | null;
 	artworkFileName: string | null;
 	error: string | null;

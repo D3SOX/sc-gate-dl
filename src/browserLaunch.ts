@@ -1,6 +1,6 @@
 import { launch, launchPersistentContext } from 'cloakbrowser/puppeteer';
 import type { Browser } from 'puppeteer';
-import type { BrowserMode } from './types';
+import type { BrowserMode, HypedditConfig } from './types';
 
 export type AppBrowserLaunchOptions = {
 	headless?: boolean;
@@ -45,6 +45,15 @@ export function browserModeToLaunchOptions(
 		headless: browserMode === 'headless',
 		xvfb: browserMode === 'xvfb',
 	};
+}
+
+export function launchConfiguredBrowser(
+	config: HypedditConfig,
+): Promise<Browser> {
+	return launchAppBrowser({
+		...browserModeToLaunchOptions(config.browserMode),
+		userDataDir: config.userDataDir ?? './browser-data',
+	});
 }
 
 export function buildXvfbBrowserEnv(

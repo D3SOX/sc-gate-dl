@@ -152,7 +152,7 @@ Wait for Astro to be started. It will then tell you the address it's available o
 
 If it's the first time you're running it you will need to initialize the logins by clicking the button in the footer.
 
-You can deep-link a track with `?url=` (also accepted as `?soundcloudUrl=`) and optional `outputFormat` (`mp3-320` or `original`), which pre-fills the form and starts the job:
+You can deep-link a track with `?url=` (also accepted as `?soundcloudUrl=`) and optional `outputFormat` (`mp3-320`, `flac`, or `original`), which pre-fills the form and starts the job. FLAC output preserves lossless sources; converting a lossy source to FLAC changes the container but cannot restore lost quality.
 
 ```text
 http://localhost:4321/?url=https://soundcloud.com/artist/track&outputFormat=mp3-320

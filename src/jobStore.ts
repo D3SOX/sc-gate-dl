@@ -38,6 +38,7 @@ class JobStore {
 			},
 			downloadFilename: null,
 			outputFilename: null,
+			sourceIsLossless: null,
 			artworkBuffer: null,
 			artworkFileName: null,
 			error: null,

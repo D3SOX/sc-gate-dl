@@ -444,6 +444,12 @@ async function runDownloadProcess(jobId: string): Promise<void> {
 		}
 
 		jobStore.update(jobId, { downloadFilename });
+		if (job.outputFormat === 'flac') {
+			const sourceIsLossless = await audioProcessor.isLosslessAudio(
+				join('./downloads', downloadFilename),
+			);
+			jobStore.update(jobId, { sourceIsLossless });
+		}
 
 		if (job.outputFormat === 'original') {
 			jobStore.update(jobId, { outputFilename: downloadFilename });
@@ -684,10 +690,13 @@ const server = Bun.serve({
 					if (
 						outputFormat !== undefined &&
 						outputFormat !== 'original' &&
-						outputFormat !== 'mp3-320'
+						outputFormat !== 'mp3-320' &&
+						outputFormat !== 'flac'
 					) {
 						return jsonResponse(
-							{ error: 'outputFormat must be "original" or "mp3-320"' },
+							{
+								error: 'outputFormat must be "original", "mp3-320", or "flac"',
+							},
 							{ status: 400 },
 						);
 					}
@@ -1099,6 +1108,7 @@ const server = Bun.serve({
 					progress: job.progress,
 					downloadFilename: job.downloadFilename,
 					outputFilename: job.outputFilename,
+					sourceIsLossless: job.sourceIsLossless,
 					hasArtwork: !!job.artworkBuffer,
 					error: job.error,
 				});
@@ -1265,6 +1275,7 @@ const server = Bun.serve({
 						metadata,
 						artwork,
 						'always',
+						job.outputFormat,
 					);
 
 					let outputFilename = basename(outputPath);
@@ -1272,7 +1283,11 @@ const server = Bun.serve({
 						outputFilename = await renameDownloadFile(
 							jobId,
 							outputFilename,
-							artistTitleFilename(metadata.artist, metadata.title, '.mp3'),
+							artistTitleFilename(
+								metadata.artist,
+								metadata.title,
+								job.outputFormat === 'flac' ? '.flac' : '.mp3',
+							),
 						);
 					}
 					jobStore.update(jobId, {

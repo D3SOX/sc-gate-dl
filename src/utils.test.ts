@@ -158,6 +158,19 @@ describe('findKnownGateInHtml', () => {
 		).toBeNull();
 	});
 
+	test('prefers a relative album over an earlier absolute featured track', () => {
+		const html = `
+			<a href="https://underzoneco.bandcamp.com/track/unrelated-featured-track">Featured</a>
+			<a href="/album/club-anthems-vol-4">Album</a>
+		`;
+		expect(
+			findKnownGateInHtml(html, 'https://underzoneco.bandcamp.com/'),
+		).toEqual({
+			url: 'https://underzoneco.bandcamp.com/album/club-anthems-vol-4',
+			provider: 'bandcamp',
+		});
+	});
+
 	test('scans links when a meta refresh is not a known gate', () => {
 		const html = `
 			<meta http-equiv="refresh" content="0;url=/news">
@@ -322,5 +335,22 @@ describe('previewProcessedFilename', () => {
 		expect(
 			previewProcessedFilename('song.mp3', { nameAsArtistTitle: false }),
 		).toBe('song.mp3');
+	});
+
+	test('always previews a flac extension for flac output', () => {
+		expect(
+			previewProcessedFilename('song.mp3', {
+				nameAsArtistTitle: false,
+				outputFormat: 'flac',
+			}),
+		).toBe('song.flac');
+		expect(
+			previewProcessedFilename('song.m4a', {
+				nameAsArtistTitle: true,
+				artist: 'Artist',
+				title: 'Title',
+				outputFormat: 'flac',
+			}),
+		).toBe('Artist - Title.flac');
 	});
 });

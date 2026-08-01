@@ -511,7 +511,7 @@ export function findKnownGateInHtml(
 ): { url: string; provider: GateProvider } | null {
 	const normalized = html.replace(/\\\//g, '/');
 	const direct = matchKnownDownloadGateUrl(normalized);
-	if (direct) return direct;
+	if (direct && direct.provider !== 'bandcamp') return direct;
 
 	const refresh =
 		normalized.match(
@@ -549,6 +549,8 @@ export function findKnownGateInHtml(
 				}
 			});
 
+		if (direct?.provider === 'bandcamp') relativeMatches.push(direct);
+
 		const traditional = relativeMatches.find((match) =>
 			['hypeddit', 'droploud', 'gaterush', 'downloadgater'].includes(
 				match.provider,
@@ -565,7 +567,7 @@ export function findKnownGateInHtml(
 			relativeMatches.find((match) => match.provider !== 'bandcamp') ?? null
 		);
 	}
-	return null;
+	return direct;
 }
 
 /**
@@ -826,6 +828,10 @@ export function toMp3Filename(filename: string): string {
 	return filename.replace(MP3_CONVERTIBLE_EXT_PATTERN, '.mp3');
 }
 
+export function toFlacFilename(filename: string): string {
+	return filename.replace(/\.[^.]+$/i, '.flac');
+}
+
 /** @deprecated Prefer toMp3Filename */
 export function losslessToMp3Filename(filename: string): string {
 	return toMp3Filename(filename);
@@ -858,10 +864,15 @@ export function previewProcessedFilename(
 		nameAsArtistTitle: boolean;
 		artist?: string;
 		title?: string;
+		outputFormat?: 'mp3-320' | 'flac';
 	},
 ): string {
+	const extension = options.outputFormat === 'flac' ? '.flac' : '.mp3';
 	if (options.nameAsArtistTitle) {
-		return artistTitleFilename(options.artist, options.title, '.mp3');
+		return artistTitleFilename(options.artist, options.title, extension);
+	}
+	if (options.outputFormat === 'flac') {
+		return toFlacFilename(downloadFilename);
 	}
 	if (needsMp3Conversion(downloadFilename)) {
 		return toMp3Filename(downloadFilename);

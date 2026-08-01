@@ -1,6 +1,6 @@
 import { Presets, SingleBar } from 'cli-progress';
 import type { Browser, Page } from 'puppeteer';
-import { browserModeToLaunchOptions, launchAppBrowser } from './browserLaunch';
+import { launchConfiguredBrowser } from './browserLaunch';
 import type { ProgressCallback } from './hypeddit';
 import Selectors from './selectors';
 import { SoundcloudClient } from './soundcloud';
@@ -40,10 +40,7 @@ export class DroploudDownloader {
 	}
 
 	async initialize() {
-		this.browser = await launchAppBrowser({
-			...browserModeToLaunchOptions(this.config.browserMode),
-			userDataDir: this.config.userDataDir ?? './browser-data',
-		});
+		this.browser = await launchConfiguredBrowser(this.config);
 
 		const browserContext = this.browser.defaultBrowserContext();
 		const soundCloudCookies = await loadCookies('soundcloud-cookies.json');

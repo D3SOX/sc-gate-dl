@@ -30,6 +30,7 @@ const DOWNLOADS_DIR = './downloads';
 const YTDLP_DOWNLOAD_TIMEOUT_MS = 10 * 60_000;
 const YTDLP_METADATA_TIMEOUT_MS = 60_000;
 const ALBUM_MATCH_THRESHOLD = 0.5;
+const PROGRESS_PREFIX = 'SC_GATE_DL_PROGRESS:';
 
 type FlatEntry = {
 	id?: string;
@@ -37,6 +38,57 @@ type FlatEntry = {
 	url?: string;
 	webpage_url?: string;
 };
+
+export type YtDlpProgress = {
+	downloadBytes?: number;
+	totalBytes?: number;
+	percent: number;
+};
+
+function parseProgressNumber(value: string | undefined): number | undefined {
+	if (!value || value === 'NA') return undefined;
+	const parsed = Number(value);
+	return Number.isFinite(parsed) && parsed >= 0 ? parsed : undefined;
+}
+
+/** Parse the stable, machine-readable progress template passed to yt-dlp. */
+export function parseYtDlpProgressLine(line: string): YtDlpProgress | null {
+	if (!line.startsWith(PROGRESS_PREFIX)) return null;
+
+	const [
+		downloadedValue,
+		totalValue,
+		estimateValue,
+		fragmentValue,
+		fragmentsValue,
+	] = line.slice(PROGRESS_PREFIX.length).split(':');
+	const downloadBytes = parseProgressNumber(downloadedValue);
+	const totalBytes =
+		parseProgressNumber(totalValue) ?? parseProgressNumber(estimateValue);
+	const fragment = parseProgressNumber(fragmentValue);
+	const fragments = parseProgressNumber(fragmentsValue);
+
+	let percent = 0;
+	if (
+		downloadBytes !== undefined &&
+		totalBytes !== undefined &&
+		totalBytes > 0
+	) {
+		percent = (downloadBytes / totalBytes) * 100;
+	} else if (
+		fragment !== undefined &&
+		fragments !== undefined &&
+		fragments > 0
+	) {
+		percent = (fragment / fragments) * 100;
+	}
+
+	return {
+		downloadBytes,
+		totalBytes,
+		percent: Math.min(100, Math.max(0, percent)),
+	};
+}
 
 /** Thrown when a Bandcamp album cannot be auto-matched to a single track. */
 export class BandcampAlbumMatchError extends Error {
@@ -134,6 +186,7 @@ export class YtDlpDownloader {
 		ytDlpBin: string,
 		args: string[],
 		timeout: number,
+		onStdoutLine?: (line: string) => boolean,
 	): Promise<string> {
 		if (this.closed) {
 			throw new Error('yt-dlp downloader is closed');
@@ -144,6 +197,14 @@ export class YtDlpDownloader {
 		});
 		this.activeProcess = subprocess;
 		try {
+			if (onStdoutLine) {
+				const outputLines: string[] = [];
+				for await (const line of subprocess) {
+					if (onStdoutLine(line)) outputLines.push(line);
+				}
+				await subprocess;
+				return outputLines.join('\n');
+			}
 			const { stdout } = await subprocess;
 			return stdout;
 		} finally {
@@ -187,6 +248,12 @@ export class YtDlpDownloader {
 		const args = [
 			'--no-mtime',
 			'--no-playlist',
+			'--newline',
+			'--progress',
+			'--progress-delta',
+			'0.5',
+			'--progress-template',
+			`${PROGRESS_PREFIX}%(progress.downloaded_bytes)s:%(progress.total_bytes)s:%(progress.total_bytes_estimate)s:%(progress.fragment_index)s:%(progress.fragment_count)s`,
 			'-f',
 			format,
 			'-o',
@@ -215,7 +282,27 @@ export class YtDlpDownloader {
 
 		let stdout: string;
 		try {
-			stdout = await this.runYtDlp(ytDlpBin, args, YTDLP_DOWNLOAD_TIMEOUT_MS);
+			stdout = await this.runYtDlp(
+				ytDlpBin,
+				args,
+				YTDLP_DOWNLOAD_TIMEOUT_MS,
+				(line) => {
+					const progress = parseYtDlpProgressLine(line);
+					if (!progress) return true;
+
+					this.progressCallback?.(
+						'downloading',
+						`Downloading from ${this.sourceLabel} via yt-dlp...`,
+						progress.percent,
+						{
+							downloadBytes: progress.downloadBytes,
+							totalBytes: progress.totalBytes,
+							browserless: true,
+						},
+					);
+					return false;
+				},
+			);
 		} finally {
 			if (cookiesPath) await rm(cookiesPath, { force: true });
 		}

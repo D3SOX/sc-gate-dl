@@ -1,5 +1,6 @@
 import { existsSync } from 'node:fs';
-import { basename, join } from 'node:path';
+import { rename } from 'node:fs/promises';
+import { basename, extname, join } from 'node:path';
 import { confirm, input } from '@inquirer/prompts';
 import { execa } from 'execa';
 import type { SoundcloudTrack } from 'soundcloud.ts';
@@ -7,13 +8,14 @@ import {
 	pickUniqueDownloadFilename,
 	withDownloadRenameLock,
 } from './downloadRename';
-import type { Metadata } from './types';
+import type { Metadata, OutputFormat } from './types';
 import {
 	getDefaultMetadata,
 	isLosslessFormat,
 	isMp3Format,
 	needsMp3Conversion,
 	REPO_URL,
+	toFlacFilename,
 	toMp3Filename,
 } from './utils';
 
@@ -146,6 +148,7 @@ export class AudioProcessor {
 		metadata: Metadata,
 		artwork: { buffer: ArrayBuffer; fileName: string },
 		losslessHandling: 'prompt' | 'always' | 'never' = 'prompt',
+		outputFormat: Exclude<OutputFormat, 'original'> = 'mp3-320',
 	): Promise<string> {
 		const inputPath = join('./downloads', filename);
 
@@ -157,6 +160,22 @@ export class AudioProcessor {
 		}
 
 		try {
+			if (outputFormat === 'flac') {
+				const outputPath = await this.convertToFlac(
+					inputPath,
+					artworkPath,
+					metadata,
+					filename,
+				);
+				await this.maybeRemoveSource(
+					inputPath,
+					outputPath,
+					filename,
+					losslessHandling,
+				);
+				return outputPath;
+			}
+
 			// Convert non-MP3 audio (lossless or lossy containers like m4a) to MP3.
 			if (needsMp3Conversion(filename)) {
 				const outputPath = await this.convertToMp3(
@@ -166,22 +185,12 @@ export class AudioProcessor {
 					filename,
 				);
 
-				// ask if you want to remove the source file
-				let removeSourceFile = true;
-				if (losslessHandling === 'prompt') {
-					removeSourceFile = await confirm({
-						message: `Do you want to remove the ${isLosslessFormat(filename) ? 'lossless' : 'source'} file now?`,
-						default: true,
-					});
-				} else if (losslessHandling === 'always') {
-					removeSourceFile = true;
-				} else if (losslessHandling === 'never') {
-					removeSourceFile = false;
-				}
-				if (removeSourceFile) {
-					await Bun.file(inputPath).unlink();
-					console.log(`✓ Removed ${inputPath}`);
-				}
+				await this.maybeRemoveSource(
+					inputPath,
+					outputPath,
+					filename,
+					losslessHandling,
+				);
 				return outputPath;
 			}
 			// otherwise if it is an MP3, we retag it with the correct metadata
@@ -206,6 +215,27 @@ export class AudioProcessor {
 			} catch {
 				// ignore cleanup errors
 			}
+		}
+	}
+
+	private async maybeRemoveSource(
+		inputPath: string,
+		outputPath: string,
+		filename: string,
+		losslessHandling: 'prompt' | 'always' | 'never',
+	): Promise<void> {
+		if (inputPath === outputPath) return;
+
+		let removeSourceFile = losslessHandling !== 'never';
+		if (losslessHandling === 'prompt') {
+			removeSourceFile = await confirm({
+				message: `Do you want to remove the ${isLosslessFormat(filename) ? 'lossless' : 'source'} file now?`,
+				default: true,
+			});
+		}
+		if (removeSourceFile) {
+			await Bun.file(inputPath).unlink();
+			console.log(`✓ Removed ${inputPath}`);
 		}
 	}
 
@@ -256,6 +286,20 @@ export class AudioProcessor {
 			bitrateKbps,
 			codecName: audioStream?.codec_name ?? null,
 		};
+	}
+
+	/** Detect whether the downloaded audio codec is lossless. */
+	async isLosslessAudio(inputPath: string): Promise<boolean | null> {
+		const { codecName } = await this.probeAudioStream(inputPath);
+		if (!codecName) return null;
+		const codec = codecName.toLowerCase();
+		return (
+			codec === 'alac' ||
+			codec === 'flac' ||
+			codec === 'wavpack' ||
+			codec === 'ape' ||
+			codec.startsWith('pcm_')
+		);
 	}
 
 	/**
@@ -363,6 +407,86 @@ export class AudioProcessor {
 			}
 			throw error;
 		}
+		console.log(`✓ Converted to ${outputPath}`);
+		return outputPath;
+	}
+
+	private async convertToFlac(
+		inputPath: string,
+		artworkPath: string,
+		metadata: Metadata,
+		filename: string,
+	): Promise<string> {
+		const replacingFlac = extname(filename).toLowerCase() === '.flac';
+		const outputPath = replacingFlac
+			? join('./downloads', `.converting-${crypto.randomUUID()}.flac`)
+			: await withDownloadRenameLock(async () => {
+					const desiredFilename = toFlacFilename(filename);
+					const finalName = pickUniqueDownloadFilename({
+						desiredFilename,
+						currentFilename: basename(inputPath),
+						jobId: crypto.randomUUID(),
+						exists: (name) => existsSync(join('./downloads', name)),
+						isOwnedByOtherJob: () => false,
+					});
+					const path = join('./downloads', finalName);
+					if (!existsSync(path)) await Bun.write(path, new Uint8Array());
+					return path;
+				});
+
+		const losslessSource = await this.isLosslessAudio(inputPath);
+		if (losslessSource === false) {
+			const { codecName } = await this.probeAudioStream(inputPath);
+			console.warn(
+				`Source codec ${codecName ?? 'unknown'} is lossy; FLAC conversion cannot restore lost audio quality.`,
+			);
+		}
+
+		const args = [
+			'-i',
+			inputPath,
+			'-i',
+			artworkPath,
+			'-map',
+			'0:a',
+			'-map',
+			'1:v',
+			'-c:a',
+			'flac',
+			'-compression_level',
+			'8',
+			'-c:v',
+			'copy',
+			'-disposition:v',
+			'attached_pic',
+			'-metadata:s:v',
+			'title=Album cover',
+			'-metadata:s:v',
+			'comment=Cover (front)',
+		];
+
+		if (metadata.title) args.push('-metadata', `title=${metadata.title}`);
+		if (metadata.artist) args.push('-metadata', `artist=${metadata.artist}`);
+		if (metadata.album) args.push('-metadata', `album=${metadata.album}`);
+		if (metadata.genre) args.push('-metadata', `genre=${metadata.genre}`);
+		args.push('-y', outputPath);
+
+		console.log('Converting to FLAC...');
+		try {
+			await execa(this.ffmpegBin, args);
+			if (replacingFlac) {
+				await Bun.file(inputPath).unlink();
+				await rename(outputPath, inputPath);
+				console.log(`✓ Converted to ${inputPath}`);
+				return inputPath;
+			}
+		} catch (error) {
+			await Bun.file(outputPath)
+				.unlink()
+				.catch(() => {});
+			throw error;
+		}
+
 		console.log(`✓ Converted to ${outputPath}`);
 		return outputPath;
 	}
