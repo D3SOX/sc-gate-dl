@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         sc-gate-dl
 // @namespace    https://github.com/D3SOX/sc-gate-dl
-// @version      1.9.1
+// @version      1.10.0
 // @description  Add sc-gate-dl download controls and remember your position in the SoundCloud feed
 // @author       D3SOX
 // @match        https://soundcloud.com/*
@@ -30,7 +30,6 @@
 	const OUTPUT_FORMAT_KEY = 'sc-gate-dl-output-format';
 	const AUTO_CLOSE_KEY = 'sc-gate-dl-auto-close';
 	const FEED_CHECKPOINT_KEY = 'sc-gate-dl-feed-checkpoint';
-	const FEED_DIRECTION_KEY = 'sc-gate-dl-feed-direction';
 	const DEFAULT_WEBUI_BASE = 'http://localhost:4321';
 	const BUTTON_ATTR = 'data-sc-gate-dl-btn';
 	const WRAP_ATTR = 'data-sc-gate-dl-wrap';
@@ -335,7 +334,24 @@
 		return Number.isFinite(timestamp) ? timestamp : null;
 	}
 
-	function loadFeedCheckpoint() {
+	function parseFeedCheckpoint(value) {
+		const url = normalizeTrackUrl(value?.url || '');
+		if (!url) return null;
+		return {
+			url,
+			label:
+				typeof value.label === 'string'
+					? value.label
+					: trackLabelFromUrl(url),
+			feedTimestamp:
+				typeof value.feedTimestamp === 'number'
+					? value.feedTimestamp
+					: null,
+			savedAt: typeof value.savedAt === 'number' ? value.savedAt : 0,
+		};
+	}
+
+	function loadFeedCheckpoints() {
 		let raw = null;
 		try {
 			if (typeof GM_getValue === 'function') {
@@ -347,27 +363,20 @@
 		try {
 			raw ??= localStorage.getItem(FEED_CHECKPOINT_KEY);
 			const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
-			const url = normalizeTrackUrl(parsed?.url || '');
-			if (!url) return null;
-			return {
-				url,
-				label:
-					typeof parsed.label === 'string'
-						? parsed.label
-						: trackLabelFromUrl(url),
-				feedTimestamp:
-					typeof parsed.feedTimestamp === 'number'
-						? parsed.feedTimestamp
-						: null,
-				savedAt: typeof parsed.savedAt === 'number' ? parsed.savedAt : 0,
+			const legacy = parseFeedCheckpoint(parsed);
+			if (legacy) return { newer: legacy, older: legacy };
+			const checkpoints = {
+				newer: parseFeedCheckpoint(parsed?.newer),
+				older: parseFeedCheckpoint(parsed?.older),
 			};
+			return checkpoints.newer || checkpoints.older ? checkpoints : null;
 		} catch {
 			return null;
 		}
 	}
 
-	function persistFeedCheckpoint(checkpoint) {
-		const raw = JSON.stringify(checkpoint);
+	function persistFeedCheckpoints(checkpoints) {
+		const raw = JSON.stringify(checkpoints);
 		try {
 			if (typeof GM_setValue === 'function') {
 				GM_setValue(FEED_CHECKPOINT_KEY, raw);
@@ -382,7 +391,7 @@
 		}
 	}
 
-	function resetFeedCheckpoint() {
+	function resetFeedCheckpoints() {
 		try {
 			if (typeof GM_setValue === 'function') {
 				GM_setValue(FEED_CHECKPOINT_KEY, null);
@@ -395,46 +404,7 @@
 		} catch {
 			// ignore
 		}
-		setFeedStatus('Checkpoint reset. The next played track will be saved.');
-		updateFeedNavigator();
-	}
-
-	function getFeedDirection() {
-		let value = null;
-		try {
-			if (typeof GM_getValue === 'function') {
-				value = GM_getValue(FEED_DIRECTION_KEY, null);
-			}
-		} catch {
-			// ignore
-		}
-		try {
-			value ??= localStorage.getItem(FEED_DIRECTION_KEY);
-		} catch {
-			// ignore
-		}
-		return value === 'older' ? 'older' : 'newer';
-	}
-
-	function setFeedDirection(direction) {
-		const value = direction === 'older' ? 'older' : 'newer';
-		try {
-			if (typeof GM_setValue === 'function') {
-				GM_setValue(FEED_DIRECTION_KEY, value);
-			}
-		} catch {
-			// ignore
-		}
-		try {
-			localStorage.setItem(FEED_DIRECTION_KEY, value);
-		} catch {
-			// ignore
-		}
-		setFeedStatus(
-			value === 'newer'
-				? 'Tracking the farthest-up (newest) played track.'
-				: 'Tracking the farthest-down (oldest) played track.',
-		);
+		setFeedStatus('Positions reset. The next played track will seed both.');
 		updateFeedNavigator();
 	}
 
@@ -458,9 +428,8 @@
 			: trackLabelFromUrl(url);
 	}
 
-	function shouldAdvanceCheckpoint(saved, card, candidateTimestamp) {
+	function shouldAdvanceCheckpoint(saved, card, candidateTimestamp, direction) {
 		if (!saved || saved.url === trackUrlFromCard(card)) return true;
-		const direction = getFeedDirection();
 		if (saved.feedTimestamp != null && candidateTimestamp != null) {
 			return direction === 'newer'
 				? candidateTimestamp >= saved.feedTimestamp
@@ -478,24 +447,33 @@
 		if (!isFeedPage() || !(card instanceof Element)) return;
 		const url = trackUrlFromCard(card);
 		if (!url) return;
-		const saved = loadFeedCheckpoint();
 		const timestamp = feedTimestamp(card);
-		if (!shouldAdvanceCheckpoint(saved, card, timestamp)) return;
 		const label = checkpointLabelFromCard(card, url);
-		if (saved?.url === url) {
-			if (saved.label !== label) {
-				persistFeedCheckpoint({ ...saved, label });
-				updateFeedNavigator();
-			}
-			return;
-		}
-		persistFeedCheckpoint({
+		const checkpoints = loadFeedCheckpoints() ?? { newer: null, older: null };
+		const candidate = {
 			url,
 			label,
 			feedTimestamp: timestamp,
 			savedAt: Date.now(),
-		});
-		updateFeedNavigator();
+		};
+		let changed = false;
+		for (const direction of ['newer', 'older']) {
+			const saved = checkpoints[direction];
+			if (!shouldAdvanceCheckpoint(saved, card, timestamp, direction)) continue;
+			if (saved?.url === url) {
+				if (saved.label !== label) {
+					checkpoints[direction] = { ...saved, label };
+					changed = true;
+				}
+			} else {
+				checkpoints[direction] = candidate;
+				changed = true;
+			}
+		}
+		if (changed) {
+			persistFeedCheckpoints(checkpoints);
+			updateFeedNavigator();
+		}
 	}
 
 	function recordPlayingFeedTrack() {
@@ -526,24 +504,23 @@
 	function updateFeedNavigator() {
 		const nav = document.getElementById(FEED_NAV_ID);
 		if (!nav) return;
-		const checkpoint = loadFeedCheckpoint();
-		const resume = nav.querySelector('.sc-gate-dl-feed-resume');
+		const checkpoints = loadFeedCheckpoints();
+		const resumeNewer = nav.querySelector('.sc-gate-dl-feed-resume-newer');
+		const resumeOlder = nav.querySelector('.sc-gate-dl-feed-resume-older');
 		const find = nav.querySelector('.sc-gate-dl-feed-find');
-		const direction = nav.querySelector('.sc-gate-dl-feed-direction');
-		if (resume instanceof HTMLButtonElement) {
-			resume.disabled = !feedSearchActive && !checkpoint;
-			resume.textContent = feedSearchActive
+		const updateResumeButton = (button, checkpoint, label) => {
+			if (!(button instanceof HTMLButtonElement)) return;
+			button.disabled = !feedSearchActive && !checkpoint;
+			button.textContent = feedSearchActive
 				? 'Cancel scrolling'
 				: checkpoint
-					? `Resume: ${checkpoint.label}`
+					? `Resume ${label}: ${checkpoint.label}`
 					: 'No listened track saved yet';
-			resume.title = checkpoint?.url || '';
-		}
+			button.title = checkpoint?.url || '';
+		};
+		updateResumeButton(resumeNewer, checkpoints?.newer, 'farthest up');
+		updateResumeButton(resumeOlder, checkpoints?.older, 'farthest down');
 		if (find instanceof HTMLButtonElement) find.disabled = feedSearchActive;
-		if (direction instanceof HTMLSelectElement) {
-			direction.value = getFeedDirection();
-			direction.disabled = feedSearchActive;
-		}
 	}
 
 	function waitForMoreFeed(snapshot, token, targetUrl) {
@@ -676,31 +653,27 @@
 					<span>Feed position</span>
 					<button type="button" class="sc-gate-dl-feed-close" aria-label="Close" title="Close">×</button>
 				</div>
-				<button type="button" class="sc-gate-dl-feed-resume"></button>
+				<button type="button" class="sc-gate-dl-feed-resume-newer"></button>
+				<button type="button" class="sc-gate-dl-feed-resume-older"></button>
 				<button type="button" class="sc-gate-dl-feed-find">Find track URL…</button>
-				<label class="sc-gate-dl-feed-setting">
-					<span>Keep</span>
-					<select class="sc-gate-dl-feed-direction" aria-label="Saved-track direction">
-						<option value="newer">Farthest up (newest)</option>
-						<option value="older">Farthest down (oldest)</option>
-					</select>
-				</label>
-				<button type="button" class="sc-gate-dl-feed-reset">Reset saved track</button>
+				<button type="button" class="sc-gate-dl-feed-reset">Reset saved positions</button>
 				<div class="sc-gate-dl-feed-status" aria-live="polite"></div>
 			`;
 			nav
 				.querySelector('.sc-gate-dl-feed-close')
 				?.addEventListener('click', () => toggleFeedNavigator());
-			nav
-				.querySelector('.sc-gate-dl-feed-resume')
-				?.addEventListener('click', () => {
-					if (feedSearchActive) {
-						cancelFeedSearch();
-						return;
-					}
-					const checkpoint = loadFeedCheckpoint();
-					if (checkpoint) void scrollToFeedTrack(checkpoint.url);
-				});
+			for (const direction of ['newer', 'older']) {
+				nav
+					.querySelector(`.sc-gate-dl-feed-resume-${direction}`)
+					?.addEventListener('click', () => {
+						if (feedSearchActive) {
+							cancelFeedSearch();
+							return;
+						}
+						const checkpoint = loadFeedCheckpoints()?.[direction];
+						if (checkpoint) void scrollToFeedTrack(checkpoint.url);
+					});
+			}
 			nav
 				.querySelector('.sc-gate-dl-feed-find')
 				?.addEventListener('click', () => {
@@ -710,15 +683,8 @@
 					if (input?.trim()) void scrollToFeedTrack(input.trim());
 				});
 			nav
-				.querySelector('.sc-gate-dl-feed-direction')
-				?.addEventListener('change', (event) => {
-					if (event.target instanceof HTMLSelectElement) {
-						setFeedDirection(event.target.value);
-					}
-				});
-			nav
 				.querySelector('.sc-gate-dl-feed-reset')
-				?.addEventListener('click', resetFeedCheckpoint);
+				?.addEventListener('click', resetFeedCheckpoints);
 			document.documentElement.appendChild(nav);
 		}
 		nav.hidden = false;
@@ -1217,22 +1183,6 @@
 #${FEED_NAV_ID} button:disabled { color: #777; cursor: default; }
 #${FEED_NAV_ID} .sc-gate-dl-feed-find { text-align: center; }
 #${FEED_NAV_ID} .sc-gate-dl-feed-reset { color: #aaa; text-align: center; }
-#${FEED_NAV_ID} .sc-gate-dl-feed-setting {
-	display: flex;
-	align-items: center;
-	gap: 8px;
-	color: #aaa;
-}
-#${FEED_NAV_ID} .sc-gate-dl-feed-setting select {
-	flex: 1;
-	min-width: 0;
-	padding: 5px 7px;
-	border: 1px solid rgba(255, 255, 255, 0.14);
-	border-radius: 6px;
-	background: #0f0f12;
-	color: #eee;
-	font: inherit;
-}
 #${FEED_NAV_ID} .sc-gate-dl-feed-status:empty { display: none; }
 #${FEED_NAV_ID} .sc-gate-dl-feed-status {
 	padding: 1px 2px;
