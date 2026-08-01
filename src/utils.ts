@@ -397,6 +397,26 @@ function matchBandcampUrl(
 	return null;
 }
 
+/** Find an artist's bare Bandcamp homepage embedded in a smart-link page. */
+export function findBandcampHomepageInHtml(html: string): string | null {
+	const normalized = html.replace(/\\\//g, '/');
+	for (const match of normalized.match(ANY_HTTP_URL_RE) ?? []) {
+		try {
+			const url = new URL(trimExtractedUrl(match).replace(/&amp;/g, '&'));
+			if (
+				url.hostname !== 'bandcamp.com' &&
+				url.hostname.endsWith('.bandcamp.com') &&
+				(url.pathname === '' || url.pathname === '/')
+			) {
+				return `${url.protocol}//${url.host}/`;
+			}
+		} catch {
+			// Ignore malformed URLs embedded in page scripts.
+		}
+	}
+	return null;
+}
+
 function matchDirectDownloadUrl(
 	value: string,
 ): { url: string; provider: GateProvider } | null {
@@ -421,6 +441,7 @@ function matchDirectDownloadUrl(
  */
 export function findKnownGateInHtml(
 	html: string,
+	baseUrl?: string,
 ): { url: string; provider: GateProvider } | null {
 	const normalized = html.replace(/\\\//g, '/');
 	const direct = matchKnownDownloadGateUrl(normalized);
@@ -434,8 +455,45 @@ export function findKnownGateInHtml(
 			/content=["'][^"']*url=([^"'>\s]+)[^"']*["'][^>]*http-equiv=["']refresh["']/i,
 		);
 	if (refresh?.[1]) {
-		const target = refresh[1].replace(/&amp;/g, '&');
+		const rawTarget = refresh[1].replace(/&amp;/g, '&');
+		let target = rawTarget;
+		if (baseUrl) {
+			try {
+				target = new URL(rawTarget, baseUrl).toString();
+			} catch {
+				return null;
+			}
+		}
 		return matchKnownDownloadGateUrl(target);
+	}
+
+	if (baseUrl) {
+		const relativeMatches = [...normalized.matchAll(/href=["']([^"']+)["']/gi)]
+			.map((match) => match[1])
+			.filter((target): target is string => Boolean(target))
+			.flatMap((target) => {
+				try {
+					const resolved = matchKnownDownloadGateUrl(
+						new URL(target.replace(/&amp;/g, '&'), baseUrl).toString(),
+					);
+					return resolved ? [resolved] : [];
+				} catch {
+					return [];
+				}
+			});
+
+		const traditional = relativeMatches.find((match) =>
+			['hypeddit', 'droploud', 'gaterush', 'downloadgater'].includes(
+				match.provider,
+			),
+		);
+		if (traditional) return traditional;
+
+		// Artist homepages often feature an unrelated track before their albums.
+		const album = relativeMatches.find(
+			(match) => match.provider === 'bandcamp' && isBandcampAlbumUrl(match.url),
+		);
+		return album ?? relativeMatches[0] ?? null;
 	}
 	return null;
 }
@@ -495,7 +553,15 @@ export async function resolveUnknownGateUrl(
 			}
 
 			const html = await response.text();
-			return findKnownGateInHtml(html);
+			const fromHtml = findKnownGateInHtml(html, current);
+			if (fromHtml) return fromHtml;
+
+			const bandcampHomepage = findBandcampHomepageInHtml(html);
+			if (bandcampHomepage && bandcampHomepage !== current) {
+				current = bandcampHomepage;
+				continue;
+			}
+			return null;
 		}
 	} catch {
 		return null;

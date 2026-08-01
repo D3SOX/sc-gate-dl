@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import {
 	artistTitleFilename,
 	cookiesToNetscape,
+	findBandcampHomepageInHtml,
 	findKnownGateInHtml,
 	previewProcessedFilename,
 	resolveGateProviderUrl,
@@ -128,6 +129,25 @@ describe('resolveGateProviderUrl', () => {
 });
 
 describe('findKnownGateInHtml', () => {
+	test('follows a smart-link Bandcamp homepage to its newest album', () => {
+		const smartLinkHtml = `
+			<script>
+				window.preloadLink = {"services":[{"url":"https:\\/\\/underzoneco.bandcamp.com\\/","service_name":"bandcamp"}]};
+			</script>
+		`;
+		const homepage = findBandcampHomepageInHtml(smartLinkHtml);
+		expect(homepage).toBe('https://underzoneco.bandcamp.com/');
+
+		const bandcampHtml = `
+			<a href="/track/unrelated-featured-track">Featured track</a>
+			<a href="/album/club-anthems-vol-4">Club Anthems Vol. 4</a>
+		`;
+		expect(findKnownGateInHtml(bandcampHtml, homepage ?? undefined)).toEqual({
+			url: 'https://underzoneco.bandcamp.com/album/club-anthems-vol-4',
+			provider: 'bandcamp',
+		});
+	});
+
 	test('finds embedded Hypeddit destination in smart-link HTML', () => {
 		const html = `
 			<script>
