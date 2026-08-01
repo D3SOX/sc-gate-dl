@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         sc-gate-dl
 // @namespace    https://github.com/D3SOX/sc-gate-dl
-// @version      1.9.0
+// @version      1.9.1
 // @description  Add sc-gate-dl download controls and remember your position in the SoundCloud feed
 // @author       D3SOX
 // @match        https://soundcloud.com/*
@@ -439,13 +439,19 @@
 	}
 
 	function checkpointLabelFromCard(card, url) {
-		const title = card
-			.querySelector('a.soundTitle__title, a[href][class*="soundTitle"]')
+		const normalizedUrl = normalizeTrackUrl(url);
+		const title = Array.from(card.querySelectorAll('a[href]'))
+			.find(
+				(link) =>
+					!link.matches('.soundTitle__username, [class*="username"]') &&
+					normalizeTrackUrl(link.href) === normalizedUrl &&
+					link.textContent?.trim(),
+			)
 			?.textContent?.trim();
 		const artist = card
 			.querySelector('.soundTitle__username, a.soundTitle__username')
 			?.textContent?.trim();
-		return title
+		return title && title !== artist
 			? artist
 				? `${artist} — ${title}`
 				: title
@@ -475,10 +481,17 @@
 		const saved = loadFeedCheckpoint();
 		const timestamp = feedTimestamp(card);
 		if (!shouldAdvanceCheckpoint(saved, card, timestamp)) return;
-		if (saved?.url === url) return;
+		const label = checkpointLabelFromCard(card, url);
+		if (saved?.url === url) {
+			if (saved.label !== label) {
+				persistFeedCheckpoint({ ...saved, label });
+				updateFeedNavigator();
+			}
+			return;
+		}
 		persistFeedCheckpoint({
 			url,
-			label: checkpointLabelFromCard(card, url),
+			label,
 			feedTimestamp: timestamp,
 			savedAt: Date.now(),
 		});
