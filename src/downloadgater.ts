@@ -83,85 +83,88 @@ export class DownloadgaterDownloader {
 		);
 
 		const page = await this.browser.newPage();
-		await page.setViewport({ width: 1920, height: 1080 });
-		await page.goto(url, { waitUntil: 'domcontentloaded' });
 		try {
-			await page.waitForNetworkIdle({ timeout: 15_000, idleTime: 10 });
-		} catch {
-			// continue
-		}
-
-		await this.clickFreeDownload(page);
-
-		let soundcloudAttempted = false;
-		const deadline = Date.now() + 180_000;
-		while (Date.now() < deadline) {
-			if (await this.hasDownloadButton(page)) break;
-
-			// Post-OAuth UI can show "Verified unlock" / Finish before Download file.
-			await this.clickUnlockFinishIfPresent(page);
-			if (await this.hasDownloadButton(page)) break;
-
-			const pane = await this.detectPane(page);
-			console.log('DownloadGater pane:', pane);
-
-			if (pane === 'instagram') {
-				this.emitProgress(
-					'handling_gates',
-					'Handling DownloadGater Instagram follows...',
-					40,
-					{ currentGate: 'ig' },
-				);
-				await this.handleInstagramStep(page);
-				continue;
+			await page.setViewport({ width: 1920, height: 1080 });
+			await page.goto(url, { waitUntil: 'domcontentloaded' });
+			try {
+				await page.waitForNetworkIdle({ timeout: 15_000, idleTime: 10 });
+			} catch {
+				// continue
 			}
 
-			if (pane === 'soundcloud') {
-				if (soundcloudAttempted) {
-					const urlError = await this.readSoundcloudUrlError(page);
-					if (urlError) {
-						throw new Error(
-							`DownloadGater SoundCloud unlock failed: ${urlError}`,
-						);
-					}
-					// Still hydrating unlock → Download file; do not re-click Connect.
-					await timeout(500);
+			await this.clickFreeDownload(page);
+
+			let soundcloudAttempted = false;
+			const deadline = Date.now() + 180_000;
+			while (Date.now() < deadline) {
+				if (await this.hasDownloadButton(page)) break;
+
+				// Post-OAuth UI can show "Verified unlock" / Finish before Download file.
+				await this.clickUnlockFinishIfPresent(page);
+				if (await this.hasDownloadButton(page)) break;
+
+				const pane = await this.detectPane(page);
+				console.log('DownloadGater pane:', pane);
+
+				if (pane === 'instagram') {
+					this.emitProgress(
+						'handling_gates',
+						'Handling DownloadGater Instagram follows...',
+						40,
+						{ currentGate: 'ig' },
+					);
+					await this.handleInstagramStep(page);
 					continue;
 				}
-				soundcloudAttempted = true;
-				this.emitProgress(
-					'handling_gates',
-					'Connecting SoundCloud on DownloadGater...',
-					55,
-					{ currentGate: 'sc' },
-				);
-				await this.handleSoundcloudConnect(page);
-				continue;
+
+				if (pane === 'soundcloud') {
+					if (soundcloudAttempted) {
+						const urlError = await this.readSoundcloudUrlError(page);
+						if (urlError) {
+							throw new Error(
+								`DownloadGater SoundCloud unlock failed: ${urlError}`,
+							);
+						}
+						// Still hydrating unlock → Download file; do not re-click Connect.
+						await timeout(500);
+						continue;
+					}
+					soundcloudAttempted = true;
+					this.emitProgress(
+						'handling_gates',
+						'Connecting SoundCloud on DownloadGater...',
+						55,
+						{ currentGate: 'sc' },
+					);
+					await this.handleSoundcloudConnect(page);
+					continue;
+				}
+
+				if (pane === 'spotify') {
+					this.emitProgress(
+						'handling_gates',
+						'Handling DownloadGater Spotify step...',
+						35,
+						{ currentGate: 'sp' },
+					);
+					await this.handleSpotifyStep(page);
+					continue;
+				}
+
+				await timeout(500);
 			}
 
-			if (pane === 'spotify') {
-				this.emitProgress(
-					'handling_gates',
-					'Handling DownloadGater Spotify step...',
-					35,
-					{ currentGate: 'sp' },
+			if (!(await this.hasDownloadButton(page))) {
+				throw new Error(
+					'DownloadGater download button never appeared after completing gates.',
 				);
-				await this.handleSpotifyStep(page);
-				continue;
 			}
 
-			await timeout(500);
+			await this.handleDownload(page);
+			return this.downloadFilename;
+		} finally {
+			await page.close().catch(() => {});
 		}
-
-		if (!(await this.hasDownloadButton(page))) {
-			throw new Error(
-				'DownloadGater download button never appeared after completing gates.',
-			);
-		}
-
-		await this.handleDownload(page);
-		await page.close();
-		return this.downloadFilename;
 	}
 
 	async close() {
@@ -280,6 +283,7 @@ export class DownloadgaterDownloader {
 			confirmationTimeoutMs: number;
 		},
 	) {
+		const popupUrlPattern = new RegExp(options.popupUrlPattern, 'i');
 		for (let attempt = 0; attempt < options.maxAttempts; attempt++) {
 			if ((await this.detectPane(page)) !== options.pane) return;
 			if (await this.hasDownloadButton(page)) return;
@@ -309,15 +313,13 @@ export class DownloadgaterDownloader {
 					(candidate) =>
 						candidate !== page &&
 						!pagesBefore.has(candidate) &&
-						candidate.url() !== 'about:blank',
-				);
-				popup ??= pages.find(
-					(candidate) =>
-						candidate !== page &&
-						!pagesBefore.has(candidate) &&
-						new RegExp(options.popupUrlPattern, 'i').test(candidate.url()),
+						popupUrlPattern.test(candidate.url()),
 				);
 				if (!popup) await timeout(200);
+			}
+			if (!popup) {
+				await timeout(500);
+				continue;
 			}
 
 			await page
