@@ -503,6 +503,30 @@
 	animation: shimmer 2s infinite;
 }
 
+.progress-fill-indeterminate {
+	width: 40%;
+	transition: none;
+	animation: progress-indeterminate 1.4s ease-in-out infinite;
+}
+
+@keyframes progress-indeterminate {
+	from {
+		transform: translateX(-100%);
+	}
+
+	to {
+		transform: translateX(250%);
+	}
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.progress-fill-indeterminate {
+		width: 100%;
+		opacity: 0.65;
+		animation: none;
+	}
+}
+
 .progress-stats {
 	display: flex;
 	justify-content: space-between;

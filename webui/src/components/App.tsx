@@ -1132,6 +1132,16 @@ export default function App() {
 										</span>
 									)}
 								</div>
+								{isHandlingGate && (
+									<div
+										className="progress-bar"
+										role="progressbar"
+										aria-label="Gate progress"
+										aria-valuetext={job.progress?.message || 'Handling gate'}
+									>
+										<div className="progress-fill progress-fill-indeterminate" />
+									</div>
+								)}
 								{step === 'download' && (
 									<>
 										<div className="progress-bar">
