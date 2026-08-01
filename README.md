@@ -102,6 +102,16 @@ If you want to use the CLI and not be prompted for values every time, you can cr
 cp config.example.json config.json
 ```
 
+Set `xvfb` to `true` to keep the browser window invisible while running
+CloakBrowser in headed mode. This avoids Chromium's detectable headless rendering
+path. Install `xorg-server-xvfb` on Arch Linux (`xvfb` on Debian/Ubuntu) first.
+
+For anti-bot sites, configure a residential proxy with
+`CLOAKBROWSER_PROXY` (SOCKS5 is preferred when available). Proxy GeoIP matching
+and humanized browser input are enabled automatically; set
+`CLOAKBROWSER_GEOIP=false` only to opt out. The Web UI also exposes Xvfb mode
+next to its headful-browser option.
+
 ## Usage
 
 ### CLI
@@ -142,7 +152,7 @@ Wait for Astro to be started. It will then tell you the address it's available o
 
 If it's the first time you're running it you will need to initialize the logins by clicking the button in the footer.
 
-You can deep-link a track with `?url=` (also accepted as `?soundcloudUrl=`) and optional `outputFormat` (`mp3-320` or `original`), which pre-fills the form and starts the job:
+You can deep-link a track with `?url=` (also accepted as `?soundcloudUrl=`) and optional `outputFormat` (`mp3-320`, `flac`, or `original`), which pre-fills the form and starts the job. FLAC output preserves lossless sources; converting a lossy source to FLAC changes the container but cannot restore lost quality.
 
 ```text
 http://localhost:4321/?url=https://soundcloud.com/artist/track&outputFormat=mp3-320

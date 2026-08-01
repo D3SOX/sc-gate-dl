@@ -12,7 +12,12 @@ import { HypedditDownloader } from './hypeddit';
 import { HypedditHttpDownloader } from './hypedditHttp';
 import { jobStore } from './jobStore';
 import { SoundcloudClient } from './soundcloud';
-import type { Job, Metadata, OutputFormat } from './types';
+import {
+	isBrowserMode,
+	type Job,
+	type Metadata,
+	type OutputFormat,
+} from './types';
 import {
 	artistTitleFilename,
 	extractAndResolveGateUrl,
@@ -225,7 +230,7 @@ async function runDownloadProcess(jobId: string): Promise<void> {
 			name: HYPEDDIT_NAME,
 			email: HYPEDDIT_EMAIL,
 			comment: SC_COMMENT,
-			headless: job.headless,
+			browserMode: job.browserMode,
 		};
 
 		const prepareBrowserConfig = async () => {
@@ -439,6 +444,12 @@ async function runDownloadProcess(jobId: string): Promise<void> {
 		}
 
 		jobStore.update(jobId, { downloadFilename });
+		if (job.outputFormat === 'flac') {
+			const sourceIsLossless = await audioProcessor.isLosslessAudio(
+				join('./downloads', downloadFilename),
+			);
+			jobStore.update(jobId, { sourceIsLossless });
+		}
 
 		if (job.outputFormat === 'original') {
 			jobStore.update(jobId, { outputFilename: downloadFilename });
@@ -629,7 +640,7 @@ const server = Bun.serve({
 						name: HYPEDDIT_NAME,
 						email: HYPEDDIT_EMAIL,
 						comment: SC_COMMENT,
-						headless: false,
+						browserMode: 'headed',
 					});
 
 					await loginDownloader.initialize();
@@ -679,10 +690,13 @@ const server = Bun.serve({
 					if (
 						outputFormat !== undefined &&
 						outputFormat !== 'original' &&
-						outputFormat !== 'mp3-320'
+						outputFormat !== 'mp3-320' &&
+						outputFormat !== 'flac'
 					) {
 						return jsonResponse(
-							{ error: 'outputFormat must be "original" or "mp3-320"' },
+							{
+								error: 'outputFormat must be "original", "mp3-320", or "flac"',
+							},
 							{ status: 400 },
 						);
 					}
@@ -897,10 +911,32 @@ const server = Bun.serve({
 					jobStore.clearCancelled(jobId);
 
 					try {
-						const body = (await req.json()) as { headless?: boolean };
-						if (typeof body.headless === 'boolean') {
-							jobStore.update(jobId, { headless: body.headless });
+						const body = (await req.json()) as Record<string, unknown>;
+						let browserMode: Job['browserMode'] | undefined;
+						if (body.browserMode !== undefined) {
+							if (!isBrowserMode(body.browserMode)) {
+								return jsonResponse(
+									{ error: 'Invalid browser mode' },
+									{ status: 400 },
+								);
+							}
+							browserMode = body.browserMode;
+						} else if (
+							typeof body.headless === 'boolean' &&
+							body.xvfb === undefined
+						) {
+							// Backward compatibility for clients predating the mode selector.
+							browserMode = body.headless ? 'headless' : 'headed';
+						} else if (body.headless !== undefined || body.xvfb !== undefined) {
+							return jsonResponse(
+								{
+									error:
+										'Use browserMode instead of headless/xvfb combinations',
+								},
+								{ status: 400 },
+							);
 						}
+						if (browserMode) jobStore.update(jobId, { browserMode });
 					} catch {
 						// No/empty JSON body — keep job default / BROWSER_HEADLESS
 					}
@@ -1068,9 +1104,11 @@ const server = Bun.serve({
 					defaultMetadata: job.defaultMetadata,
 					existingMetadata: job.existingMetadata,
 					outputFormat: job.outputFormat,
+					browserMode: job.browserMode,
 					progress: job.progress,
 					downloadFilename: job.downloadFilename,
 					outputFilename: job.outputFilename,
+					sourceIsLossless: job.sourceIsLossless,
 					hasArtwork: !!job.artworkBuffer,
 					error: job.error,
 				});
@@ -1237,6 +1275,7 @@ const server = Bun.serve({
 						metadata,
 						artwork,
 						'always',
+						job.outputFormat,
 					);
 
 					let outputFilename = basename(outputPath);
@@ -1244,7 +1283,11 @@ const server = Bun.serve({
 						outputFilename = await renameDownloadFile(
 							jobId,
 							outputFilename,
-							artistTitleFilename(metadata.artist, metadata.title, '.mp3'),
+							artistTitleFilename(
+								metadata.artist,
+								metadata.title,
+								job.outputFormat === 'flac' ? '.flac' : '.mp3',
+							),
 						);
 					}
 					jobStore.update(jobId, {

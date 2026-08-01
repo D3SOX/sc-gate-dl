@@ -1,6 +1,6 @@
 import { Presets, SingleBar } from 'cli-progress';
 import type { Browser, Page } from 'puppeteer';
-import { launchAppBrowser } from './browserLaunch';
+import { browserModeToLaunchOptions, launchAppBrowser } from './browserLaunch';
 import Selectors from './selectors';
 import type { HypedditConfig, JobProgress, JobStage } from './types';
 import { loadCookies, REPO_URL, timeout } from './utils';
@@ -101,7 +101,7 @@ export class HypedditDownloader {
 
 	async initialize() {
 		this.browser = await launchAppBrowser({
-			headless: this.config.headless,
+			...browserModeToLaunchOptions(this.config.browserMode),
 			userDataDir: this.config.userDataDir ?? './browser-data',
 		});
 

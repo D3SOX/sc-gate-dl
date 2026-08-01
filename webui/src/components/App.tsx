@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Toaster, toast } from 'sonner';
+import type { BrowserMode } from '../../../src/types';
 import './App.css';
+import { readStoredBrowserMode, shouldAutoStartDeepLink } from './deepLink';
 
 type Step = 'url' | 'gate' | 'download' | 'metadata' | 'complete';
-type OutputFormat = 'original' | 'mp3-320';
+type OutputFormat = 'original' | 'mp3-320' | 'flac';
 
 interface Metadata {
 	title?: string;
@@ -53,10 +55,12 @@ interface JobState {
 	progress: JobProgress | null;
 	downloadFilename: string | null;
 	outputFilename: string | null;
+	sourceIsLossless: boolean | null;
 	error: string | null;
 }
 
 const API_BASE = 'http://localhost:3000';
+const BROWSER_MODE_STORAGE_KEY = 'sc-gate-dl-browser-mode';
 
 const ALLOWED_HOST_ORIGINS = new Set([
 	'https://soundcloud.com',
@@ -75,8 +79,7 @@ function notifyParent(
 }
 
 /** Promo fluff often glued onto SoundCloud / gate titles. */
-const PROMO_TAG =
-	String.raw`free\s*d(?:own)?l(?:oad)?s?|free[\s._-]*dl|freedl|out\s*now|premiere|exclusive`;
+const PROMO_TAG = String.raw`free\s*d(?:own)?l(?:oad)?s?|free[\s._-]*dl|freedl|out\s*now|premiere|exclusive`;
 
 function cleanPromoTags(value: string): string {
 	if (!value) return value;
@@ -87,18 +90,15 @@ function cleanPromoTags(value: string): string {
 		' ',
 	);
 	result = result.replace(
-		new RegExp(
-			String.raw`(?:\s*[-–—|/·•]+\s*|\s+)(?:${PROMO_TAG})\s*$`,
-			'gi',
-		),
+		new RegExp(String.raw`(?:\s*[-–—|/·•]+\s*|\s+)(?:${PROMO_TAG})\s*$`, 'gi'),
 		'',
 	);
-	result = result.replace(new RegExp(String.raw`(?:${PROMO_TAG})\s*$`, 'gi'), '');
 	result = result.replace(
-		new RegExp(
-			String.raw`^\s*(?:${PROMO_TAG})(?:\s*[-–—|/·•]+\s*|\s+)`,
-			'gi',
-		),
+		new RegExp(String.raw`(?:${PROMO_TAG})\s*$`, 'gi'),
+		'',
+	);
+	result = result.replace(
+		new RegExp(String.raw`^\s*(?:${PROMO_TAG})(?:\s*[-–—|/·•]+\s*|\s+)`, 'gi'),
 		'',
 	);
 	result = result.replace(/\s{2,}/g, ' ');
@@ -150,10 +150,14 @@ function sanitizeFilenamePart(value: string): string {
 		.trim();
 }
 
-function artistTitleFilename(artist?: string, title?: string): string {
+function artistTitleFilename(
+	artist?: string,
+	title?: string,
+	extension = '.mp3',
+): string {
 	const safeArtist = sanitizeFilenamePart(artist || '') || 'Unknown Artist';
 	const safeTitle = sanitizeFilenamePart(title || '') || 'Unknown Title';
-	return `${safeArtist} - ${safeTitle}.mp3`;
+	return `${safeArtist} - ${safeTitle}${extension}`;
 }
 
 function needsMp3Conversion(filename: string): boolean {
@@ -177,11 +181,16 @@ function previewProcessedFilename(
 		nameAsArtistTitle: boolean;
 		artist?: string;
 		title?: string;
+		outputFormat: OutputFormat;
 	},
 ): string {
 	if (!downloadFilename) return '';
+	const extension = options.outputFormat === 'flac' ? '.flac' : '.mp3';
 	if (options.nameAsArtistTitle) {
-		return artistTitleFilename(options.artist, options.title);
+		return artistTitleFilename(options.artist, options.title, extension);
+	}
+	if (options.outputFormat === 'flac') {
+		return downloadFilename.replace(/\.[^.]+$/i, '.flac');
 	}
 	if (needsMp3Conversion(downloadFilename)) {
 		return downloadFilename.replace(
@@ -198,7 +207,8 @@ export default function App() {
 	const [hypedditUrlInput, setHypedditUrlInput] = useState('');
 	const [skipAutomaticHypedditFetch, setSkipAutomaticHypedditFetch] =
 		useState(false);
-	const [headfulMode, setHeadfulMode] = useState(false);
+	const [browserMode, setBrowserMode] = useState<BrowserMode>('headless');
+	const [browserModeHydrated, setBrowserModeHydrated] = useState(false);
 	const [outputFormat, setOutputFormat] = useState<OutputFormat>('mp3-320');
 	const [job, setJob] = useState<JobState>({
 		jobId: null,
@@ -210,6 +220,7 @@ export default function App() {
 		progress: null,
 		downloadFilename: null,
 		outputFilename: null,
+		sourceIsLossless: null,
 		error: null,
 	});
 	const [metadata, setMetadata] = useState<Metadata>({
@@ -218,6 +229,29 @@ export default function App() {
 		album: '',
 		genre: '',
 	});
+
+	useEffect(() => {
+		try {
+			const storedMode = readStoredBrowserMode(
+				localStorage,
+				BROWSER_MODE_STORAGE_KEY,
+			);
+			if (storedMode) setBrowserMode(storedMode);
+		} catch {
+			// Storage may be blocked when the Web UI is embedded cross-origin.
+		} finally {
+			setBrowserModeHydrated(true);
+		}
+	}, []);
+
+	const updateBrowserMode = (mode: BrowserMode) => {
+		setBrowserMode(mode);
+		try {
+			localStorage.setItem(BROWSER_MODE_STORAGE_KEY, mode);
+		} catch {
+			// Keep the in-memory selection when persistent storage is unavailable.
+		}
+	};
 	const [customArtwork, setCustomArtwork] = useState<File | null>(null);
 	const [nameAsArtistTitle, setNameAsArtistTitle] = useState(false);
 	const [isLoading, setIsLoading] = useState(false);
@@ -313,7 +347,9 @@ export default function App() {
 				const response = await fetch(`${API_BASE}/api/job/${jobId}/start`, {
 					method: 'POST',
 					headers: { 'Content-Type': 'application/json' },
-					body: JSON.stringify({ headless: !headfulMode }),
+					body: JSON.stringify({
+						browserMode,
+					}),
 				});
 
 				if (!response.ok) {
@@ -364,6 +400,7 @@ export default function App() {
 									outputFilename: data.outputFilename,
 									existingMetadata: data.existingMetadata,
 									outputFormat: data.outputFormat,
+									sourceIsLossless: data.sourceIsLossless,
 								}));
 								setStep(
 									data.outputFormat === 'original' ? 'complete' : 'metadata',
@@ -417,7 +454,7 @@ export default function App() {
 				}));
 			}
 		},
-		[headfulMode, showCleanupSoundcloudToast],
+		[browserMode, showCleanupSoundcloudToast],
 	);
 
 	const cancelDownload = useCallback(async () => {
@@ -440,8 +477,7 @@ export default function App() {
 		} catch (err) {
 			setJob((prev) => ({
 				...prev,
-				error:
-					err instanceof Error ? err.message : 'Failed to cancel download',
+				error: err instanceof Error ? err.message : 'Failed to cancel download',
 			}));
 			return;
 		}
@@ -543,10 +579,17 @@ export default function App() {
 
 	// Userscript / deep-link: ?url=&outputFormat= pre-fills and starts a job
 	useEffect(() => {
-		if (autoStartedFromQueryRef.current) return;
 		const params = new URLSearchParams(window.location.search);
 		let queryUrl = params.get('url') || params.get('soundcloudUrl');
-		if (!queryUrl) return;
+		if (
+			!shouldAutoStartDeepLink(
+				browserModeHydrated,
+				autoStartedFromQueryRef.current,
+				queryUrl,
+			)
+		) {
+			return;
+		}
 		autoStartedFromQueryRef.current = true;
 
 		// New SC listen layout may pass /n/artist/track — normalize to /artist/track
@@ -565,7 +608,9 @@ export default function App() {
 
 		const formatParam = params.get('outputFormat');
 		const format: OutputFormat | undefined =
-			formatParam === 'original' || formatParam === 'mp3-320'
+			formatParam === 'original' ||
+			formatParam === 'mp3-320' ||
+			formatParam === 'flac'
 				? formatParam
 				: undefined;
 		if (format) {
@@ -573,7 +618,7 @@ export default function App() {
 		}
 		setSoundcloudUrl(queryUrl);
 		void createJob(queryUrl, format);
-	}, [createJob]);
+	}, [browserModeHydrated, createJob]);
 
 	// Set Hypeddit URL and start download
 	const handleHypedditSubmit = async (e: React.FormEvent) => {
@@ -751,6 +796,7 @@ export default function App() {
 		nameAsArtistTitle,
 		artist: metadata.artist,
 		title: metadata.title,
+		outputFormat: job.outputFormat,
 	});
 	const isHandlingGate =
 		step === 'gate' && GATE_PROGRESS_STAGES.has(job.progress?.stage ?? '');
@@ -775,7 +821,6 @@ export default function App() {
 		setSoundcloudUrl('');
 		setHypedditUrlInput('');
 		setSkipAutomaticHypedditFetch(false);
-		setHeadfulMode(false);
 		setJob({
 			jobId: null,
 			track: null,
@@ -786,6 +831,7 @@ export default function App() {
 			progress: null,
 			downloadFilename: null,
 			outputFilename: null,
+			sourceIsLossless: null,
 			error: null,
 		});
 		setMetadata({ title: '', artist: '', album: '', genre: '' });
@@ -951,7 +997,23 @@ export default function App() {
 									disabled={isLoading}
 								>
 									<option value="mp3-320">MP3 320 kbps</option>
+									<option value="flac">FLAC</option>
 									<option value="original">Original file</option>
+								</select>
+							</div>
+							<div className="form-group url-settings-format">
+								<label htmlFor="browser-mode">Browser Mode</label>
+								<select
+									id="browser-mode"
+									value={browserMode}
+									onChange={(e) =>
+										updateBrowserMode(e.target.value as BrowserMode)
+									}
+									disabled={isLoading}
+								>
+									<option value="headless">Headless</option>
+									<option value="xvfb">Invisible headed (Xvfb)</option>
+									<option value="headed">Visible headed window</option>
 								</select>
 							</div>
 							<div className="checkbox-settings">
@@ -966,16 +1028,6 @@ export default function App() {
 										disabled={isLoading}
 									/>
 									<span>Skip automatic gate link fetching</span>
-								</label>
-								<label className="checkbox-row" htmlFor="headful-mode">
-									<input
-										id="headful-mode"
-										type="checkbox"
-										checked={headfulMode}
-										onChange={(e) => setHeadfulMode(e.target.checked)}
-										disabled={isLoading}
-									/>
-									<span>Show browser window (headful)</span>
 								</label>
 							</div>
 						</div>
@@ -1018,16 +1070,21 @@ export default function App() {
 									disabled={isLoading}
 								/>
 							</div>
-							<label className="checkbox-row" htmlFor="headful-mode-gate">
-								<input
-									id="headful-mode-gate"
-									type="checkbox"
-									checked={headfulMode}
-									onChange={(e) => setHeadfulMode(e.target.checked)}
+							<div className="form-group url-settings-format">
+								<label htmlFor="browser-mode-gate">Browser Mode</label>
+								<select
+									id="browser-mode-gate"
+									value={browserMode}
+									onChange={(e) =>
+										updateBrowserMode(e.target.value as BrowserMode)
+									}
 									disabled={isLoading}
-								/>
-								<span>Show browser window (headful)</span>
-							</label>
+								>
+									<option value="headless">Headless</option>
+									<option value="xvfb">Invisible headed (Xvfb)</option>
+									<option value="headed">Visible headed window</option>
+								</select>
+							</div>
 							<button
 								type="submit"
 								className="btn-primary"
@@ -1083,9 +1140,13 @@ export default function App() {
 												type="button"
 												className="bandcamp-track-option"
 												disabled={isLoading}
-												onClick={() => void handleBandcampTrackSelect(track.url)}
+												onClick={() =>
+													void handleBandcampTrackSelect(track.url)
+												}
 											>
-												<span className="bandcamp-track-title">{track.title}</span>
+												<span className="bandcamp-track-title">
+													{track.title}
+												</span>
 												{track.score > 0 ? (
 													<span className="bandcamp-track-score">
 														{Math.round(track.score * 100)}% match
@@ -1118,6 +1179,16 @@ export default function App() {
 										</span>
 									)}
 								</div>
+								{isHandlingGate && (
+									<div
+										className="progress-bar"
+										role="progressbar"
+										aria-label="Gate progress"
+										aria-valuetext={job.progress?.message || 'Handling gate'}
+									>
+										<div className="progress-fill progress-fill-indeterminate" />
+									</div>
+								)}
 								{step === 'download' && (
 									<>
 										<div className="progress-bar">
@@ -1131,9 +1202,12 @@ export default function App() {
 											{job.progress?.downloadBytes !== undefined &&
 												job.progress?.totalBytes !== undefined && (
 													<span>
-														{(job.progress.downloadBytes / 1024 / 1024).toFixed(1)}{' '}
+														{(job.progress.downloadBytes / 1024 / 1024).toFixed(
+															1,
+														)}{' '}
 														/{' '}
-														{(job.progress.totalBytes / 1024 / 1024).toFixed(1)} MB
+														{(job.progress.totalBytes / 1024 / 1024).toFixed(1)}{' '}
+														MB
 													</span>
 												)}
 										</div>
@@ -1164,6 +1238,16 @@ export default function App() {
 						onSubmit={handleMetadataSubmit}
 						className="form metadata-form animate-slide-up"
 					>
+						{job.outputFormat === 'flac' && job.sourceIsLossless === false ? (
+							<div className="notice">
+								<span className="notice-icon">i</span>
+								<p>
+									The downloaded source is lossy. It will be converted to FLAC
+									as selected, but the conversion cannot restore lost audio
+									quality.
+								</p>
+							</div>
+						) : null}
 						{existingTagRows.length > 0 ? (
 							<div className="existing-metadata">
 								<div>
@@ -1402,7 +1486,9 @@ export default function App() {
 							>
 								{job.outputFormat === 'original'
 									? 'Download Original'
-									: 'Download MP3'}
+									: job.outputFormat === 'flac'
+										? 'Download FLAC'
+										: 'Download MP3'}
 							</a>
 							<button
 								type="button"

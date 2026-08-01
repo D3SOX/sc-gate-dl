@@ -34,6 +34,7 @@
 		"cloakbrowser": "^0.5.3",
 		"execa": "^10.0.1",
 		"find-bin": "^1.1.1",
+		"mmdb-lib": "^3.0.2",
 		"puppeteer": "^25.4.0",
 		"soundcloud.ts": "^0.7.4"
 	},

@@ -9,13 +9,19 @@ export interface LocalCookieData {
 	sameSite?: string;
 }
 
+export type BrowserMode = 'headless' | 'xvfb' | 'headed';
+
+export function isBrowserMode(value: unknown): value is BrowserMode {
+	return value === 'headless' || value === 'xvfb' || value === 'headed';
+}
+
 export interface HypedditConfig {
 	/** Optional — only needed for Hypeddit/GateRush email gates that ask for a name. */
 	name?: string;
 	/** Optional — only needed for Hypeddit/GateRush email gates. */
 	email?: string;
 	comment: string;
-	headless: boolean;
+	browserMode: BrowserMode;
 	/** Persistent Chromium profile. Defaults to `./browser-data`. */
 	userDataDir?: string;
 }
@@ -27,7 +33,7 @@ export interface Metadata {
 	genre?: string;
 }
 
-export type OutputFormat = 'original' | 'mp3-320';
+export type OutputFormat = 'original' | 'mp3-320' | 'flac';
 
 // Job system types for Web UI
 export type JobStage =
@@ -72,8 +78,7 @@ export interface Job {
 	hypedditUrl: string | null;
 	/** Candidates when Bandcamp album auto-match fails (cleared after pick). */
 	bandcampAlbumTracks: BandcampAlbumTrackChoice[] | null;
-	/** Whether browser automation runs headless. Defaults to true. */
-	headless: boolean;
+	browserMode: BrowserMode;
 	outputFormat: OutputFormat;
 	/** Set when the user cancels; download loop should stop and close the browser. */
 	cancelled: boolean;
@@ -98,6 +103,8 @@ export interface Job {
 	progress: JobProgress;
 	downloadFilename: string | null;
 	outputFilename: string | null;
+	/** Whether the downloaded source codec is lossless, when probed for FLAC output. */
+	sourceIsLossless: boolean | null;
 	artworkBuffer: ArrayBuffer | null;
 	artworkFileName: string | null;
 	error: string | null;

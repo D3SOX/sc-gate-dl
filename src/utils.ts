@@ -397,6 +397,92 @@ function matchBandcampUrl(
 	return null;
 }
 
+function normalizeBandcampHomepageUrl(value: string): string | null {
+	try {
+		const url = new URL(trimExtractedUrl(value).replace(/&amp;/g, '&'));
+		if (
+			url.hostname !== 'bandcamp.com' &&
+			url.hostname.endsWith('.bandcamp.com') &&
+			!url.port &&
+			(url.pathname === '' || url.pathname === '/')
+		) {
+			return `https://${url.hostname}/`;
+		}
+	} catch {
+		// Not a valid Bandcamp artist homepage.
+	}
+	return null;
+}
+
+function extractAssignedJsonObject(html: string, assignment: RegExp): unknown {
+	const assignmentMatch = assignment.exec(html);
+	if (!assignmentMatch) return null;
+	const start = html.indexOf(
+		'{',
+		assignmentMatch.index + assignmentMatch[0].length,
+	);
+	if (start < 0) return null;
+
+	let depth = 0;
+	let inString = false;
+	let escaped = false;
+	for (let index = start; index < html.length; index++) {
+		const char = html[index];
+		if (inString) {
+			if (escaped) escaped = false;
+			else if (char === '\\') escaped = true;
+			else if (char === '"') inString = false;
+			continue;
+		}
+		if (char === '"') inString = true;
+		else if (char === '{') depth += 1;
+		else if (char === '}' && --depth === 0) {
+			try {
+				return JSON.parse(html.slice(start, index + 1));
+			} catch {
+				return null;
+			}
+		}
+	}
+	return null;
+}
+
+/** Find an artist's bare Bandcamp homepage embedded in a smart-link page. */
+export function findBandcampHomepageInHtml(html: string): string | null {
+	const normalized = html.replace(/\\\//g, '/');
+	const preloadLink = extractAssignedJsonObject(
+		normalized,
+		/window\.preloadLink\s*=/i,
+	);
+	if (preloadLink && typeof preloadLink === 'object') {
+		const services = (preloadLink as { services?: unknown }).services;
+		if (Array.isArray(services)) {
+			for (const service of services) {
+				if (
+					service &&
+					typeof service === 'object' &&
+					(service as { service_name?: unknown }).service_name === 'bandcamp'
+				) {
+					const url = (service as { url?: unknown }).url;
+					const homepage =
+						typeof url === 'string' ? normalizeBandcampHomepageUrl(url) : null;
+					if (homepage) return homepage;
+				}
+			}
+		}
+	}
+
+	for (const match of normalized.match(ANY_HTTP_URL_RE) ?? []) {
+		try {
+			const homepage = normalizeBandcampHomepageUrl(match);
+			if (homepage) return homepage;
+		} catch {
+			// Ignore malformed URLs embedded in page scripts.
+		}
+	}
+	return null;
+}
+
 function matchDirectDownloadUrl(
 	value: string,
 ): { url: string; provider: GateProvider } | null {
@@ -421,10 +507,11 @@ function matchDirectDownloadUrl(
  */
 export function findKnownGateInHtml(
 	html: string,
+	baseUrl?: string,
 ): { url: string; provider: GateProvider } | null {
 	const normalized = html.replace(/\\\//g, '/');
 	const direct = matchKnownDownloadGateUrl(normalized);
-	if (direct) return direct;
+	if (direct && direct.provider !== 'bandcamp') return direct;
 
 	const refresh =
 		normalized.match(
@@ -434,10 +521,53 @@ export function findKnownGateInHtml(
 			/content=["'][^"']*url=([^"'>\s]+)[^"']*["'][^>]*http-equiv=["']refresh["']/i,
 		);
 	if (refresh?.[1]) {
-		const target = refresh[1].replace(/&amp;/g, '&');
-		return matchKnownDownloadGateUrl(target);
+		const rawTarget = refresh[1].replace(/&amp;/g, '&');
+		let target = rawTarget;
+		if (baseUrl) {
+			try {
+				target = new URL(rawTarget, baseUrl).toString();
+			} catch {
+				target = rawTarget;
+			}
+		}
+		const refreshMatch = matchKnownDownloadGateUrl(target);
+		if (refreshMatch) return refreshMatch;
 	}
-	return null;
+
+	if (baseUrl) {
+		const relativeMatches = [...normalized.matchAll(/href=["']([^"']+)["']/gi)]
+			.map((match) => match[1])
+			.filter((target): target is string => Boolean(target))
+			.flatMap((target) => {
+				try {
+					const resolved = matchKnownDownloadGateUrl(
+						new URL(target.replace(/&amp;/g, '&'), baseUrl).toString(),
+					);
+					return resolved ? [resolved] : [];
+				} catch {
+					return [];
+				}
+			});
+
+		if (direct?.provider === 'bandcamp') relativeMatches.push(direct);
+
+		const traditional = relativeMatches.find((match) =>
+			['hypeddit', 'droploud', 'gaterush', 'downloadgater'].includes(
+				match.provider,
+			),
+		);
+		if (traditional) return traditional;
+
+		// Artist homepages often feature an unrelated track before their albums.
+		const album = relativeMatches.find(
+			(match) => match.provider === 'bandcamp' && isBandcampAlbumUrl(match.url),
+		);
+		if (album) return album;
+		return (
+			relativeMatches.find((match) => match.provider !== 'bandcamp') ?? null
+		);
+	}
+	return direct;
 }
 
 /**
@@ -495,7 +625,15 @@ export async function resolveUnknownGateUrl(
 			}
 
 			const html = await response.text();
-			return findKnownGateInHtml(html);
+			const fromHtml = findKnownGateInHtml(html, current);
+			if (fromHtml) return fromHtml;
+
+			const bandcampHomepage = findBandcampHomepageInHtml(html);
+			if (bandcampHomepage && bandcampHomepage !== current) {
+				current = bandcampHomepage;
+				continue;
+			}
+			return null;
 		}
 	} catch {
 		return null;
@@ -690,6 +828,10 @@ export function toMp3Filename(filename: string): string {
 	return filename.replace(MP3_CONVERTIBLE_EXT_PATTERN, '.mp3');
 }
 
+export function toFlacFilename(filename: string): string {
+	return filename.replace(/\.[^.]+$/i, '.flac');
+}
+
 /** @deprecated Prefer toMp3Filename */
 export function losslessToMp3Filename(filename: string): string {
 	return toMp3Filename(filename);
@@ -722,10 +864,15 @@ export function previewProcessedFilename(
 		nameAsArtistTitle: boolean;
 		artist?: string;
 		title?: string;
+		outputFormat?: 'mp3-320' | 'flac';
 	},
 ): string {
+	const extension = options.outputFormat === 'flac' ? '.flac' : '.mp3';
 	if (options.nameAsArtistTitle) {
-		return artistTitleFilename(options.artist, options.title, '.mp3');
+		return artistTitleFilename(options.artist, options.title, extension);
+	}
+	if (options.outputFormat === 'flac') {
+		return toFlacFilename(downloadFilename);
 	}
 	if (needsMp3Conversion(downloadFilename)) {
 		return toMp3Filename(downloadFilename);

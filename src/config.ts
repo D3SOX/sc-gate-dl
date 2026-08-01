@@ -33,6 +33,7 @@ export async function loadConfig(): Promise<AppConfig | null> {
 
 	const entries = CONFIG_KEYS.map((key) => {
 		if (!(key in raw)) {
+			if (key === 'xvfb') return [key, exampleConfig[key]] as const;
 			throw new Error(`config.json is missing required key: ${key}`);
 		}
 		const value = raw[key];

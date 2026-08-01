@@ -1,6 +1,6 @@
 import { Presets, SingleBar } from 'cli-progress';
 import type { Browser, Page } from 'puppeteer';
-import { launchAppBrowser } from './browserLaunch';
+import { launchConfiguredBrowser } from './browserLaunch';
 import type { ProgressCallback } from './hypeddit';
 import Selectors from './selectors';
 import type { HypedditConfig } from './types';
@@ -30,10 +30,7 @@ export class DownloadgaterDownloader {
 	}
 
 	async initialize() {
-		this.browser = await launchAppBrowser({
-			headless: this.config.headless,
-			userDataDir: this.config.userDataDir ?? './browser-data',
-		});
+		this.browser = await launchConfiguredBrowser(this.config);
 
 		const browserContext = this.browser.defaultBrowserContext();
 		const soundCloudCookies = await loadCookies('soundcloud-cookies.json');

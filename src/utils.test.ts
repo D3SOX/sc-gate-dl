@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import {
 	artistTitleFilename,
 	cookiesToNetscape,
+	findBandcampHomepageInHtml,
 	findKnownGateInHtml,
 	previewProcessedFilename,
 	resolveGateProviderUrl,
@@ -128,6 +129,61 @@ describe('resolveGateProviderUrl', () => {
 });
 
 describe('findKnownGateInHtml', () => {
+	test('follows a smart-link Bandcamp homepage to its newest album', () => {
+		const smartLinkHtml = `
+			<a href="https://unrelated.bandcamp.com/">Unrelated</a>
+			<script>
+				window.preloadLink = {"services":[{"url":"https:\\/\\/underzoneco.bandcamp.com\\/","service_name":"bandcamp"}]};
+			</script>
+		`;
+		const homepage = findBandcampHomepageInHtml(smartLinkHtml);
+		expect(homepage).toBe('https://underzoneco.bandcamp.com/');
+
+		const bandcampHtml = `
+			<a href="/track/unrelated-featured-track">Featured track</a>
+			<a href="/album/club-anthems-vol-4">Club Anthems Vol. 4</a>
+		`;
+		expect(findKnownGateInHtml(bandcampHtml, homepage ?? undefined)).toEqual({
+			url: 'https://underzoneco.bandcamp.com/album/club-anthems-vol-4',
+			provider: 'bandcamp',
+		});
+	});
+
+	test('does not fall back to an unrelated Bandcamp track', () => {
+		expect(
+			findKnownGateInHtml(
+				'<a href="/track/unrelated-featured-track">Featured track</a>',
+				'https://underzoneco.bandcamp.com/',
+			),
+		).toBeNull();
+	});
+
+	test('prefers a relative album over an earlier absolute featured track', () => {
+		const html = `
+			<a href="https://underzoneco.bandcamp.com/track/unrelated-featured-track">Featured</a>
+			<a href="/album/club-anthems-vol-4">Album</a>
+		`;
+		expect(
+			findKnownGateInHtml(html, 'https://underzoneco.bandcamp.com/'),
+		).toEqual({
+			url: 'https://underzoneco.bandcamp.com/album/club-anthems-vol-4',
+			provider: 'bandcamp',
+		});
+	});
+
+	test('scans links when a meta refresh is not a known gate', () => {
+		const html = `
+			<meta http-equiv="refresh" content="0;url=/news">
+			<a href="/album/club-anthems-vol-4">Album</a>
+		`;
+		expect(
+			findKnownGateInHtml(html, 'https://underzoneco.bandcamp.com/'),
+		).toEqual({
+			url: 'https://underzoneco.bandcamp.com/album/club-anthems-vol-4',
+			provider: 'bandcamp',
+		});
+	});
+
 	test('finds embedded Hypeddit destination in smart-link HTML', () => {
 		const html = `
 			<script>
@@ -279,5 +335,22 @@ describe('previewProcessedFilename', () => {
 		expect(
 			previewProcessedFilename('song.mp3', { nameAsArtistTitle: false }),
 		).toBe('song.mp3');
+	});
+
+	test('always previews a flac extension for flac output', () => {
+		expect(
+			previewProcessedFilename('song.mp3', {
+				nameAsArtistTitle: false,
+				outputFormat: 'flac',
+			}),
+		).toBe('song.flac');
+		expect(
+			previewProcessedFilename('song.m4a', {
+				nameAsArtistTitle: true,
+				artist: 'Artist',
+				title: 'Title',
+				outputFormat: 'flac',
+			}),
+		).toBe('Artist - Title.flac');
 	});
 });
