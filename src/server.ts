@@ -12,7 +12,12 @@ import { HypedditDownloader } from './hypeddit';
 import { HypedditHttpDownloader } from './hypedditHttp';
 import { jobStore } from './jobStore';
 import { SoundcloudClient } from './soundcloud';
-import type { Job, Metadata, OutputFormat } from './types';
+import {
+	isBrowserMode,
+	type Job,
+	type Metadata,
+	type OutputFormat,
+} from './types';
 import {
 	artistTitleFilename,
 	extractAndResolveGateUrl,
@@ -225,8 +230,7 @@ async function runDownloadProcess(jobId: string): Promise<void> {
 			name: HYPEDDIT_NAME,
 			email: HYPEDDIT_EMAIL,
 			comment: SC_COMMENT,
-			headless: job.headless,
-			xvfb: job.xvfb,
+			browserMode: job.browserMode,
 		};
 
 		const prepareBrowserConfig = async () => {
@@ -630,7 +634,7 @@ const server = Bun.serve({
 						name: HYPEDDIT_NAME,
 						email: HYPEDDIT_EMAIL,
 						comment: SC_COMMENT,
-						headless: false,
+						browserMode: 'headed',
 					});
 
 					await loginDownloader.initialize();
@@ -898,16 +902,32 @@ const server = Bun.serve({
 					jobStore.clearCancelled(jobId);
 
 					try {
-						const body = (await req.json()) as {
-							headless?: boolean;
-							xvfb?: boolean;
-						};
-						if (typeof body.headless === 'boolean') {
-							jobStore.update(jobId, { headless: body.headless });
+						const body = (await req.json()) as Record<string, unknown>;
+						let browserMode: Job['browserMode'] | undefined;
+						if (body.browserMode !== undefined) {
+							if (!isBrowserMode(body.browserMode)) {
+								return jsonResponse(
+									{ error: 'Invalid browser mode' },
+									{ status: 400 },
+								);
+							}
+							browserMode = body.browserMode;
+						} else if (
+							typeof body.headless === 'boolean' &&
+							body.xvfb === undefined
+						) {
+							// Backward compatibility for clients predating the mode selector.
+							browserMode = body.headless ? 'headless' : 'headed';
+						} else if (body.headless !== undefined || body.xvfb !== undefined) {
+							return jsonResponse(
+								{
+									error:
+										'Use browserMode instead of headless/xvfb combinations',
+								},
+								{ status: 400 },
+							);
 						}
-						if (typeof body.xvfb === 'boolean') {
-							jobStore.update(jobId, { xvfb: body.xvfb });
-						}
+						if (browserMode) jobStore.update(jobId, { browserMode });
 					} catch {
 						// No/empty JSON body — keep job default / BROWSER_HEADLESS
 					}
@@ -1075,6 +1095,7 @@ const server = Bun.serve({
 					defaultMetadata: job.defaultMetadata,
 					existingMetadata: job.existingMetadata,
 					outputFormat: job.outputFormat,
+					browserMode: job.browserMode,
 					progress: job.progress,
 					downloadFilename: job.downloadFilename,
 					outputFilename: job.outputFilename,

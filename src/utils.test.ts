@@ -131,6 +131,7 @@ describe('resolveGateProviderUrl', () => {
 describe('findKnownGateInHtml', () => {
 	test('follows a smart-link Bandcamp homepage to its newest album', () => {
 		const smartLinkHtml = `
+			<a href="https://unrelated.bandcamp.com/">Unrelated</a>
 			<script>
 				window.preloadLink = {"services":[{"url":"https:\\/\\/underzoneco.bandcamp.com\\/","service_name":"bandcamp"}]};
 			</script>
@@ -143,6 +144,28 @@ describe('findKnownGateInHtml', () => {
 			<a href="/album/club-anthems-vol-4">Club Anthems Vol. 4</a>
 		`;
 		expect(findKnownGateInHtml(bandcampHtml, homepage ?? undefined)).toEqual({
+			url: 'https://underzoneco.bandcamp.com/album/club-anthems-vol-4',
+			provider: 'bandcamp',
+		});
+	});
+
+	test('does not fall back to an unrelated Bandcamp track', () => {
+		expect(
+			findKnownGateInHtml(
+				'<a href="/track/unrelated-featured-track">Featured track</a>',
+				'https://underzoneco.bandcamp.com/',
+			),
+		).toBeNull();
+	});
+
+	test('scans links when a meta refresh is not a known gate', () => {
+		const html = `
+			<meta http-equiv="refresh" content="0;url=/news">
+			<a href="/album/club-anthems-vol-4">Album</a>
+		`;
+		expect(
+			findKnownGateInHtml(html, 'https://underzoneco.bandcamp.com/'),
+		).toEqual({
 			url: 'https://underzoneco.bandcamp.com/album/club-anthems-vol-4',
 			provider: 'bandcamp',
 		});

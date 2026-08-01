@@ -24,8 +24,8 @@ class JobStore {
 			soundcloudUrl,
 			hypedditUrl: null,
 			bandcampAlbumTracks: null,
-			headless: process.env.BROWSER_HEADLESS !== 'false',
-			xvfb: false,
+			browserMode:
+				process.env.BROWSER_HEADLESS === 'false' ? 'headed' : 'headless',
 			outputFormat,
 			cancelled: false,
 			track: null,

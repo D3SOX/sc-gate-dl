@@ -525,6 +525,10 @@
 		opacity: 0.65;
 		animation: none;
 	}
+
+	.progress-fill-indeterminate::after {
+		animation: none;
+	}
 }
 
 .progress-stats {

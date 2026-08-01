@@ -397,19 +397,85 @@ function matchBandcampUrl(
 	return null;
 }
 
+function normalizeBandcampHomepageUrl(value: string): string | null {
+	try {
+		const url = new URL(trimExtractedUrl(value).replace(/&amp;/g, '&'));
+		if (
+			url.hostname !== 'bandcamp.com' &&
+			url.hostname.endsWith('.bandcamp.com') &&
+			!url.port &&
+			(url.pathname === '' || url.pathname === '/')
+		) {
+			return `https://${url.hostname}/`;
+		}
+	} catch {
+		// Not a valid Bandcamp artist homepage.
+	}
+	return null;
+}
+
+function extractAssignedJsonObject(html: string, assignment: RegExp): unknown {
+	const assignmentMatch = assignment.exec(html);
+	if (!assignmentMatch) return null;
+	const start = html.indexOf(
+		'{',
+		assignmentMatch.index + assignmentMatch[0].length,
+	);
+	if (start < 0) return null;
+
+	let depth = 0;
+	let inString = false;
+	let escaped = false;
+	for (let index = start; index < html.length; index++) {
+		const char = html[index];
+		if (inString) {
+			if (escaped) escaped = false;
+			else if (char === '\\') escaped = true;
+			else if (char === '"') inString = false;
+			continue;
+		}
+		if (char === '"') inString = true;
+		else if (char === '{') depth += 1;
+		else if (char === '}' && --depth === 0) {
+			try {
+				return JSON.parse(html.slice(start, index + 1));
+			} catch {
+				return null;
+			}
+		}
+	}
+	return null;
+}
+
 /** Find an artist's bare Bandcamp homepage embedded in a smart-link page. */
 export function findBandcampHomepageInHtml(html: string): string | null {
 	const normalized = html.replace(/\\\//g, '/');
+	const preloadLink = extractAssignedJsonObject(
+		normalized,
+		/window\.preloadLink\s*=/i,
+	);
+	if (preloadLink && typeof preloadLink === 'object') {
+		const services = (preloadLink as { services?: unknown }).services;
+		if (Array.isArray(services)) {
+			for (const service of services) {
+				if (
+					service &&
+					typeof service === 'object' &&
+					(service as { service_name?: unknown }).service_name === 'bandcamp'
+				) {
+					const url = (service as { url?: unknown }).url;
+					const homepage =
+						typeof url === 'string' ? normalizeBandcampHomepageUrl(url) : null;
+					if (homepage) return homepage;
+				}
+			}
+		}
+	}
+
 	for (const match of normalized.match(ANY_HTTP_URL_RE) ?? []) {
 		try {
-			const url = new URL(trimExtractedUrl(match).replace(/&amp;/g, '&'));
-			if (
-				url.hostname !== 'bandcamp.com' &&
-				url.hostname.endsWith('.bandcamp.com') &&
-				(url.pathname === '' || url.pathname === '/')
-			) {
-				return `${url.protocol}//${url.host}/`;
-			}
+			const homepage = normalizeBandcampHomepageUrl(match);
+			if (homepage) return homepage;
 		} catch {
 			// Ignore malformed URLs embedded in page scripts.
 		}
@@ -461,10 +527,11 @@ export function findKnownGateInHtml(
 			try {
 				target = new URL(rawTarget, baseUrl).toString();
 			} catch {
-				return null;
+				target = rawTarget;
 			}
 		}
-		return matchKnownDownloadGateUrl(target);
+		const refreshMatch = matchKnownDownloadGateUrl(target);
+		if (refreshMatch) return refreshMatch;
 	}
 
 	if (baseUrl) {
@@ -493,7 +560,10 @@ export function findKnownGateInHtml(
 		const album = relativeMatches.find(
 			(match) => match.provider === 'bandcamp' && isBandcampAlbumUrl(match.url),
 		);
-		return album ?? relativeMatches[0] ?? null;
+		if (album) return album;
+		return (
+			relativeMatches.find((match) => match.provider !== 'bandcamp') ?? null
+		);
 	}
 	return null;
 }

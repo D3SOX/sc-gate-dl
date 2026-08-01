@@ -1,5 +1,6 @@
 import { launch, launchPersistentContext } from 'cloakbrowser/puppeteer';
 import type { Browser } from 'puppeteer';
+import type { BrowserMode } from './types';
 
 export type AppBrowserLaunchOptions = {
 	headless?: boolean;
@@ -13,21 +14,18 @@ export type AppBrowserLaunchOptions = {
 	humanize?: boolean;
 };
 
-type XvfbProcess = {
+export type XvfbProcess = {
 	stdout: ReadableStream<Uint8Array>;
 	stderr: ReadableStream<Uint8Array>;
 	exited: Promise<number>;
 	kill: () => void;
 };
 
-type XvfbSession = {
+export type XvfbSession = {
 	display: string;
 	process: XvfbProcess;
 	users: number;
 };
-
-let xvfbSession: XvfbSession | null = null;
-let xvfbStartPromise: Promise<XvfbSession> | null = null;
 
 export const DEFAULT_BROWSER_ARGS = [
 	'--no-sandbox',
@@ -39,6 +37,15 @@ export const DEFAULT_BROWSER_ARGS = [
 	'--disable-restore-session-state',
 	'--window-size=1920,1080',
 ];
+
+export function browserModeToLaunchOptions(
+	browserMode: BrowserMode,
+): Pick<AppBrowserLaunchOptions, 'headless' | 'xvfb'> {
+	return {
+		headless: browserMode === 'headless',
+		xvfb: browserMode === 'xvfb',
+	};
+}
 
 export function buildXvfbBrowserEnv(
 	display: string,
@@ -57,7 +64,7 @@ export function buildXvfbBrowserEnv(
 	);
 }
 
-async function readXvfbDisplay(
+export async function readXvfbDisplay(
 	stdout: ReadableStream<Uint8Array>,
 ): Promise<string> {
 	const reader = stdout.getReader();
@@ -128,40 +135,53 @@ async function startXvfb(): Promise<XvfbSession> {
 	}
 }
 
-async function acquireXvfb(): Promise<{
-	display: string;
-	release: () => void;
-}> {
-	if (!xvfbStartPromise) {
-		xvfbStartPromise = startXvfb()
-			.then((session) => {
-				xvfbSession = session;
-				return session;
-			})
-			.catch((error) => {
-				xvfbStartPromise = null;
-				throw error;
-			});
-	}
+export function createXvfbManager(
+	start: () => Promise<XvfbSession> = startXvfb,
+): () => Promise<{ display: string; release: () => void }> {
+	let activeSession: XvfbSession | null = null;
+	let startPromise: Promise<XvfbSession> | null = null;
 
-	const session = await xvfbStartPromise;
-	session.users += 1;
-	let released = false;
-
-	return {
-		display: session.display,
-		release: () => {
-			if (released) return;
-			released = true;
-			session.users -= 1;
-			if (session.users === 0 && xvfbSession === session) {
-				session.process.kill();
-				xvfbSession = null;
-				xvfbStartPromise = null;
+	return async function acquireXvfb() {
+		let session: XvfbSession;
+		while (true) {
+			if (!startPromise) {
+				startPromise = start()
+					.then((started) => {
+						activeSession = started;
+						return started;
+					})
+					.catch((error) => {
+						startPromise = null;
+						throw error;
+					});
 			}
-		},
+
+			const candidate = await startPromise;
+			if (activeSession === candidate) {
+				session = candidate;
+				session.users += 1;
+				break;
+			}
+		}
+
+		let released = false;
+		return {
+			display: session.display,
+			release: () => {
+				if (released) return;
+				released = true;
+				session.users -= 1;
+				if (session.users === 0 && activeSession === session) {
+					session.process.kill();
+					activeSession = null;
+					startPromise = null;
+				}
+			},
+		};
 	};
 }
+
+const acquireXvfb = createXvfbManager();
 
 /**
  * Launch CloakBrowser (stealth Chromium) for all automation.

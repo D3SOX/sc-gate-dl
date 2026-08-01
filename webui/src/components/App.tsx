@@ -58,6 +58,11 @@ interface JobState {
 }
 
 const API_BASE = 'http://localhost:3000';
+const BROWSER_MODE_STORAGE_KEY = 'sc-gate-dl-browser-mode';
+
+function isBrowserMode(value: string | null): value is BrowserMode {
+	return value === 'headless' || value === 'xvfb' || value === 'headed';
+}
 
 const ALLOWED_HOST_ORIGINS = new Set([
 	'https://soundcloud.com',
@@ -219,6 +224,24 @@ export default function App() {
 		album: '',
 		genre: '',
 	});
+
+	useEffect(() => {
+		try {
+			const storedMode = localStorage.getItem(BROWSER_MODE_STORAGE_KEY);
+			if (isBrowserMode(storedMode)) setBrowserMode(storedMode);
+		} catch {
+			// Storage may be blocked when the Web UI is embedded cross-origin.
+		}
+	}, []);
+
+	const updateBrowserMode = (mode: BrowserMode) => {
+		setBrowserMode(mode);
+		try {
+			localStorage.setItem(BROWSER_MODE_STORAGE_KEY, mode);
+		} catch {
+			// Keep the in-memory selection when persistent storage is unavailable.
+		}
+	};
 	const [customArtwork, setCustomArtwork] = useState<File | null>(null);
 	const [nameAsArtistTitle, setNameAsArtistTitle] = useState(false);
 	const [isLoading, setIsLoading] = useState(false);
@@ -315,8 +338,7 @@ export default function App() {
 					method: 'POST',
 					headers: { 'Content-Type': 'application/json' },
 					body: JSON.stringify({
-						headless: browserMode !== 'headed',
-						xvfb: browserMode === 'xvfb',
+						browserMode,
 					}),
 				});
 
@@ -779,7 +801,6 @@ export default function App() {
 		setSoundcloudUrl('');
 		setHypedditUrlInput('');
 		setSkipAutomaticHypedditFetch(false);
-		setBrowserMode('headless');
 		setJob({
 			jobId: null,
 			track: null,
@@ -964,7 +985,7 @@ export default function App() {
 									id="browser-mode"
 									value={browserMode}
 									onChange={(e) =>
-										setBrowserMode(e.target.value as BrowserMode)
+										updateBrowserMode(e.target.value as BrowserMode)
 									}
 									disabled={isLoading}
 								>
@@ -1033,7 +1054,7 @@ export default function App() {
 									id="browser-mode-gate"
 									value={browserMode}
 									onChange={(e) =>
-										setBrowserMode(e.target.value as BrowserMode)
+										updateBrowserMode(e.target.value as BrowserMode)
 									}
 									disabled={isLoading}
 								>

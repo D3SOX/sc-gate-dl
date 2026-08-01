@@ -9,15 +9,19 @@ export interface LocalCookieData {
 	sameSite?: string;
 }
 
+export type BrowserMode = 'headless' | 'xvfb' | 'headed';
+
+export function isBrowserMode(value: unknown): value is BrowserMode {
+	return value === 'headless' || value === 'xvfb' || value === 'headed';
+}
+
 export interface HypedditConfig {
 	/** Optional — only needed for Hypeddit/GateRush email gates that ask for a name. */
 	name?: string;
 	/** Optional — only needed for Hypeddit/GateRush email gates. */
 	email?: string;
 	comment: string;
-	headless: boolean;
-	/** Use headed Chromium in an invisible Xvfb display. */
-	xvfb?: boolean;
+	browserMode: BrowserMode;
 	/** Persistent Chromium profile. Defaults to `./browser-data`. */
 	userDataDir?: string;
 }
@@ -74,10 +78,7 @@ export interface Job {
 	hypedditUrl: string | null;
 	/** Candidates when Bandcamp album auto-match fails (cleared after pick). */
 	bandcampAlbumTracks: BandcampAlbumTrackChoice[] | null;
-	/** Whether browser automation runs headless. Defaults to true. */
-	headless: boolean;
-	/** Whether headed Chromium runs in an invisible Xvfb display. */
-	xvfb: boolean;
+	browserMode: BrowserMode;
 	outputFormat: OutputFormat;
 	/** Set when the user cancels; download loop should stop and close the browser. */
 	cancelled: boolean;

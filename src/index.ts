@@ -146,8 +146,11 @@ try {
 		name: HYPEDDIT_NAME,
 		email: HYPEDDIT_EMAIL,
 		comment: SC_COMMENT,
-		headless,
-		xvfb,
+		browserMode: xvfb
+			? ('xvfb' as const)
+			: headless
+				? ('headless' as const)
+				: ('headed' as const),
 	};
 
 	let downloadFilename: string | null = null;

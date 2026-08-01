@@ -1,6 +1,6 @@
 import { Presets, SingleBar } from 'cli-progress';
 import type { Browser, Page } from 'puppeteer';
-import { launchAppBrowser } from './browserLaunch';
+import { browserModeToLaunchOptions, launchAppBrowser } from './browserLaunch';
 import type { ProgressCallback } from './hypeddit';
 import Selectors from './selectors';
 import type { HypedditConfig } from './types';
@@ -31,8 +31,7 @@ export class GaterushDownloader {
 
 	async initialize() {
 		this.browser = await launchAppBrowser({
-			headless: this.config.headless,
-			xvfb: this.config.xvfb,
+			...browserModeToLaunchOptions(this.config.browserMode),
 			userDataDir: this.config.userDataDir ?? './browser-data',
 		});
 

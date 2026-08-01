@@ -1,6 +1,6 @@
 import { Presets, SingleBar } from 'cli-progress';
 import type { Browser, Page } from 'puppeteer';
-import { launchAppBrowser } from './browserLaunch';
+import { browserModeToLaunchOptions, launchAppBrowser } from './browserLaunch';
 import type { ProgressCallback } from './hypeddit';
 import Selectors from './selectors';
 import { SoundcloudClient } from './soundcloud';
@@ -41,8 +41,7 @@ export class DroploudDownloader {
 
 	async initialize() {
 		this.browser = await launchAppBrowser({
-			headless: this.config.headless,
-			xvfb: this.config.xvfb,
+			...browserModeToLaunchOptions(this.config.browserMode),
 			userDataDir: this.config.userDataDir ?? './browser-data',
 		});
 
@@ -784,7 +783,7 @@ export class DroploudDownloader {
 			return;
 		}
 
-		if (!this.config.headless && !closed && !page.isClosed()) {
+		if (this.config.browserMode === 'headed' && !closed && !page.isClosed()) {
 			console.log(
 				'Droploud: waiting up to 2 minutes for manual Repost / captcha solve…',
 			);
