@@ -6,6 +6,9 @@
 export const AUDIO_OR_ARCHIVE_EXT_RE =
 	/\.(mp3|wav|flac|aiff|aif|m4a|aac|ogg|opus|zip|rar)(\?|$)/i;
 
+/** Google Drive file IDs are long URL-safe tokens. */
+const DRIVE_FILE_ID_RE = /^[a-zA-Z0-9_-]{10,}$/;
+
 export function isKnownDirectDownloadHost(hostname: string): boolean {
 	const host = hostname.toLowerCase();
 	return (
@@ -15,10 +18,28 @@ export function isKnownDirectDownloadHost(hostname: string): boolean {
 	);
 }
 
+/** Extract a validated Drive file id from path (`/file/d/ID`) or `id` query. */
+export function extractDriveFileId(url: URL): string | null {
+	const fromPath = url.pathname.match(/\/file\/d\/([^/]+)/)?.[1];
+	if (fromPath && DRIVE_FILE_ID_RE.test(fromPath)) return fromPath;
+	const fromQuery = url.searchParams.get('id');
+	if (fromQuery && DRIVE_FILE_ID_RE.test(fromQuery)) return fromQuery;
+	return null;
+}
+
 /** True when a parsed URL looks like a direct file link, not an HTML gate page. */
 export function urlLooksLikeDirectDownload(url: URL): boolean {
 	if (!/^https?:$/i.test(url.protocol)) return false;
-	if (isKnownDirectDownloadHost(url.hostname)) return true;
+	const host = url.hostname.toLowerCase();
+	if (
+		/(?:^|\.)dropbox\.com$/i.test(host) ||
+		/(?:^|\.)dropboxusercontent\.com$/i.test(host)
+	) {
+		return true;
+	}
+	if (/(?:^|\.)drive\.google\.com$/i.test(host)) {
+		return extractDriveFileId(url) !== null;
+	}
 	if (AUDIO_OR_ARCHIVE_EXT_RE.test(url.pathname)) return true;
 	return false;
 }
@@ -26,6 +47,7 @@ export function urlLooksLikeDirectDownload(url: URL): boolean {
 /**
  * Normalize share links so fetch gets the file bytes.
  * Dropbox: force `dl=1` (rewrites `dl=0` preview links and adds `dl` when missing).
+ * Drive: only rewrite when a valid file id is present.
  */
 export function normalizeDirectDownloadParsedUrl(url: URL): string {
 	if (/(?:^|\.)dropbox\.com$/i.test(url.hostname)) {
@@ -33,9 +55,14 @@ export function normalizeDirectDownloadParsedUrl(url: URL): string {
 		parsed.searchParams.set('dl', '1');
 		return parsed.toString();
 	}
-	const driveFile = url.pathname.match(/\/file\/d\/([^/]+)/);
-	if (/(?:^|\.)drive\.google\.com$/i.test(url.hostname) && driveFile?.[1]) {
-		return `https://drive.google.com/uc?export=download&id=${driveFile[1]}`;
+	if (/(?:^|\.)drive\.google\.com$/i.test(url.hostname)) {
+		const id = extractDriveFileId(url);
+		if (!id) {
+			throw new Error(
+				`Malformed Google Drive link (missing valid file id): ${url}`,
+			);
+		}
+		return `https://drive.google.com/uc?export=download&id=${id}`;
 	}
 	return url.toString();
 }

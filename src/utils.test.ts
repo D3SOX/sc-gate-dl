@@ -84,6 +84,26 @@ describe('resolveGateProviderUrl', () => {
 		});
 	});
 
+	test('normalizes valid Google Drive file links', () => {
+		expect(
+			resolveGateProviderUrl(
+				'https://drive.google.com/file/d/abcdefghijklmnopqrstuvwx/view?usp=sharing',
+			),
+		).toEqual({
+			url: 'https://drive.google.com/uc?export=download&id=abcdefghijklmnopqrstuvwx',
+			provider: 'direct',
+		});
+	});
+
+	test('does not treat malformed Google Drive URLs as direct downloads', () => {
+		expect(
+			resolveGateProviderUrl('https://drive.google.com/drive/my-drive'),
+		).toBeNull();
+		expect(
+			resolveGateProviderUrl('https://drive.google.com/file/d/short/view'),
+		).toBeNull();
+	});
+
 	test('matches raw audio file URLs as direct downloads', () => {
 		expect(
 			resolveGateProviderUrl(

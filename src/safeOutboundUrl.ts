@@ -31,7 +31,10 @@ function isPrivateOrLocalIp(ip: string): boolean {
 }
 
 function isBlockedHostname(hostname: string): boolean {
-	const host = hostname.toLowerCase().replace(/\.$/, '');
+	const host = hostname
+		.toLowerCase()
+		.replace(/^\[|\]$/g, '')
+		.replace(/\.$/, '');
 	if (
 		host === 'localhost' ||
 		host === '0.0.0.0' ||
@@ -70,7 +73,9 @@ export async function resolveSafeConnectTarget(
 		throw new Error(`Refusing non-http(s) URL: ${urlString}`);
 	}
 
-	const host = url.hostname;
+	// URL.hostname is usually unbracketed for IPv6, but strip defensively so
+	// isIP / blocklist / connect address never see "[::1]".
+	const host = url.hostname.replace(/^\[|\]$/g, '');
 	if (isBlockedHostname(host)) {
 		throw new Error(`Refusing to fetch non-public host: ${host}`);
 	}
@@ -79,7 +84,7 @@ export async function resolveSafeConnectTarget(
 		if (isPrivateOrLocalIp(host)) {
 			throw new Error(`Refusing to fetch private/local address: ${host}`);
 		}
-		return { url, address: host.replace(/^\[|\]$/g, '') };
+		return { url, address: host };
 	}
 
 	const results = await lookup(host, { all: true });
