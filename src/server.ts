@@ -3,6 +3,7 @@ import { cp, mkdir, rm } from 'node:fs/promises';
 import { basename, extname, join } from 'node:path';
 import type { SoundcloudTrack } from 'soundcloud.ts';
 import { AudioProcessor } from './audioProcessor';
+import { isXvfbSupported } from './browserLaunch';
 import { DirectDownloader } from './directDownload';
 import { DownloadgaterDownloader } from './downloadgater';
 import { renameDownloadFileExclusive } from './downloadRename';
@@ -10,9 +11,11 @@ import { DroploudDownloader } from './droploud';
 import { GaterushDownloader } from './gaterush';
 import { HypedditDownloader } from './hypeddit';
 import { HypedditHttpDownloader } from './hypedditHttp';
+import { JobQueue } from './jobQueue';
 import { jobStore } from './jobStore';
 import { SoundcloudClient } from './soundcloud';
 import {
+	type BrowserMode,
 	isBrowserMode,
 	type Job,
 	type Metadata,
@@ -59,6 +62,9 @@ const HYPEDDIT_EMAIL = getOptionalEnv('HYPEDDIT_EMAIL');
 
 const soundcloudClient = new SoundcloudClient();
 const audioProcessor = new AudioProcessor(ffmpegBin, ffprobeBin);
+const availableBrowserModes: BrowserMode[] = isXvfbSupported()
+	? ['headless', 'xvfb', 'headed']
+	: ['headless', 'headed'];
 
 async function renameDownloadFile(
 	jobId: string,
@@ -91,6 +97,28 @@ const activeDownloaders = new Map<string, AnyDownloader>();
 const jobProfileDirs = new Map<string, string>();
 /** In-flight close+profile cleanup so SIGINT cannot delete a profile mid-close. */
 const closingJobs = new Map<string, Promise<void>>();
+
+const jobQueue = new JobQueue({
+	onQueued: (jobId, position) => {
+		if (jobStore.isCancelled(jobId)) return;
+		jobStore.updateProgress(
+			jobId,
+			'queued',
+			position === 1
+				? 'Waiting for the active download — next in queue'
+				: `Waiting for the active download — queue position ${position}`,
+			0,
+			{ queuePosition: position },
+		);
+	},
+	onTaskError: (jobId, error) => {
+		if (jobStore.isCancelled(jobId)) return;
+		jobStore.setError(
+			jobId,
+			error instanceof Error ? error.message : 'Download queue task failed',
+		);
+	},
+});
 
 /**
  * Job profiles start empty, which drops the SoundCloud session from Initialize
@@ -186,16 +214,6 @@ async function runDownloadProcess(jobId: string): Promise<void> {
 	const job = jobStore.get(jobId);
 	if (!job?.hypedditUrl) return;
 
-	const resolved = await resolveGateUrlOrFollow(job.hypedditUrl);
-	if (!resolved) {
-		jobStore.setError(jobId, 'Unsupported gate URL');
-		return;
-	}
-	if (resolved.url !== job.hypedditUrl) {
-		jobStore.update(jobId, { hypedditUrl: resolved.url });
-	}
-	const { url: downloadSourceUrl, provider } = resolved;
-
 	const throwIfCancelled = () => {
 		if (jobStore.isCancelled(jobId)) {
 			throw new Error('Download cancelled');
@@ -203,6 +221,24 @@ async function runDownloadProcess(jobId: string): Promise<void> {
 	};
 
 	try {
+		throwIfCancelled();
+		jobStore.updateProgress(
+			jobId,
+			'handling_gates',
+			'Resolving download source...',
+			0,
+		);
+		const resolved = await resolveGateUrlOrFollow(job.hypedditUrl);
+		throwIfCancelled();
+		if (!resolved) {
+			jobStore.setError(jobId, 'Unsupported gate URL');
+			return;
+		}
+		if (resolved.url !== job.hypedditUrl) {
+			jobStore.update(jobId, { hypedditUrl: resolved.url });
+		}
+		const { url: downloadSourceUrl, provider } = resolved;
+
 		const emitProgress = (
 			stage: Job['progress']['stage'],
 			message: string,
@@ -609,6 +645,10 @@ const server = Bun.serve({
 			new Response('sc-gate-dl API is running!', {
 				headers: corsHeaders(),
 			}),
+		'/api/capabilities': () =>
+			jsonResponse({
+				browserModes: availableBrowserModes,
+			}),
 
 		'/api/soundcloud/cleanup': {
 			POST: async () => {
@@ -920,6 +960,12 @@ const server = Bun.serve({
 									{ status: 400 },
 								);
 							}
+							if (!availableBrowserModes.includes(body.browserMode)) {
+								return jsonResponse(
+									{ error: 'Xvfb browser mode is only available on Linux' },
+									{ status: 400 },
+								);
+							}
 							browserMode = body.browserMode;
 						} else if (
 							typeof body.headless === 'boolean' &&
@@ -941,9 +987,18 @@ const server = Bun.serve({
 						// No/empty JSON body — keep job default / BROWSER_HEADLESS
 					}
 
-					runDownloadProcess(jobId);
+					const queueResult = jobQueue.enqueue(jobId, () =>
+						runDownloadProcess(jobId),
+					);
 
-					return jsonResponse({ success: true, message: 'Download started' });
+					return jsonResponse({
+						success: true,
+						queued: queueResult.queued,
+						queuePosition: queueResult.position || undefined,
+						message: queueResult.queued
+							? `Download queued at position ${queueResult.position}`
+							: 'Download started',
+					});
 				} catch (error) {
 					return jsonResponse(
 						{
@@ -966,6 +1021,13 @@ const server = Bun.serve({
 					}
 
 					const stage = job.progress.stage;
+					if (stage === 'queued' && jobQueue.cancel(jobId)) {
+						jobStore.cancel(jobId);
+						return jsonResponse({
+							success: true,
+							message: 'Queued download cancelled',
+						});
+					}
 					if (stage === 'ready' || stage === 'cancelled') {
 						jobStore.cancel(jobId);
 						await closeJobDownloader(jobId);

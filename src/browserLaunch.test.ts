@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import {
 	buildXvfbBrowserEnv,
 	createXvfbManager,
+	isXvfbSupported,
 	readXvfbDisplay,
 	type XvfbSession,
 } from './browserLaunch';
@@ -94,5 +95,13 @@ describe('buildXvfbBrowserEnv', () => {
 			OZONE_PLATFORM: 'x11',
 			PATH: '/usr/bin',
 		});
+	});
+});
+
+describe('isXvfbSupported', () => {
+	test('only enables Xvfb on Linux', () => {
+		expect(isXvfbSupported('linux')).toBeTrue();
+		expect(isXvfbSupported('darwin')).toBeFalse();
+		expect(isXvfbSupported('win32')).toBeFalse();
 	});
 });
