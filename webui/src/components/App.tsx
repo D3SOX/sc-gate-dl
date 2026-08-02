@@ -112,7 +112,10 @@ function cleanPromoTags(value: string): string {
 		' ',
 	);
 	result = result.replace(
-		new RegExp(String.raw`(?:\s*[-–—|/·•]+\s*|\s+)(?:${PROMO_TAG})\s*$`, 'gi'),
+		new RegExp(
+			String.raw`(?:\s*[-–—|/·•*]+\s*|\s+)(?:${PROMO_TAG})(?:\s*\*+)?\s*$`,
+			'gi',
+		),
 		'',
 	);
 	result = result.replace(
