@@ -11,6 +11,9 @@ export default defineConfig({
 	integrations: [react()],
 	vite: {
 		server: {
+			fs: {
+				allow: ['.', '../src/types.ts'],
+			},
 			// Allow embedding from SoundCloud via the userscript overlay iframe
 			headers: {
 				'Access-Control-Allow-Private-Network': 'true',
