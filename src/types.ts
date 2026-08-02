@@ -38,6 +38,7 @@ export type OutputFormat = 'original' | 'mp3-320' | 'flac';
 // Job system types for Web UI
 export type JobStage =
 	| 'pending'
+	| 'queued'
 	| 'fetching_track'
 	| 'waiting_hypeddit'
 	| 'waiting_bandcamp_track'
@@ -70,6 +71,8 @@ export interface JobProgress {
 	browserless?: boolean;
 	/** Present while stage is `waiting_bandcamp_track`. */
 	bandcampAlbumTracks?: BandcampAlbumTrackChoice[];
+	/** One-based position among jobs waiting for the server's download slot. */
+	queuePosition?: number;
 }
 
 export interface Job {

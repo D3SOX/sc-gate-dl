@@ -1,0 +1,82 @@
+import { describe, expect, test } from 'bun:test';
+import { JobQueue } from './jobQueue';
+
+function deferred(): { promise: Promise<void>; resolve: () => void } {
+	let resolve = () => {};
+	const promise = new Promise<void>((done) => {
+		resolve = done;
+	});
+	return { promise, resolve };
+}
+
+describe('JobQueue', () => {
+	test('runs one job and advances waiting jobs across clients', async () => {
+		const first = deferred();
+		const third = deferred();
+		const started: string[] = [];
+		const positions = new Map<string, number>();
+		const errors: unknown[] = [];
+		const queue = new JobQueue({
+			onQueued: (id, position) => positions.set(id, position),
+			onTaskError: (_id, error) => errors.push(error),
+		});
+
+		expect(
+			queue.enqueue('first', () => {
+				started.push('first');
+				return first.promise;
+			}),
+		).toEqual({
+			queued: false,
+			position: 0,
+		});
+		expect(
+			queue.enqueue('second', async () => {
+				started.push('second');
+			}),
+		).toEqual({
+			queued: true,
+			position: 1,
+		});
+		expect(
+			queue.enqueue('third', () => {
+				started.push('third');
+				return third.promise;
+			}),
+		).toEqual({
+			queued: true,
+			position: 2,
+		});
+		expect(started).toEqual(['first']);
+
+		expect(queue.cancel('second')).toBe(true);
+		expect(positions.get('third')).toBe(1);
+
+		first.resolve();
+		await Bun.sleep(0);
+		expect(started).toEqual(['first', 'third']);
+		expect(errors).toEqual([]);
+		third.resolve();
+	});
+
+	test('continues after a job fails', async () => {
+		const errors: Array<{ id: string; error: unknown }> = [];
+		const started: string[] = [];
+		const queue = new JobQueue({
+			onQueued: () => {},
+			onTaskError: (id, error) => errors.push({ id, error }),
+		});
+
+		queue.enqueue('broken', async () => {
+			started.push('broken');
+			throw new Error('broken');
+		});
+		queue.enqueue('next', async () => {
+			started.push('next');
+		});
+		await Bun.sleep(0);
+
+		expect(started).toEqual(['broken', 'next']);
+		expect(errors[0]?.id).toBe('broken');
+	});
+});

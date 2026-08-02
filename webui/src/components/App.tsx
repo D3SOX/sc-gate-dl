@@ -2,7 +2,12 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Toaster, toast } from 'sonner';
 import type { BrowserMode } from '../../../src/types';
 import './App.css';
-import { readStoredBrowserMode, shouldAutoStartDeepLink } from './deepLink';
+import {
+	parseAvailableBrowserModes,
+	readStoredBrowserMode,
+	shouldAutoStartDeepLink,
+	shouldUseEmbeddedLayout,
+} from './deepLink';
 
 type Step = 'url' | 'gate' | 'download' | 'metadata' | 'complete';
 type OutputFormat = 'original' | 'mp3-320' | 'flac';
@@ -30,13 +35,25 @@ interface JobProgress {
 	totalBytes?: number;
 	browserless?: boolean;
 	bandcampAlbumTracks?: BandcampAlbumTrackChoice[];
+	queuePosition?: number;
 }
 
 const GATE_PROGRESS_STAGES = new Set([
+	'queued',
 	'initializing_browser',
 	'preparing_logins',
 	'handling_gates',
 	'waiting_bandcamp_track',
+]);
+
+const ACTIVE_JOB_STAGES = new Set([
+	'queued',
+	'initializing_browser',
+	'preparing_logins',
+	'handling_gates',
+	'waiting_bandcamp_track',
+	'downloading',
+	'processing_audio',
 ]);
 
 interface BandcampAlbumTrackChoice {
@@ -61,6 +78,11 @@ interface JobState {
 
 const API_BASE = 'http://localhost:3000';
 const BROWSER_MODE_STORAGE_KEY = 'sc-gate-dl-browser-mode';
+const BROWSER_MODE_LABELS: Record<BrowserMode, string> = {
+	headless: 'Headless',
+	xvfb: 'Invisible headed (Xvfb)',
+	headed: 'Visible headed window',
+};
 
 const ALLOWED_HOST_ORIGINS = new Set([
 	'https://soundcloud.com',
@@ -208,7 +230,11 @@ export default function App() {
 	const [skipAutomaticHypedditFetch, setSkipAutomaticHypedditFetch] =
 		useState(false);
 	const [browserMode, setBrowserMode] = useState<BrowserMode>('headless');
+	const [availableBrowserModes, setAvailableBrowserModes] = useState<
+		BrowserMode[]
+	>(['headless', 'headed']);
 	const [browserModeHydrated, setBrowserModeHydrated] = useState(false);
+	const [embedded, setEmbedded] = useState(false);
 	const [outputFormat, setOutputFormat] = useState<OutputFormat>('mp3-320');
 	const [job, setJob] = useState<JobState>({
 		jobId: null,
@@ -231,17 +257,41 @@ export default function App() {
 	});
 
 	useEffect(() => {
-		try {
-			const storedMode = readStoredBrowserMode(
-				localStorage,
-				BROWSER_MODE_STORAGE_KEY,
-			);
-			if (storedMode) setBrowserMode(storedMode);
-		} catch {
-			// Storage may be blocked when the Web UI is embedded cross-origin.
-		} finally {
-			setBrowserModeHydrated(true);
-		}
+		let cancelled = false;
+		setEmbedded(shouldUseEmbeddedLayout(window.location.search));
+
+		const hydrateBrowserModes = async () => {
+			let modes: BrowserMode[] = ['headless', 'headed'];
+			try {
+				const response = await fetch(`${API_BASE}/api/capabilities`);
+				if (response.ok) {
+					modes = parseAvailableBrowserModes(await response.json());
+				}
+			} catch {
+				// Keep the portable modes when the API is unavailable.
+			}
+
+			if (cancelled) return;
+			setAvailableBrowserModes(modes);
+			try {
+				const storedMode = readStoredBrowserMode(
+					localStorage,
+					BROWSER_MODE_STORAGE_KEY,
+				);
+				if (storedMode && modes.includes(storedMode)) {
+					setBrowserMode(storedMode);
+				}
+			} catch {
+				// Storage may be blocked when the Web UI is embedded cross-origin.
+			} finally {
+				setBrowserModeHydrated(true);
+			}
+		};
+
+		void hydrateBrowserModes();
+		return () => {
+			cancelled = true;
+		};
 	}, []);
 
 	const updateBrowserMode = (mode: BrowserMode) => {
@@ -258,7 +308,36 @@ export default function App() {
 	const cleanupToastShownRef = useRef(false);
 	const autoStartedFromQueryRef = useRef(false);
 	const eventSourceRef = useRef<EventSource | null>(null);
+	const cancelRequestedRef = useRef(false);
+	const unloadJobRef = useRef<{ jobId: string | null; stage?: string }>({
+		jobId: null,
+	});
 	const formatPercent = (value?: number) => Math.round(value ?? 0);
+
+	useEffect(() => {
+		unloadJobRef.current = {
+			jobId: job.jobId,
+			stage: job.progress?.stage,
+		};
+	}, [job.jobId, job.progress?.stage]);
+
+	useEffect(() => {
+		const cancelJobOnUnload = () => {
+			if (cancelRequestedRef.current) return;
+			const { jobId, stage } = unloadJobRef.current;
+			if (!jobId || !stage || !ACTIVE_JOB_STAGES.has(stage)) return;
+			cancelRequestedRef.current = true;
+			const url = `${API_BASE}/api/job/${encodeURIComponent(jobId)}/cancel`;
+			try {
+				if (navigator.sendBeacon(url)) return;
+			} catch {
+				// Fall back to a keepalive request below.
+			}
+			void fetch(url, { method: 'POST', keepalive: true }).catch(() => {});
+		};
+		window.addEventListener('beforeunload', cancelJobOnUnload);
+		return () => window.removeEventListener('beforeunload', cancelJobOnUnload);
+	}, []);
 
 	const showCleanupSoundcloudToast = useCallback(() => {
 		toast('Cleanup your SoundCloud account?', {
@@ -329,6 +408,7 @@ export default function App() {
 	// Start download process
 	const startDownload = useCallback(
 		async (jobId: string) => {
+			cancelRequestedRef.current = false;
 			setStep('gate');
 			setJob((prev) => ({
 				...prev,
@@ -460,12 +540,14 @@ export default function App() {
 	const cancelDownload = useCallback(async () => {
 		const jobId = job.jobId;
 		if (!jobId) return;
+		cancelRequestedRef.current = true;
 
 		try {
 			const response = await fetch(`${API_BASE}/api/job/${jobId}/cancel`, {
 				method: 'POST',
 			});
 			if (!response.ok) {
+				cancelRequestedRef.current = false;
 				const data = await response.json().catch(() => ({}));
 				setJob((prev) => ({
 					...prev,
@@ -475,6 +557,7 @@ export default function App() {
 				return;
 			}
 		} catch (err) {
+			cancelRequestedRef.current = false;
 			setJob((prev) => ({
 				...prev,
 				error: err instanceof Error ? err.message : 'Failed to cancel download',
@@ -817,6 +900,7 @@ export default function App() {
 
 	// Reset and start over
 	const handleReset = () => {
+		cancelRequestedRef.current = false;
 		notifyParent('new-download');
 		setSoundcloudUrl('');
 		setHypedditUrlInput('');
@@ -882,16 +966,18 @@ export default function App() {
 	return (
 		<div className="app">
 			<Toaster richColors closeButton theme="dark" />
-			<header className="header">
-				<div className="logo">
-					<span className="logo-icon">&#9654;</span>
-					<h1>sc-gate-dl</h1>
-				</div>
-				<p className="tagline">
-					Download & tag SoundCloud tracks from Hypeddit, Droploud, GateRush,
-					DownloadGater, Bandcamp, or a direct download link
-				</p>
-			</header>
+			{!embedded && (
+				<header className="header">
+					<div className="logo">
+						<span className="logo-icon">&#9654;</span>
+						<h1>sc-gate-dl</h1>
+					</div>
+					<p className="tagline">
+						Download & tag SoundCloud tracks from Hypeddit, Droploud, GateRush,
+						DownloadGater, Bandcamp, or a direct download link
+					</p>
+				</header>
+			)}
 
 			{/* Step indicator */}
 			<div className="steps">
@@ -1011,9 +1097,11 @@ export default function App() {
 									}
 									disabled={isLoading}
 								>
-									<option value="headless">Headless</option>
-									<option value="xvfb">Invisible headed (Xvfb)</option>
-									<option value="headed">Visible headed window</option>
+									{availableBrowserModes.map((mode) => (
+										<option key={mode} value={mode}>
+											{BROWSER_MODE_LABELS[mode]}
+										</option>
+									))}
 								</select>
 							</div>
 							<div className="checkbox-settings">
@@ -1070,7 +1158,7 @@ export default function App() {
 									disabled={isLoading}
 								/>
 							</div>
-							<div className="form-group url-settings-format">
+							<div className="form-group">
 								<label htmlFor="browser-mode-gate">Browser Mode</label>
 								<select
 									id="browser-mode-gate"
@@ -1080,9 +1168,11 @@ export default function App() {
 									}
 									disabled={isLoading}
 								>
-									<option value="headless">Headless</option>
-									<option value="xvfb">Invisible headed (Xvfb)</option>
-									<option value="headed">Visible headed window</option>
+									{availableBrowserModes.map((mode) => (
+										<option key={mode} value={mode}>
+											{BROWSER_MODE_LABELS[mode]}
+										</option>
+									))}
 								</select>
 							</div>
 							<button
@@ -1502,34 +1592,36 @@ export default function App() {
 				)}
 			</div>
 
-			<footer className="footer">
-				<div className="footer-buttons">
-					<button
-						type="button"
-						className="btn-secondary btn-cleanup"
-						onClick={handleInitializeLogins}
-					>
-						Initialize Logins
-					</button>
-					<button
-						type="button"
-						className="btn-secondary btn-cleanup"
-						onClick={showCleanupSoundcloudToast}
-					>
-						Cleanup SoundCloud
-					</button>
-				</div>
-				<p>
-					Built for personal use &middot;{' '}
-					<a
-						href="https://github.com/D3SOX/sc-gate-dl"
-						target="_blank"
-						rel="noopener noreferrer"
-					>
-						GitHub
-					</a>
-				</p>
-			</footer>
+			{!embedded && (
+				<footer className="footer">
+					<div className="footer-buttons">
+						<button
+							type="button"
+							className="btn-secondary btn-cleanup"
+							onClick={handleInitializeLogins}
+						>
+							Initialize Logins
+						</button>
+						<button
+							type="button"
+							className="btn-secondary btn-cleanup"
+							onClick={showCleanupSoundcloudToast}
+						>
+							Cleanup SoundCloud
+						</button>
+					</div>
+					<p>
+						Built for personal use &middot;{' '}
+						<a
+							href="https://github.com/D3SOX/sc-gate-dl"
+							target="_blank"
+							rel="noopener noreferrer"
+						>
+							GitHub
+						</a>
+					</p>
+				</footer>
+			)}
 		</div>
 	);
 }

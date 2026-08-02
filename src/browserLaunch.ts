@@ -47,6 +47,10 @@ export function browserModeToLaunchOptions(
 	};
 }
 
+export function isXvfbSupported(platform = process.platform): boolean {
+	return platform === 'linux';
+}
+
 export function launchConfiguredBrowser(
 	config: HypedditConfig,
 ): Promise<Browser> {
@@ -209,6 +213,9 @@ export async function launchAppBrowser(
 
 	const geoip = Boolean(proxy) && process.env.CLOAKBROWSER_GEOIP !== 'false';
 	const useXvfb = options.xvfb ?? false;
+	if (useXvfb && !isXvfbSupported()) {
+		throw new Error('Xvfb browser mode is only available on Linux');
+	}
 	const xvfb = useXvfb ? await acquireXvfb() : null;
 
 	const args = [

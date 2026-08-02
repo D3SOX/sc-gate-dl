@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         sc-gate-dl
 // @namespace    https://github.com/D3SOX/sc-gate-dl
-// @version      1.10.2
+// @version      1.10.3
 // @description  Add sc-gate-dl download controls and remember your position in the SoundCloud feed
 // @author       D3SOX
 // @match        https://soundcloud.com/*
@@ -107,6 +107,25 @@
   <path fill="currentColor" d="M12 3.25a.75.75 0 0 1 .75.75v9.19l3.22-3.22a.75.75 0 1 1 1.06 1.06l-4.5 4.5a.75.75 0 0 1-1.06 0l-4.5-4.5a.75.75 0 0 1 1.06-1.06l3.22 3.22V4A.75.75 0 0 1 12 3.25Z"/>
   <path fill="currentColor" d="M4.5 15.25a.75.75 0 0 1 .75.75v2.25h13.5V16a.75.75 0 0 1 1.5 0v2.5A1.75 1.75 0 0 1 18.5 20.25h-13A1.75 1.75 0 0 1 3.75 18.5V16a.75.75 0 0 1 .75-.75Z"/>
 </svg>`;
+
+	const STORE_SERVICE_ATTR = 'data-sc-gate-dl-store-service';
+	const STORE_SERVICES = {
+		hypeddit: {
+			icon: 'https://hypeddit.com/images/favicon.ico',
+		},
+		droploud: {
+			icon: 'https://droploud.com/favicon.ico',
+		},
+		gaterush: {
+			icon: 'https://gaterush.me/icons/logo-icon-large.png',
+		},
+		downloadgater: {
+			icon: 'https://downloadgater.com/favicon.png',
+		},
+		bandcamp: {
+			icon: 'https://s4.bcbits.com/client-bundle/1/PageLayout_1/favicon-78ff127104384a042453aca8d73be7dc.static/favicon/favicon-32x32.png',
+		},
+	};
 
 	function getAutoClose() {
 		try {
@@ -229,6 +248,82 @@
 				return document.URL || '';
 			}
 		}
+	}
+
+	function unwrapStoreUrl(href) {
+		try {
+			const url = new URL(href, currentHref() || 'https://soundcloud.com/');
+			if (url.protocol !== 'https:' && url.protocol !== 'http:') return null;
+			if (url.hostname.toLowerCase().replace(/^www\./, '') !== 'gate.sc') {
+				return url.href;
+			}
+			const wrapped = url.searchParams.get('url');
+			if (!wrapped) return url.href;
+			const destination = new URL(wrapped);
+			if (
+				destination.protocol !== 'https:' &&
+				destination.protocol !== 'http:'
+			) {
+				return url.href;
+			}
+			return destination.href;
+		} catch {
+			return null;
+		}
+	}
+
+	function storeServiceForUrl(href) {
+		try {
+			const url = new URL(href);
+			const host = url.hostname.toLowerCase().replace(/^www\./, '');
+			const path = url.pathname;
+			if (host === 'hypeddit.com' && path.startsWith('/')) return 'hypeddit';
+			if (
+				host === 'droploud.com' &&
+				/^\/(?:gate|track)\/[0-9a-f-]+\/?$/i.test(path)
+			) {
+				return 'droploud';
+			}
+			if (host === 'gaterush.me' && /^\/[A-Za-z0-9_-]+\/?$/.test(path)) {
+				return 'gaterush';
+			}
+			if (
+				host === 'downloadgater.com' &&
+				/^\/g\/[A-Za-z0-9_-]+\/?$/.test(path)
+			) {
+				return 'downloadgater';
+			}
+			if (
+				(host === 'bandcamp.com' || host.endsWith('.bandcamp.com')) &&
+				/^\/(?:track|album)\/[^/]+\/?$/i.test(path)
+			) {
+				return 'bandcamp';
+			}
+		} catch {
+			// Ignore malformed store URLs.
+		}
+		return null;
+	}
+
+	function decorateStoreLink(anchor) {
+		if (!(anchor instanceof HTMLAnchorElement) || isOurNode(anchor)) return;
+		const destination = unwrapStoreUrl(anchor.href);
+		if (!destination) return;
+		if (destination !== anchor.href) anchor.href = destination;
+		const serviceKey = storeServiceForUrl(destination);
+		if (!serviceKey) {
+			anchor.removeAttribute(STORE_SERVICE_ATTR);
+			anchor.style.removeProperty('--sc-gate-dl-store-icon');
+			return;
+		}
+		const service = STORE_SERVICES[serviceKey];
+		if (!service) return;
+
+		anchor.setAttribute(STORE_SERVICE_ATTR, serviceKey);
+		anchor.style.setProperty(
+			'--sc-gate-dl-store-icon',
+			`url("${service.icon}")`,
+		);
 	}
 
 	function normalizeTrackUrl(href) {
@@ -1365,6 +1460,31 @@ a[${BUTTON_ATTR}="classic"] svg {
 	width: 16px;
 	height: 16px;
 }
+a[${STORE_SERVICE_ATTR}] svg,
+a[${STORE_SERVICE_ATTR}] .sc-button-icon {
+	opacity: 0 !important;
+}
+a.soundActions__purchaseLink[${STORE_SERVICE_ATTR}],
+a.sc-button-buy[${STORE_SERVICE_ATTR}] {
+	position: relative !important;
+	background-image: none !important;
+}
+a.soundActions__purchaseLink[${STORE_SERVICE_ATTR}]::before,
+a.sc-button-buy[${STORE_SERVICE_ATTR}]::before {
+	opacity: 0 !important;
+}
+a.soundActions__purchaseLink[${STORE_SERVICE_ATTR}]::after,
+a.sc-button-buy[${STORE_SERVICE_ATTR}]::after {
+	content: "";
+	position: absolute;
+	top: 50%;
+	left: 50%;
+	width: 16px;
+	height: 16px;
+	transform: translate(-50%, -50%);
+	background: var(--sc-gate-dl-store-icon) center / contain no-repeat;
+	pointer-events: none;
+}
 
 /* MUI listen page */
 div[${WRAP_ATTR}="mui"] {
@@ -1375,6 +1495,20 @@ button[${BUTTON_ATTR}="mui"] svg {
 	display: block;
 	width: 24px;
 	height: 24px;
+}
+a[${STORE_SERVICE_ATTR}] > button {
+	position: relative;
+}
+a[${STORE_SERVICE_ATTR}] > button::after {
+	content: "";
+	position: absolute;
+	top: 50%;
+	left: 50%;
+	width: 24px;
+	height: 24px;
+	transform: translate(-50%, -50%);
+	background: var(--sc-gate-dl-store-icon) center / contain no-repeat;
+	pointer-events: none;
 }
 `;
 		document.documentElement.appendChild(style);
@@ -1560,11 +1694,12 @@ button[${BUTTON_ATTR}="mui"] svg {
 		panel.addEventListener('pointercancel', endResize);
 	}
 
-	function buildWebuiSrc(trackUrl) {
+	function buildWebuiSrc(trackUrl, embedded = false) {
 		const params = new URLSearchParams({
 			url: trackUrl,
 			outputFormat: getOutputFormat(),
 		});
+		if (embedded) params.set('embedded', '1');
 		return `${getWebuiBase()}/?${params.toString()}`;
 	}
 
@@ -1574,11 +1709,12 @@ button[${BUTTON_ATTR}="mui"] svg {
 			void cancelActiveJob(panel);
 		}
 		panel.dataset.trackUrl = trackUrl;
-		const src = buildWebuiSrc(trackUrl);
+		const iframeSrc = buildWebuiSrc(trackUrl, true);
+		const tabSrc = buildWebuiSrc(trackUrl);
 		const iframe = panel.querySelector('iframe');
 		const openTab = panel.querySelector('.sc-gate-dl-open-tab');
-		if (iframe) iframe.src = src;
-		if (openTab instanceof HTMLAnchorElement) openTab.href = src;
+		if (iframe) iframe.src = iframeSrc;
+		if (openTab instanceof HTMLAnchorElement) openTab.href = tabSrc;
 	}
 
 	function getApiBase() {
@@ -1638,11 +1774,13 @@ button[${BUTTON_ATTR}="mui"] svg {
 		window.clearTimeout(autoCloseTimer);
 		const panel = document.getElementById(PANEL_ID);
 		if (!panel) return;
-		await cancelActiveJob(panel);
+		const cancellation = cancelActiveJob(panel);
 		const iframe = panel.querySelector('iframe');
 		if (iframe) iframe.src = 'about:blank';
 		delete panel.dataset.trackUrl;
+		delete panel.dataset.jobId;
 		panel.hidden = true;
+		await cancellation;
 	}
 
 	function applyQueueGeom(el) {
@@ -1917,6 +2055,12 @@ button[${BUTTON_ATTR}="mui"] svg {
 					void closePanel();
 				});
 			panel
+				.querySelector('.sc-gate-dl-open-tab')
+				?.addEventListener('click', () => {
+					// Let the target=_blank navigation happen, then tear down this job.
+					void closePanel();
+				});
+			panel
 				.querySelector('.sc-gate-dl-format')
 				?.addEventListener('change', (e) => {
 					const select = e.target;
@@ -2055,6 +2199,20 @@ button[${BUTTON_ATTR}="mui"] svg {
 		);
 	}
 
+	function injectMuiWithoutBuy(moreButton) {
+		if (!(moreButton instanceof HTMLButtonElement)) return;
+		if (isOurNode(moreButton)) return;
+		if (!moreButton.closest('section[aria-label="Track header"]')) return;
+		if (isPlaylistOrAlbumContext(moreButton)) return;
+		if (alreadyInjectedNear(moreButton)) return;
+		const trackUrl = pageTrackUrl();
+		if (!trackUrl) return;
+		moreButton.insertAdjacentElement(
+			'beforebegin',
+			makeMuiControl(trackUrl, moreButton),
+		);
+	}
+
 	function isClassicPurchase(el) {
 		if (!(el instanceof Element) || isOurNode(el)) return false;
 		if (el.classList.contains('purchaseLink__container')) return true;
@@ -2069,6 +2227,13 @@ button[${BUTTON_ATTR}="mui"] svg {
 		// Drop buttons that landed on playlist/album cards (e.g. before class hydrated)
 		for (const wrap of scope.querySelectorAll?.(`[${WRAP_ATTR}]`) || []) {
 			if (isPlaylistOrAlbumContext(wrap)) wrap.remove();
+		}
+
+		// Brand supported purchase links without loading third-party icon assets.
+		for (const anchor of scope.querySelectorAll?.(
+			'a.soundActions__purchaseLink, a.sc-button-buy, a[aria-label="Buy This Track"], a[target="_blank"][aria-label]',
+		) || []) {
+			decorateStoreLink(anchor);
 		}
 
 		// Classic layout only — one control per purchaseLink__container
@@ -2091,6 +2256,12 @@ button[${BUTTON_ATTR}="mui"] svg {
 			'a[aria-label="Buy This Track"], a[target="_blank"][aria-label]',
 		) || []) {
 			injectMui(el);
+		}
+		// Tracks without a purchase link still have the action row's More button.
+		for (const el of scope.querySelectorAll?.(
+			'section[aria-label="Track header"] button[aria-label="More menu"]',
+		) || []) {
+			injectMuiWithoutBuy(el);
 		}
 	}
 
@@ -2115,6 +2286,10 @@ button[${BUTTON_ATTR}="mui"] svg {
 	const observer = new MutationObserver((mutations) => {
 		let shouldScan = false;
 		for (const m of mutations) {
+			if (m.type === 'attributes') {
+				shouldScan = true;
+				break;
+			}
 			for (const node of m.addedNodes) {
 				if (!(node instanceof Element)) continue;
 				if (isOurNode(node)) continue;
@@ -2125,7 +2300,12 @@ button[${BUTTON_ATTR}="mui"] svg {
 		}
 		if (shouldScan) scan();
 	});
-	observer.observe(document.documentElement, { childList: true, subtree: true });
+	observer.observe(document.documentElement, {
+		childList: true,
+		subtree: true,
+		attributes: true,
+		attributeFilter: ['href'],
+	});
 
 	let lastHref = location.href;
 	setInterval(() => {
