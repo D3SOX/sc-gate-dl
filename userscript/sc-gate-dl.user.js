@@ -309,13 +309,13 @@
 		if (!(anchor instanceof HTMLAnchorElement) || isOurNode(anchor)) return;
 		const destination = unwrapStoreUrl(anchor.href);
 		if (!destination) return;
-		if (destination !== anchor.href) anchor.href = destination;
 		const serviceKey = storeServiceForUrl(destination);
 		if (!serviceKey) {
 			anchor.removeAttribute(STORE_SERVICE_ATTR);
 			anchor.style.removeProperty('--sc-gate-dl-store-icon');
 			return;
 		}
+		if (destination !== anchor.href) anchor.href = destination;
 		const service = STORE_SERVICES[serviceKey];
 		if (!service) return;
 
@@ -2233,6 +2233,14 @@ a[${STORE_SERVICE_ATTR}] > button::after {
 		for (const anchor of scope.querySelectorAll?.(
 			'a.soundActions__purchaseLink, a.sc-button-buy, a[aria-label="Buy This Track"], a[target="_blank"][aria-label]',
 		) || []) {
+			const label = anchor.getAttribute('aria-label') || '';
+			if (
+				!anchor.classList.contains('soundActions__purchaseLink') &&
+				!anchor.classList.contains('sc-button-buy') &&
+				!/buy|store|purchase|free\s*download/i.test(label)
+			) {
+				continue;
+			}
 			decorateStoreLink(anchor);
 		}
 
@@ -2283,6 +2291,15 @@ a[${STORE_SERVICE_ATTR}] > button::after {
 		true,
 	);
 
+	let scanTimer = 0;
+	function scheduleScan() {
+		if (scanTimer) return;
+		scanTimer = window.setTimeout(() => {
+			scanTimer = 0;
+			scan();
+		}, 0);
+	}
+
 	const observer = new MutationObserver((mutations) => {
 		let shouldScan = false;
 		for (const m of mutations) {
@@ -2298,7 +2315,7 @@ a[${STORE_SERVICE_ATTR}] > button::after {
 			}
 			if (shouldScan) break;
 		}
-		if (shouldScan) scan();
+		if (shouldScan) scheduleScan();
 	});
 	observer.observe(document.documentElement, {
 		childList: true,
