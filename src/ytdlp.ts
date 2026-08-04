@@ -4,6 +4,7 @@ import { lookpath } from 'find-bin';
 import type { BandcampAlbumTrackChoice, JobProgress } from './types';
 import {
 	isBandcampAlbumUrl,
+	isBandcampUrl,
 	isSoundcloudUrl,
 	writeSoundcloudNetscapeCookies,
 } from './utils';
@@ -30,6 +31,8 @@ const YTDLP_DOWNLOAD_TIMEOUT_MS = 10 * 60_000;
 const YTDLP_METADATA_TIMEOUT_MS = 60_000;
 const ALBUM_MATCH_THRESHOLD = 0.5;
 const PROGRESS_PREFIX = 'SC_GATE_DL_PROGRESS:';
+// Work around Bandcamp's client challenge: https://github.com/yt-dlp/yt-dlp/issues/17356
+const BANDCAMP_IMPERSONATION_ARGS = ['--impersonate', 'chrome'];
 
 type FlatEntry = {
 	id?: string;
@@ -284,11 +287,13 @@ export class YtDlpDownloader {
 		await mkdir(DOWNLOADS_DIR, { recursive: true });
 
 		const outputTemplate = join(DOWNLOADS_DIR, '%(title)s [%(id)s].%(ext)s');
+		const bandcamp = isBandcampUrl(downloadUrl);
 		const soundcloud = isSoundcloudUrl(downloadUrl);
 		// Prefer SoundCloud's original upload (`download`) when the track allows it.
 		// That format is only listed for registered users — pass cookies when available.
 		const format = soundcloud ? 'download/bestaudio/best' : 'bestaudio/best';
 		const args = [
+			...(bandcamp ? BANDCAMP_IMPERSONATION_ARGS : []),
 			'--no-mtime',
 			'--no-playlist',
 			'--newline',
@@ -415,7 +420,13 @@ export class YtDlpDownloader {
 
 		const stdout = await this.runYtDlp(
 			ytDlpBin,
-			['--flat-playlist', '-J', '--no-warnings', albumUrl],
+			[
+				...BANDCAMP_IMPERSONATION_ARGS,
+				'--flat-playlist',
+				'-J',
+				'--no-warnings',
+				albumUrl,
+			],
 			YTDLP_METADATA_TIMEOUT_MS,
 		);
 
