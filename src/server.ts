@@ -15,6 +15,7 @@ import { JobQueue } from './jobQueue';
 import { jobStore } from './jobStore';
 import { SoundcloudClient } from './soundcloud';
 import { isSoundcloudDownloadEnabled } from './soundcloudDownload';
+import { StillhypeDownloader } from './stillhype';
 import {
 	type BrowserMode,
 	isBrowserMode,
@@ -408,6 +409,29 @@ async function runDownloadProcess(jobId: string): Promise<void> {
 			);
 			downloadFilename =
 				await downloadgaterDownloader.downloadAudio(downloadSourceUrl);
+			throwIfCancelled();
+		} else if (provider === 'stillhype') {
+			jobStore.updateProgress(
+				jobId,
+				'initializing_browser',
+				'Launching browser for StillHype...',
+				10,
+			);
+			const stillhypeDownloader = new StillhypeDownloader(
+				await prepareBrowserConfig(),
+			);
+			activeDownloaders.set(jobId, stillhypeDownloader);
+			stillhypeDownloader.setProgressCallback(emitProgress);
+			await stillhypeDownloader.initialize();
+			throwIfCancelled();
+			jobStore.updateProgress(
+				jobId,
+				'handling_gates',
+				'Processing StillHype gates...',
+				25,
+			);
+			downloadFilename =
+				await stillhypeDownloader.downloadAudio(downloadSourceUrl);
 			throwIfCancelled();
 		} else if (provider === 'direct') {
 			jobStore.updateProgress(

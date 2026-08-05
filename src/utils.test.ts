@@ -116,6 +116,17 @@ describe('resolveGateProviderUrl', () => {
 		).toBeNull();
 	});
 
+	test('matches StillHype gate URLs and normalizes http to https', () => {
+		expect(
+			resolveGateProviderUrl(
+				'FREE DOWNLOAD : http://www.stillhype.io/g/mum-dad-beauty-and-a-beat-dub-HoMren',
+			),
+		).toEqual({
+			url: 'https://www.stillhype.io/g/mum-dad-beauty-and-a-beat-dub-HoMren',
+			provider: 'stillhype',
+		});
+	});
+
 	test('matches raw audio file URLs as direct downloads', () => {
 		expect(
 			resolveGateProviderUrl(

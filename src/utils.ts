@@ -224,6 +224,7 @@ export type GateProvider =
 	| 'droploud'
 	| 'gaterush'
 	| 'downloadgater'
+	| 'stillhype'
 	/** Direct HTTP(S) file URL (Dropbox, Drive, raw audio link, …). */
 	| 'direct'
 	| 'bandcamp'
@@ -241,6 +242,8 @@ const DROPLOUD_URL_RE = /https:\/\/droploud\.com\/(?:gate|track)\/[0-9a-f-]+/i;
 const GATERUSH_URL_RE = /https?:\/\/(?:www\.)?gaterush\.me\/[A-Za-z0-9_-]+/i;
 const DOWNLOADGATER_URL_RE =
 	/https?:\/\/(?:www\.)?downloadgater\.com\/g\/[A-Za-z0-9_-]+/i;
+const STILLHYPE_URL_RE =
+	/https?:\/\/(?:www\.)?stillhype\.io\/g\/[A-Za-z0-9_-]+/i;
 /** artist.bandcamp.com/track|album/... (and bare bandcamp.com). */
 const BANDCAMP_URL_RE =
 	/https?:\/\/(?:[\w-]+\.)?bandcamp\.com\/(?:track|album)\/[^\s?#]+/i;
@@ -273,6 +276,10 @@ export function isGaterushUrl(value: string): boolean {
 
 export function isDownloadgaterUrl(value: string): boolean {
 	return DOWNLOADGATER_URL_RE.test(value);
+}
+
+export function isStillhypeUrl(value: string): boolean {
+	return STILLHYPE_URL_RE.test(value);
 }
 
 export function isBandcampUrl(value: string): boolean {
@@ -329,7 +336,7 @@ export function validateGateUrl(value: string): true | string {
 	if (/^https?:\/\/\S+/i.test(value.trim())) {
 		return true;
 	}
-	return 'A valid Hypeddit, Droploud, GateRush, DownloadGater, Bandcamp, direct download, SoundCloud, or resolvable http(s) URL is required';
+	return 'A valid Hypeddit, Droploud, GateRush, DownloadGater, StillHype, Bandcamp, direct download, SoundCloud, or resolvable http(s) URL is required';
 }
 
 function normalizeGateUrl(
@@ -339,6 +346,7 @@ function normalizeGateUrl(
 	if (
 		provider === 'gaterush' ||
 		provider === 'downloadgater' ||
+		provider === 'stillhype' ||
 		provider === 'bandcamp' ||
 		provider === 'direct'
 	) {
@@ -383,6 +391,10 @@ function matchTraditionalGateUrl(
 			trimExtractedUrl(downloadgaterMatch),
 			'downloadgater',
 		);
+	}
+	const stillhypeMatch = value.match(STILLHYPE_URL_RE)?.[0];
+	if (stillhypeMatch) {
+		return normalizeGateUrl(trimExtractedUrl(stillhypeMatch), 'stillhype');
 	}
 	return null;
 }
@@ -552,9 +564,13 @@ export function findKnownGateInHtml(
 		if (direct?.provider === 'bandcamp') relativeMatches.push(direct);
 
 		const traditional = relativeMatches.find((match) =>
-			['hypeddit', 'droploud', 'gaterush', 'downloadgater'].includes(
-				match.provider,
-			),
+			[
+				'hypeddit',
+				'droploud',
+				'gaterush',
+				'downloadgater',
+				'stillhype',
+			].includes(match.provider),
 		);
 		if (traditional) return traditional;
 

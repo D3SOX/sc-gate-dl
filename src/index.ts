@@ -8,6 +8,7 @@ import { GaterushDownloader } from './gaterush';
 import { HypedditDownloader } from './hypeddit';
 import { HypedditHttpDownloader } from './hypedditHttp';
 import { SoundcloudClient } from './soundcloud';
+import { StillhypeDownloader } from './stillhype';
 import {
 	getFfmpegBin,
 	getFfprobeBin,
@@ -228,6 +229,22 @@ try {
 			downloadFilename = await downloadgaterDownloader.downloadAudio(gateUrl);
 		} finally {
 			await downloadgaterDownloader.close();
+		}
+	} else if (gate.provider === 'stillhype') {
+		usedBrowser = true;
+		const stillhypeDownloader = new StillhypeDownloader(gateConfig);
+		try {
+			await stillhypeDownloader.initialize();
+			if (initializeLogins) {
+				await stillhypeDownloader.prepareLogins();
+				if (config) {
+					await saveConfig({ ...config, initializeLogins: false });
+					console.log('✓ Updated config.json: initializeLogins set to false');
+				}
+			}
+			downloadFilename = await stillhypeDownloader.downloadAudio(gateUrl);
+		} finally {
+			await stillhypeDownloader.close();
 		}
 	} else {
 		// Hypeddit: always try plain HTTP first (email + social skip gates).

@@ -18,6 +18,7 @@ const GATE_PROVIDER_LABELS: Record<GateProvider, string> = {
 	droploud: 'Droploud',
 	gaterush: 'GateRush',
 	downloadgater: 'DownloadGater',
+	stillhype: 'StillHype',
 	direct: 'direct download',
 	bandcamp: 'Bandcamp',
 	soundcloud: 'SoundCloud',
