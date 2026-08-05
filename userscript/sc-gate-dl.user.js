@@ -122,6 +122,9 @@
 		downloadgater: {
 			icon: 'https://downloadgater.com/favicon.png',
 		},
+		stillhype: {
+			icon: 'https://www.stillhype.io/favicon-32x32.png',
+		},
 		bandcamp: {
 			icon: 'https://s4.bcbits.com/client-bundle/1/PageLayout_1/favicon-78ff127104384a042453aca8d73be7dc.static/favicon/favicon-32x32.png',
 		},
@@ -292,6 +295,9 @@
 				/^\/g\/[A-Za-z0-9_-]+\/?$/.test(path)
 			) {
 				return 'downloadgater';
+			}
+			if (host === 'stillhype.io' && /^\/g\/[A-Za-z0-9_-]+\/?$/.test(path)) {
+				return 'stillhype';
 			}
 			if (
 				(host === 'bandcamp.com' || host.endsWith('.bandcamp.com')) &&
