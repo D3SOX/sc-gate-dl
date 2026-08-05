@@ -152,6 +152,69 @@ export async function getYtDlpBin(): Promise<string> {
 	return ytDlpBin;
 }
 
+/**
+ * Check that yt-dlp can resolve SoundCloud's authenticated original-download
+ * format with the locally exported cookies. This performs extraction and the
+ * format availability HEAD request, but does not download the audio.
+ */
+export async function canAccessSoundcloudOriginalDownload(
+	url: string,
+	cookiesJsonPath = 'soundcloud-cookies.json',
+): Promise<boolean> {
+	const cookiesPath = await writeSoundcloudNetscapeCookies(cookiesJsonPath);
+	if (!cookiesPath) return false;
+
+	try {
+		const ytDlpBin = await getYtDlpBin();
+		const subprocess = Bun.spawn(
+			[
+				ytDlpBin,
+				'--simulate',
+				'--no-playlist',
+				'--no-warnings',
+				'--cookies',
+				cookiesPath,
+				'-f',
+				'download',
+				'--print',
+				'%(format_id)s',
+				url,
+			],
+			{
+				stdin: 'ignore',
+				stdout: 'pipe',
+				stderr: 'pipe',
+				timeout: YTDLP_METADATA_TIMEOUT_MS,
+				killSignal: 'SIGTERM',
+			},
+		);
+		const [stdout, stderr, exitCode] = await Promise.all([
+			new Response(subprocess.stdout).text(),
+			new Response(subprocess.stderr).text(),
+			subprocess.exited,
+		]);
+		const available =
+			exitCode === 0 &&
+			stdout
+				.split(/\r?\n/)
+				.map((line) => line.trim())
+				.includes('download');
+		if (!available) {
+			console.warn(
+				`SoundCloud original download preflight failed${stderr.trim() ? `: ${stderr.trim().slice(-500)}` : ''}`,
+			);
+		}
+		return available;
+	} catch (error) {
+		console.warn(
+			`SoundCloud original download preflight failed: ${error instanceof Error ? error.message : String(error)}`,
+		);
+		return false;
+	} finally {
+		await rm(cookiesPath, { force: true });
+	}
+}
+
 /** Strip (Clip)/(Preview)/brackets and normalize for fuzzy title compare. */
 export function normalizeTrackTitle(title: string): string {
 	return title

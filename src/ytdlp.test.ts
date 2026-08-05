@@ -1,5 +1,9 @@
 import { describe, expect, test } from 'bun:test';
-import { parseYtDlpProgressLine, readProcessLines } from './ytdlp';
+import {
+	canAccessSoundcloudOriginalDownload,
+	parseYtDlpProgressLine,
+	readProcessLines,
+} from './ytdlp';
 
 const streamChunks = (...chunks: string[]) =>
 	new ReadableStream<Uint8Array>({
@@ -58,5 +62,16 @@ describe('parseYtDlpProgressLine', () => {
 
 	test('ignores regular yt-dlp output', () => {
 		expect(parseYtDlpProgressLine('./downloads/track.m4a')).toBeNull();
+	});
+});
+
+describe('canAccessSoundcloudOriginalDownload', () => {
+	test('does not allow automatic direct download without exported cookies', async () => {
+		expect(
+			await canAccessSoundcloudOriginalDownload(
+				'https://soundcloud.com/artist/track',
+				'./missing-soundcloud-cookies.json',
+			),
+		).toBe(false);
 	});
 });
