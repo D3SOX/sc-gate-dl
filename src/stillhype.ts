@@ -1,4 +1,4 @@
-import { mkdir } from 'node:fs/promises';
+import { mkdir, rm } from 'node:fs/promises';
 import { basename, join } from 'node:path';
 import { Presets, SingleBar } from 'cli-progress';
 import type { Browser, HTTPResponse, Page } from 'puppeteer';
@@ -79,7 +79,7 @@ export class StillhypeDownloader {
 
 	async prepareLogins() {
 		const soundCloudPage = await this.browser.newPage();
-		soundCloudPage.setViewport({ width: 1920, height: 1080 });
+		await soundCloudPage.setViewport({ width: 1920, height: 1080 });
 		await soundCloudPage.goto('https://soundcloud.com/messages');
 
 		try {
@@ -889,6 +889,8 @@ export class StillhypeDownloader {
 			downloadCompleteResolve = resolve;
 			downloadCompleteReject = reject;
 		});
+		// Abandoned when the unlock URL path returns first.
+		downloadCompletePromise.catch(() => {});
 		const downloadTimer = setTimeout(
 			() =>
 				downloadCompleteReject(
@@ -1031,6 +1033,7 @@ export class StillhypeDownloader {
 		for (let hop = 0; hop < maxRedirects; hop++) {
 			const result = await safeFetch(current, {
 				headers: { 'User-Agent': USER_AGENT },
+				signal: AbortSignal.timeout(60_000),
 			});
 			finalUrl = result.url;
 			response = result.response;
@@ -1080,6 +1083,7 @@ export class StillhypeDownloader {
 		const writer = Bun.file(target).writer();
 		const reader = response.body.getReader();
 		let received = 0;
+		let completed = false;
 		const pBar = new SingleBar(
 			{
 				format:
@@ -1123,8 +1127,13 @@ export class StillhypeDownloader {
 				}
 			}
 			await writer.end();
+			completed = true;
 		} finally {
 			pBar.stop();
+			if (!completed) {
+				await writer.end().catch(() => {});
+				await rm(target, { force: true }).catch(() => {});
+			}
 		}
 
 		this.downloadFilename = suggested;
