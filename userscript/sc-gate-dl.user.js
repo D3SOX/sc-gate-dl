@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         sc-gate-dl
 // @namespace    https://github.com/D3SOX/sc-gate-dl
-// @version      1.10.5
+// @version      1.10.6
 // @description  Add sc-gate-dl download controls and remember your position in the SoundCloud feed
 // @author       D3SOX
 // @match        https://soundcloud.com/*
@@ -498,22 +498,14 @@
 		}
 	}
 
-	function resetFeedCheckpoints() {
-		try {
-			if (typeof GM_deleteValue === 'function') {
-				GM_deleteValue(FEED_CHECKPOINT_KEY);
-			} else if (typeof GM_setValue === 'function') {
-				GM_setValue(FEED_CHECKPOINT_KEY, null);
-			}
-		} catch {
-			// ignore
-		}
-		try {
-			localStorage.removeItem(FEED_CHECKPOINT_KEY);
-		} catch {
-			// ignore
-		}
-		setFeedStatus('Positions reset. The next played track will seed both.');
+	function resetFeedCheckpoint(direction) {
+		if (direction !== 'newer' && direction !== 'older') return;
+		const checkpoints = loadFeedCheckpoints() ?? { newer: null, older: null };
+		checkpoints[direction] = null;
+		persistFeedCheckpoints(checkpoints);
+		setFeedStatus(
+			`${direction === 'newer' ? 'Up' : 'Down'} position reset. The next eligible played track will seed it.`,
+		);
 		updateFeedNavigator();
 	}
 
@@ -639,6 +631,8 @@
 		const resumeOlder = nav.querySelector('.sc-gate-dl-feed-resume-older');
 		const cancel = nav.querySelector('.sc-gate-dl-feed-cancel');
 		const find = nav.querySelector('.sc-gate-dl-feed-find');
+		const resetNewer = nav.querySelector('.sc-gate-dl-feed-reset-newer');
+		const resetOlder = nav.querySelector('.sc-gate-dl-feed-reset-older');
 		const updateResumeButton = (button, checkpoint, label) => {
 			if (!(button instanceof HTMLButtonElement)) return;
 			button.hidden = feedSearchActive;
@@ -650,6 +644,12 @@
 		};
 		updateResumeButton(resumeNewer, checkpoints?.newer, 'farthest up');
 		updateResumeButton(resumeOlder, checkpoints?.older, 'farthest down');
+		if (resetNewer instanceof HTMLButtonElement) {
+			resetNewer.disabled = !checkpoints?.newer;
+		}
+		if (resetOlder instanceof HTMLButtonElement) {
+			resetOlder.disabled = !checkpoints?.older;
+		}
 		if (cancel instanceof HTMLButtonElement) cancel.hidden = !feedSearchActive;
 		if (find instanceof HTMLButtonElement) find.disabled = feedSearchActive;
 	}
@@ -796,7 +796,10 @@
 				<button type="button" class="sc-gate-dl-feed-resume-older"></button>
 				<button type="button" class="sc-gate-dl-feed-cancel" hidden>Cancel scrolling</button>
 				<button type="button" class="sc-gate-dl-feed-find">Find track URL…</button>
-				<button type="button" class="sc-gate-dl-feed-reset">Reset saved positions</button>
+				<div class="sc-gate-dl-feed-reset-row">
+					<button type="button" class="sc-gate-dl-feed-reset-newer">Reset up</button>
+					<button type="button" class="sc-gate-dl-feed-reset-older">Reset down</button>
+				</div>
 				<div class="sc-gate-dl-feed-status" aria-live="polite"></div>
 			`;
 			nav
@@ -825,9 +828,11 @@
 					);
 					if (input?.trim()) void scrollToFeedTrack(input.trim());
 				});
-			nav
-				.querySelector('.sc-gate-dl-feed-reset')
-				?.addEventListener('click', resetFeedCheckpoints);
+			for (const direction of ['newer', 'older']) {
+				nav
+					.querySelector(`.sc-gate-dl-feed-reset-${direction}`)
+					?.addEventListener('click', () => resetFeedCheckpoint(direction));
+			}
 			document.documentElement.appendChild(nav);
 		}
 		nav.hidden = false;
@@ -1330,7 +1335,16 @@
 #${FEED_NAV_ID} button:hover:not(:disabled) { border-color: #f50; color: #fff; }
 #${FEED_NAV_ID} button:disabled { color: #777; cursor: default; }
 #${FEED_NAV_ID} .sc-gate-dl-feed-find { text-align: center; }
-#${FEED_NAV_ID} .sc-gate-dl-feed-reset { color: #aaa; text-align: center; }
+#${FEED_NAV_ID} .sc-gate-dl-feed-reset-row {
+	display: flex;
+	gap: 6px;
+}
+#${FEED_NAV_ID} .sc-gate-dl-feed-reset-row button {
+	flex: 1 1 50%;
+	width: 50%;
+	color: #aaa;
+	text-align: center;
+}
 #${FEED_NAV_ID} .sc-gate-dl-feed-status:empty { display: none; }
 #${FEED_NAV_ID} .sc-gate-dl-feed-status {
 	padding: 1px 2px;
