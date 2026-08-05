@@ -1,5 +1,4 @@
 import { describe, expect, test } from 'bun:test';
-import { readFileSync } from 'node:fs';
 
 type UpdateFeedPlaybackOrigin = (
 	currentOrigin: string | null,
@@ -7,10 +6,9 @@ type UpdateFeedPlaybackOrigin = (
 	outsidePlaybackSelection: boolean,
 ) => string | null;
 
-const source = readFileSync(
+const source = await Bun.file(
 	new URL('./sc-gate-dl.user.js', import.meta.url),
-	'utf8',
-);
+).text();
 const start = source.indexOf('\tfunction updateFeedPlaybackOrigin(');
 const end = source.indexOf('\n\n\tlet lastRecordedPlayingUrl', start);
 if (start < 0 || end < 0) throw new Error('Playback-origin helper not found');
@@ -22,11 +20,7 @@ const updateFeedPlaybackOrigin = Function(
 describe('feed playback origin', () => {
 	test('clears feed provenance when another track is selected outside the feed', () => {
 		expect(
-			updateFeedPlaybackOrigin(
-				'https://soundcloud.com/feed/track',
-				null,
-				true,
-			),
+			updateFeedPlaybackOrigin('https://soundcloud.com/feed/track', null, true),
 		).toBeNull();
 	});
 
