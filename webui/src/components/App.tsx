@@ -73,6 +73,7 @@ interface JobState {
 	downloadFilename: string | null;
 	outputFilename: string | null;
 	sourceIsLossless: boolean | null;
+	warning: string | null;
 	error: string | null;
 }
 
@@ -250,6 +251,7 @@ export default function App() {
 		downloadFilename: null,
 		outputFilename: null,
 		sourceIsLossless: null,
+		warning: null,
 		error: null,
 	});
 	const [metadata, setMetadata] = useState<Metadata>({
@@ -606,7 +608,7 @@ export default function App() {
 			const format = formatOverride ?? outputFormat;
 
 			setIsLoading(true);
-			setJob((prev) => ({ ...prev, error: null }));
+			setJob((prev) => ({ ...prev, warning: null, error: null }));
 
 			try {
 				const response = await fetch(`${API_BASE}/api/job`, {
@@ -633,6 +635,7 @@ export default function App() {
 					defaultMetadata: data.defaultMetadata,
 					existingMetadata: null,
 					outputFormat: format,
+					warning: data.soundcloudDownloadWarning ?? null,
 					error: null,
 				}));
 
@@ -919,6 +922,7 @@ export default function App() {
 			downloadFilename: null,
 			outputFilename: null,
 			sourceIsLossless: null,
+			warning: null,
 			error: null,
 		});
 		setMetadata({ title: '', artist: '', album: '', genre: '' });
@@ -1028,6 +1032,19 @@ export default function App() {
 					<button
 						type="button"
 						onClick={() => setJob((prev) => ({ ...prev, error: null }))}
+					>
+						Dismiss
+					</button>
+				</div>
+			)}
+
+			{job.warning && (
+				<div className="warning-banner" role="status">
+					<span className="warning-icon">!</span>
+					<span>{job.warning}</span>
+					<button
+						type="button"
+						onClick={() => setJob((prev) => ({ ...prev, warning: null }))}
 					>
 						Dismiss
 					</button>

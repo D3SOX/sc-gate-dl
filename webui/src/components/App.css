@@ -164,6 +164,51 @@
 	background: rgba(255, 50, 50, 0.2);
 }
 
+/* Warning banner */
+.warning-banner {
+	display: flex;
+	align-items: center;
+	gap: var(--space-md);
+	padding: var(--space-md) var(--space-lg);
+	background: rgba(255, 174, 0, 0.1);
+	border: 1px solid rgba(255, 174, 0, 0.35);
+	border-radius: 8px;
+}
+
+.warning-icon {
+	width: 24px;
+	height: 24px;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	background: #ffae00;
+	color: var(--bg-deep);
+	border-radius: 50%;
+	font-weight: 700;
+	font-size: 0.875rem;
+	flex-shrink: 0;
+}
+
+.warning-banner span:nth-child(2) {
+	flex: 1;
+	font-size: 0.9rem;
+}
+
+.warning-banner button {
+	padding: var(--space-xs) var(--space-md);
+	background: transparent;
+	border: 1px solid rgba(255, 174, 0, 0.5);
+	color: #ffc44d;
+	font-size: 0.8rem;
+	border-radius: 4px;
+	cursor: pointer;
+	transition: all var(--transition-fast);
+}
+
+.warning-banner button:hover {
+	background: rgba(255, 174, 0, 0.15);
+}
+
 /* Track preview */
 .track-preview {
 	display: flex;

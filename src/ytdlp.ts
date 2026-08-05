@@ -1,4 +1,4 @@
-import { mkdir, rm } from 'node:fs/promises';
+import { mkdir } from 'node:fs/promises';
 import { basename, join } from 'node:path';
 import { lookpath } from 'find-bin';
 import type { BandcampAlbumTrackChoice, JobProgress } from './types';
@@ -31,6 +31,17 @@ const YTDLP_DOWNLOAD_TIMEOUT_MS = 10 * 60_000;
 const YTDLP_METADATA_TIMEOUT_MS = 60_000;
 const ALBUM_MATCH_THRESHOLD = 0.5;
 const PROGRESS_PREFIX = 'SC_GATE_DL_PROGRESS:';
+
+async function deleteTemporaryFile(path: string): Promise<void> {
+	try {
+		await Bun.file(path).delete();
+	} catch (error) {
+		if (error instanceof Error && 'code' in error && error.code === 'ENOENT') {
+			return;
+		}
+		throw error;
+	}
+}
 // Work around Bandcamp's client challenge: https://github.com/yt-dlp/yt-dlp/issues/17356
 const BANDCAMP_IMPERSONATION_ARGS = ['--impersonate', 'chrome'];
 
@@ -150,6 +161,69 @@ export async function getYtDlpBin(): Promise<string> {
 		);
 	}
 	return ytDlpBin;
+}
+
+/**
+ * Check that yt-dlp can resolve SoundCloud's authenticated original-download
+ * format with the locally exported cookies. This performs extraction and the
+ * format availability HEAD request, but does not download the audio.
+ */
+export async function canAccessSoundcloudOriginalDownload(
+	url: string,
+	cookiesJsonPath = 'soundcloud-cookies.json',
+): Promise<boolean> {
+	const cookiesPath = await writeSoundcloudNetscapeCookies(cookiesJsonPath);
+	if (!cookiesPath) return false;
+
+	try {
+		const ytDlpBin = await getYtDlpBin();
+		const subprocess = Bun.spawn(
+			[
+				ytDlpBin,
+				'--simulate',
+				'--no-playlist',
+				'--no-warnings',
+				'--cookies',
+				cookiesPath,
+				'-f',
+				'download',
+				'--print',
+				'%(format_id)s',
+				url,
+			],
+			{
+				stdin: 'ignore',
+				stdout: 'pipe',
+				stderr: 'pipe',
+				timeout: YTDLP_METADATA_TIMEOUT_MS,
+				killSignal: 'SIGTERM',
+			},
+		);
+		const [stdout, stderr, exitCode] = await Promise.all([
+			new Response(subprocess.stdout).text(),
+			new Response(subprocess.stderr).text(),
+			subprocess.exited,
+		]);
+		const available =
+			exitCode === 0 &&
+			stdout
+				.split(/\r?\n/)
+				.map((line) => line.trim())
+				.includes('download');
+		if (!available) {
+			console.warn(
+				`SoundCloud original download preflight failed${stderr.trim() ? `: ${stderr.trim().slice(-500)}` : ''}`,
+			);
+		}
+		return available;
+	} catch (error) {
+		console.warn(
+			`SoundCloud original download preflight failed: ${error instanceof Error ? error.message : String(error)}`,
+		);
+		return false;
+	} finally {
+		await deleteTemporaryFile(cookiesPath);
+	}
 }
 
 /** Strip (Clip)/(Preview)/brackets and normalize for fuzzy title compare. */
@@ -352,7 +426,7 @@ export class YtDlpDownloader {
 				},
 			);
 		} finally {
-			if (cookiesPath) await rm(cookiesPath, { force: true });
+			if (cookiesPath) await deleteTemporaryFile(cookiesPath);
 		}
 
 		const filepaths = stdout

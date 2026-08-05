@@ -14,6 +14,7 @@ import { HypedditHttpDownloader } from './hypedditHttp';
 import { JobQueue } from './jobQueue';
 import { jobStore } from './jobStore';
 import { SoundcloudClient } from './soundcloud';
+import { isSoundcloudDownloadEnabled } from './soundcloudDownload';
 import {
 	type BrowserMode,
 	isBrowserMode,
@@ -32,7 +33,7 @@ import {
 	validateGateUrl,
 	validateSoundcloudUrl,
 } from './utils';
-import { YtDlpDownloader } from './ytdlp';
+import { canAccessSoundcloudOriginalDownload, YtDlpDownloader } from './ytdlp';
 
 const ffmpegBin = await getFfmpegBin();
 const ffprobeBin = await getFfprobeBin();
@@ -766,9 +767,21 @@ const server = Bun.serve({
 						);
 					}
 
-					const hypedditUrl = skipAutomaticHypedditFetch
-						? null
-						: await extractAndResolveGateUrl(track);
+					// A creator-enabled SoundCloud download is the preferred source: it
+					// bypasses gates and lets yt-dlp select the original `download` format.
+					const creatorDownloadAvailable = isSoundcloudDownloadEnabled(track);
+					const soundcloudDownloadEnabled =
+						creatorDownloadAvailable &&
+						(await canAccessSoundcloudOriginalDownload(soundcloudUrl));
+					const soundcloudDownloadWarning =
+						creatorDownloadAvailable && !soundcloudDownloadEnabled
+							? 'This track has a creator-enabled SoundCloud download, but yt-dlp could not access it. Add or refresh soundcloud-cookies.json to use the original download; continuing with the gate instead.'
+							: null;
+					const hypedditUrl = soundcloudDownloadEnabled
+						? { url: soundcloudUrl, provider: 'soundcloud' as const }
+						: skipAutomaticHypedditFetch
+							? null
+							: await extractAndResolveGateUrl(track);
 					const defaultMetadata = getDefaultMetadata(track);
 
 					const updatedJob = jobStore.update(job.id, {
@@ -778,7 +791,9 @@ const server = Bun.serve({
 						progress: {
 							stage: hypedditUrl ? 'pending' : 'waiting_hypeddit',
 							message: hypedditUrl
-								? 'Ready to start download'
+								? soundcloudDownloadEnabled
+									? 'Creator-enabled SoundCloud download ready'
+									: 'Ready to start download'
 								: skipAutomaticHypedditFetch
 									? 'Automatic gate lookup skipped - manual input required'
 									: 'Gate URL not found - manual input required',
@@ -799,6 +814,7 @@ const server = Bun.serve({
 						hypedditUrl: updatedJob.hypedditUrl,
 						defaultMetadata: updatedJob.defaultMetadata,
 						outputFormat: updatedJob.outputFormat,
+						soundcloudDownloadWarning,
 						needsHypedditUrl: !hypedditUrl,
 					});
 				} catch (error) {
