@@ -1,4 +1,4 @@
-import { mkdir, rm } from 'node:fs/promises';
+import { mkdir } from 'node:fs/promises';
 import { basename, join } from 'node:path';
 import { lookpath } from 'find-bin';
 import type { BandcampAlbumTrackChoice, JobProgress } from './types';
@@ -31,6 +31,17 @@ const YTDLP_DOWNLOAD_TIMEOUT_MS = 10 * 60_000;
 const YTDLP_METADATA_TIMEOUT_MS = 60_000;
 const ALBUM_MATCH_THRESHOLD = 0.5;
 const PROGRESS_PREFIX = 'SC_GATE_DL_PROGRESS:';
+
+async function deleteTemporaryFile(path: string): Promise<void> {
+	try {
+		await Bun.file(path).delete();
+	} catch (error) {
+		if (error instanceof Error && 'code' in error && error.code === 'ENOENT') {
+			return;
+		}
+		throw error;
+	}
+}
 // Work around Bandcamp's client challenge: https://github.com/yt-dlp/yt-dlp/issues/17356
 const BANDCAMP_IMPERSONATION_ARGS = ['--impersonate', 'chrome'];
 
@@ -211,7 +222,7 @@ export async function canAccessSoundcloudOriginalDownload(
 		);
 		return false;
 	} finally {
-		await rm(cookiesPath, { force: true });
+		await deleteTemporaryFile(cookiesPath);
 	}
 }
 
@@ -415,7 +426,7 @@ export class YtDlpDownloader {
 				},
 			);
 		} finally {
-			if (cookiesPath) await rm(cookiesPath, { force: true });
+			if (cookiesPath) await deleteTemporaryFile(cookiesPath);
 		}
 
 		const filepaths = stdout

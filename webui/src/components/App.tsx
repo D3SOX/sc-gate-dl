@@ -608,7 +608,7 @@ export default function App() {
 			const format = formatOverride ?? outputFormat;
 
 			setIsLoading(true);
-			setJob((prev) => ({ ...prev, error: null }));
+			setJob((prev) => ({ ...prev, warning: null, error: null }));
 
 			try {
 				const response = await fetch(`${API_BASE}/api/job`, {
