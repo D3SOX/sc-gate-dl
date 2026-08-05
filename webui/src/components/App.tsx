@@ -104,12 +104,15 @@ function notifyParent(
 /** Promo fluff often glued onto SoundCloud / gate titles. */
 const PROMO_TAG = String.raw`free\s*d(?:own)?l(?:oad)?s?|free[\s._-]*dl|freedl|out\s*now|premiere|exclusive`;
 
-function cleanPromoTags(value: string): string {
+export function cleanPromoTags(value: string): string {
 	if (!value) return value;
 
 	let result = value;
 	result = result.replace(
-		new RegExp(String.raw`\s*[\[\(\{]\s*(?:${PROMO_TAG})\s*[\]\)\}]`, 'gi'),
+		new RegExp(
+			String.raw`\s*[\[\(\{]\s*(?:${PROMO_TAG})\s*[\]\)\}]\s*(?:[-–—|/:·•]+\s*)?`,
+			'gi',
+		),
 		' ',
 	);
 	result = result.replace(
@@ -234,6 +237,8 @@ export default function App() {
 	const [skipAutomaticHypedditFetch, setSkipAutomaticHypedditFetch] =
 		useState(false);
 	const [browserMode, setBrowserMode] = useState<BrowserMode>('headless');
+	const [lastAttemptedBrowserMode, setLastAttemptedBrowserMode] =
+		useState<BrowserMode | null>(null);
 	const [availableBrowserModes, setAvailableBrowserModes] = useState<
 		BrowserMode[]
 	>(['headless', 'headed']);
@@ -412,11 +417,14 @@ export default function App() {
 
 	// Start download process
 	const startDownload = useCallback(
-		async (jobId: string) => {
+		async (jobId: string, retryBrowserMode?: BrowserMode) => {
+			const effectiveBrowserMode = retryBrowserMode ?? browserMode;
+			setLastAttemptedBrowserMode(effectiveBrowserMode);
 			cancelRequestedRef.current = false;
 			setStep('gate');
 			setJob((prev) => ({
 				...prev,
+				error: null,
 				progress: {
 					stage: 'handling_gates',
 					message: 'Entering gate...',
@@ -433,7 +441,7 @@ export default function App() {
 					method: 'POST',
 					headers: { 'Content-Type': 'application/json' },
 					body: JSON.stringify({
-						browserMode,
+						browserMode: effectiveBrowserMode,
 					}),
 				});
 
@@ -536,6 +544,11 @@ export default function App() {
 				setJob((prev) => ({
 					...prev,
 					error: err instanceof Error ? err.message : 'Unknown error',
+					progress: {
+						stage: 'error',
+						message: err instanceof Error ? err.message : 'Unknown error',
+						percent: 0,
+					},
 				}));
 			}
 		},
@@ -1029,6 +1042,25 @@ export default function App() {
 				<div className="error-banner">
 					<span className="error-icon">!</span>
 					<span>{job.error}</span>
+					{job.jobId && job.progress?.stage === 'error'
+						? availableBrowserModes
+								.filter(
+									(mode) =>
+										mode !== (lastAttemptedBrowserMode ?? browserMode),
+								)
+								.map((mode) => (
+									<button
+										type="button"
+										key={mode}
+										onClick={() => {
+											updateBrowserMode(mode);
+											void startDownload(job.jobId as string, mode);
+										}}
+									>
+										Retry with {BROWSER_MODE_LABELS[mode]}
+									</button>
+								))
+						: null}
 					<button
 						type="button"
 						onClick={() => setJob((prev) => ({ ...prev, error: null }))}
@@ -1448,7 +1480,7 @@ export default function App() {
 										type="button"
 										className="btn-secondary btn-auto-cleanup"
 										disabled={isLoading}
-										title="Remove promo tags like [FREE DL] and duplicate Artist - / - Artist from the title"
+										title="Remove promo tags like [FREE DL] or [PREMIERE] and duplicate Artist - / - Artist from the title"
 										onClick={() =>
 											setMetadata((prev) => cleanMetadataFields(prev))
 										}

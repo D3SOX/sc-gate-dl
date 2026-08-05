@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         sc-gate-dl
 // @namespace    https://github.com/D3SOX/sc-gate-dl
-// @version      1.10.4
+// @version      1.10.9
 // @description  Add sc-gate-dl download controls and remember your position in the SoundCloud feed
 // @author       D3SOX
 // @match        https://soundcloud.com/*
@@ -81,6 +81,7 @@
 		'about',
 		'stations',
 		'feed',
+		'tags',
 	]);
 
 	const TRAILING_SEGMENTS = new Set([
@@ -379,6 +380,14 @@
 
 	/** Feed/search cards only — track pages use the current URL. */
 	function trackUrlFromCard(el) {
+		const trackItem = el?.closest?.('.trackItem');
+		const trackItemTitle = trackItem?.querySelector(
+			'a.trackItem__trackTitle[href]',
+		);
+		if (trackItemTitle instanceof HTMLAnchorElement) {
+			const trackItemUrl = normalizeTrackUrl(trackItemTitle.href);
+			if (trackItemUrl) return trackItemUrl;
+		}
 		const closest = el?.closest?.(
 			'.sound, .soundList__item, .userStreamItem, .searchItem__trackItem, .listenContext',
 		);
@@ -428,7 +437,13 @@
 		const normalized = normalizeTrackUrl(trackUrl);
 		if (!normalized) return null;
 		return (
-			feedCards().find((card) => trackUrlFromCard(card) === normalized) || null
+			feedCards().find(
+				(card) =>
+					trackUrlFromCard(card) === normalized ||
+					Array.from(card.querySelectorAll('a.trackItem__trackTitle[href]')).some(
+						(link) => normalizeTrackUrl(link.href) === normalized,
+					),
+			) || null
 		);
 	}
 
@@ -498,22 +513,14 @@
 		}
 	}
 
-	function resetFeedCheckpoints() {
-		try {
-			if (typeof GM_deleteValue === 'function') {
-				GM_deleteValue(FEED_CHECKPOINT_KEY);
-			} else if (typeof GM_setValue === 'function') {
-				GM_setValue(FEED_CHECKPOINT_KEY, null);
-			}
-		} catch {
-			// ignore
-		}
-		try {
-			localStorage.removeItem(FEED_CHECKPOINT_KEY);
-		} catch {
-			// ignore
-		}
-		setFeedStatus('Positions reset. The next played track will seed both.');
+	function resetFeedCheckpoint(direction) {
+		if (direction !== 'newer' && direction !== 'older') return;
+		const checkpoints = loadFeedCheckpoints() ?? { newer: null, older: null };
+		checkpoints[direction] = null;
+		persistFeedCheckpoints(checkpoints);
+		setFeedStatus(
+			`${direction === 'newer' ? 'Up' : 'Down'} position reset. The next eligible played track will seed it.`,
+		);
 		updateFeedNavigator();
 	}
 
@@ -537,8 +544,14 @@
 			: trackLabelFromUrl(url);
 	}
 
-	function shouldAdvanceCheckpoint(saved, card, candidateTimestamp, direction) {
-		if (!saved || saved.url === trackUrlFromCard(card)) return true;
+	function shouldAdvanceCheckpoint(
+		saved,
+		card,
+		candidateTimestamp,
+		direction,
+		candidateUrl,
+	) {
+		if (!saved || saved.url === candidateUrl) return true;
 		if (saved.feedTimestamp != null && candidateTimestamp != null) {
 			return direction === 'newer'
 				? candidateTimestamp >= saved.feedTimestamp
@@ -555,12 +568,14 @@
 			: candidateIndex >= savedIndex;
 	}
 
-	function saveFeedCheckpointFromCard(card) {
+	function saveFeedCheckpointFromCard(card, playedUrl = null) {
 		if (!isFeedPage() || !(card instanceof Element)) return;
 		const feedCard = card.matches('.sound')
 			? card
 			: card.querySelector('.sound') || card;
-		const url = trackUrlFromCard(feedCard);
+		const url =
+			(playedUrl ? normalizeTrackUrl(playedUrl) : null) ||
+			trackUrlFromCard(feedCard);
 		if (!url) return;
 		const timestamp = feedTimestamp(feedCard);
 		const label = checkpointLabelFromCard(feedCard, url);
@@ -574,7 +589,11 @@
 		let changed = false;
 		for (const direction of ['newer', 'older']) {
 			const saved = checkpoints[direction];
-			if (!shouldAdvanceCheckpoint(saved, feedCard, timestamp, direction)) continue;
+			if (
+				!shouldAdvanceCheckpoint(saved, feedCard, timestamp, direction, url)
+			) {
+				continue;
+			}
 			if (saved?.url === url) {
 				if (saved.label !== label) {
 					checkpoints[direction] = { ...saved, label };
@@ -591,10 +610,25 @@
 		}
 	}
 
+	function updateFeedPlaybackOrigin(
+		currentOrigin,
+		feedCardUrl,
+		outsidePlaybackSelection,
+	) {
+		if (feedCardUrl) return feedCardUrl;
+		return outsidePlaybackSelection ? null : currentOrigin;
+	}
+
 	let lastRecordedPlayingUrl = null;
+	let feedPlaybackOriginUrl = null;
 
 	function recordPlayingFeedTrack() {
-		if (!isFeedPage()) return;
+		if (!isFeedPage()) {
+			feedPlaybackOriginUrl = null;
+			lastRecordedPlayingUrl = null;
+			return;
+		}
+		if (!feedPlaybackOriginUrl) return;
 		const playing = document.querySelector(
 			'.playControls .playControl.playing, .playControls__play.playing, .playControls button[title^="Pause"], .playControls button[aria-label^="Pause"]',
 		);
@@ -610,8 +644,9 @@
 		if (!url || url === lastRecordedPlayingUrl) return;
 		const card = url ? findFeedCard(url) : null;
 		if (card) {
-			saveFeedCheckpointFromCard(card);
+			saveFeedCheckpointFromCard(card, url);
 			lastRecordedPlayingUrl = url;
+			feedPlaybackOriginUrl = url;
 		}
 	}
 
@@ -633,17 +668,31 @@
 		const resumeOlder = nav.querySelector('.sc-gate-dl-feed-resume-older');
 		const cancel = nav.querySelector('.sc-gate-dl-feed-cancel');
 		const find = nav.querySelector('.sc-gate-dl-feed-find');
-		const updateResumeButton = (button, checkpoint, label) => {
-			if (!(button instanceof HTMLButtonElement)) return;
-			button.hidden = feedSearchActive;
-			button.disabled = !checkpoint;
-			button.textContent = checkpoint
+		const resetNewer = nav.querySelector('.sc-gate-dl-feed-reset-newer');
+		const resetOlder = nav.querySelector('.sc-gate-dl-feed-reset-older');
+		const updateResumeLink = (link, checkpoint, label) => {
+			if (!(link instanceof HTMLAnchorElement)) return;
+			link.hidden = feedSearchActive;
+			link.textContent = checkpoint
 				? `Resume ${label}: ${checkpoint.label}`
 				: 'No listened track saved yet';
-			button.title = checkpoint?.url || '';
+			link.title = checkpoint?.url || '';
+			if (checkpoint) {
+				link.removeAttribute('aria-disabled');
+				link.href = checkpoint.url;
+			} else {
+				link.setAttribute('aria-disabled', 'true');
+				link.removeAttribute('href');
+			}
 		};
-		updateResumeButton(resumeNewer, checkpoints?.newer, 'farthest up');
-		updateResumeButton(resumeOlder, checkpoints?.older, 'farthest down');
+		updateResumeLink(resumeNewer, checkpoints?.newer, 'farthest up');
+		updateResumeLink(resumeOlder, checkpoints?.older, 'farthest down');
+		if (resetNewer instanceof HTMLButtonElement) {
+			resetNewer.disabled = !checkpoints?.newer;
+		}
+		if (resetOlder instanceof HTMLButtonElement) {
+			resetOlder.disabled = !checkpoints?.older;
+		}
 		if (cancel instanceof HTMLButtonElement) cancel.hidden = !feedSearchActive;
 		if (find instanceof HTMLButtonElement) find.disabled = feedSearchActive;
 	}
@@ -786,11 +835,14 @@
 					<span>Feed position</span>
 					<button type="button" class="sc-gate-dl-feed-close" aria-label="Close" title="Close">×</button>
 				</div>
-				<button type="button" class="sc-gate-dl-feed-resume-newer"></button>
-				<button type="button" class="sc-gate-dl-feed-resume-older"></button>
+				<a class="sc-gate-dl-feed-resume sc-gate-dl-feed-resume-newer"></a>
+				<a class="sc-gate-dl-feed-resume sc-gate-dl-feed-resume-older"></a>
 				<button type="button" class="sc-gate-dl-feed-cancel" hidden>Cancel scrolling</button>
 				<button type="button" class="sc-gate-dl-feed-find">Find track URL…</button>
-				<button type="button" class="sc-gate-dl-feed-reset">Reset saved positions</button>
+				<div class="sc-gate-dl-feed-reset-row">
+					<button type="button" class="sc-gate-dl-feed-reset-newer">Reset up</button>
+					<button type="button" class="sc-gate-dl-feed-reset-older">Reset down</button>
+				</div>
 				<div class="sc-gate-dl-feed-status" aria-live="polite"></div>
 			`;
 			nav
@@ -799,7 +851,8 @@
 			for (const direction of ['newer', 'older']) {
 				nav
 					.querySelector(`.sc-gate-dl-feed-resume-${direction}`)
-					?.addEventListener('click', () => {
+					?.addEventListener('click', (event) => {
+						event.preventDefault();
 						if (feedSearchActive) {
 							cancelFeedSearch();
 							return;
@@ -819,9 +872,11 @@
 					);
 					if (input?.trim()) void scrollToFeedTrack(input.trim());
 				});
-			nav
-				.querySelector('.sc-gate-dl-feed-reset')
-				?.addEventListener('click', resetFeedCheckpoints);
+			for (const direction of ['newer', 'older']) {
+				nav
+					.querySelector(`.sc-gate-dl-feed-reset-${direction}`)
+					?.addEventListener('click', () => resetFeedCheckpoint(direction));
+			}
 			document.documentElement.appendChild(nav);
 		}
 		nav.hidden = false;
@@ -1294,8 +1349,10 @@
 	color: #eee;
 	font-weight: 700;
 }
-#${FEED_NAV_ID} button {
+#${FEED_NAV_ID} button,
+#${FEED_NAV_ID} .sc-gate-dl-feed-resume {
 	appearance: none;
+	display: block;
 	box-sizing: border-box;
 	width: 100%;
 	min-height: 30px;
@@ -1307,6 +1364,7 @@
 	color: #eee;
 	font: inherit;
 	text-align: left;
+	text-decoration: none;
 	text-overflow: ellipsis;
 	white-space: nowrap;
 	cursor: pointer;
@@ -1321,10 +1379,28 @@
 	line-height: 1;
 }
 #${FEED_NAV_ID} button[hidden] { display: none !important; }
-#${FEED_NAV_ID} button:hover:not(:disabled) { border-color: #f50; color: #fff; }
+#${FEED_NAV_ID} .sc-gate-dl-feed-resume[hidden] { display: none !important; }
+#${FEED_NAV_ID} button:hover:not(:disabled),
+#${FEED_NAV_ID} .sc-gate-dl-feed-resume:hover:not([aria-disabled]) {
+	border-color: #f50;
+	color: #fff;
+}
 #${FEED_NAV_ID} button:disabled { color: #777; cursor: default; }
+#${FEED_NAV_ID} .sc-gate-dl-feed-resume[aria-disabled] {
+	color: #777;
+	cursor: default;
+}
 #${FEED_NAV_ID} .sc-gate-dl-feed-find { text-align: center; }
-#${FEED_NAV_ID} .sc-gate-dl-feed-reset { color: #aaa; text-align: center; }
+#${FEED_NAV_ID} .sc-gate-dl-feed-reset-row {
+	display: flex;
+	gap: 6px;
+}
+#${FEED_NAV_ID} .sc-gate-dl-feed-reset-row button {
+	flex: 1 1 50%;
+	width: 50%;
+	color: #aaa;
+	text-align: center;
+}
 #${FEED_NAV_ID} .sc-gate-dl-feed-status:empty { display: none; }
 #${FEED_NAV_ID} .sc-gate-dl-feed-status {
 	padding: 1px 2px;
@@ -2284,9 +2360,20 @@ a[${STORE_SERVICE_ATTR}] > button::after {
 			const playControl = event.target.closest(
 				'button.playControl, button.sc-button-play, button.sc-button-pause, .soundTitle__playButton, .sound__coverArt .playButton',
 			);
-			if (!playControl) return;
-			const card = playControl.closest(FEED_CARD_SELECTOR);
-			if (card) saveFeedCheckpointFromCard(card);
+			const card = playControl?.closest(FEED_CARD_SELECTOR);
+			const cardUrl = card ? trackUrlFromCard(playControl) : null;
+			const outsidePlaybackSelection = Boolean(
+				!card &&
+					event.target.closest('.playControls, .playbackSoundBadge, .queue'),
+			);
+			feedPlaybackOriginUrl = updateFeedPlaybackOrigin(
+				feedPlaybackOriginUrl,
+				cardUrl,
+				outsidePlaybackSelection,
+			);
+			if (card) {
+				saveFeedCheckpointFromCard(card, cardUrl);
+			}
 		},
 		true,
 	);
