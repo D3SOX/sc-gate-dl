@@ -237,6 +237,8 @@ export default function App() {
 	const [skipAutomaticHypedditFetch, setSkipAutomaticHypedditFetch] =
 		useState(false);
 	const [browserMode, setBrowserMode] = useState<BrowserMode>('headless');
+	const [lastAttemptedBrowserMode, setLastAttemptedBrowserMode] =
+		useState<BrowserMode | null>(null);
 	const [availableBrowserModes, setAvailableBrowserModes] = useState<
 		BrowserMode[]
 	>(['headless', 'headed']);
@@ -416,10 +418,13 @@ export default function App() {
 	// Start download process
 	const startDownload = useCallback(
 		async (jobId: string, retryBrowserMode?: BrowserMode) => {
+			const effectiveBrowserMode = retryBrowserMode ?? browserMode;
+			setLastAttemptedBrowserMode(effectiveBrowserMode);
 			cancelRequestedRef.current = false;
 			setStep('gate');
 			setJob((prev) => ({
 				...prev,
+				error: null,
 				progress: {
 					stage: 'handling_gates',
 					message: 'Entering gate...',
@@ -436,7 +441,7 @@ export default function App() {
 					method: 'POST',
 					headers: { 'Content-Type': 'application/json' },
 					body: JSON.stringify({
-						browserMode: retryBrowserMode ?? browserMode,
+						browserMode: effectiveBrowserMode,
 					}),
 				});
 
@@ -539,6 +544,11 @@ export default function App() {
 				setJob((prev) => ({
 					...prev,
 					error: err instanceof Error ? err.message : 'Unknown error',
+					progress: {
+						stage: 'error',
+						message: err instanceof Error ? err.message : 'Unknown error',
+						percent: 0,
+					},
 				}));
 			}
 		},
@@ -1034,7 +1044,10 @@ export default function App() {
 					<span>{job.error}</span>
 					{job.jobId && job.progress?.stage === 'error'
 						? availableBrowserModes
-								.filter((mode) => mode !== browserMode)
+								.filter(
+									(mode) =>
+										mode !== (lastAttemptedBrowserMode ?? browserMode),
+								)
 								.map((mode) => (
 									<button
 										type="button"

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         sc-gate-dl
 // @namespace    https://github.com/D3SOX/sc-gate-dl
-// @version      1.10.6
+// @version      1.10.7
 // @description  Add sc-gate-dl download controls and remember your position in the SoundCloud feed
 // @author       D3SOX
 // @match        https://soundcloud.com/*
@@ -583,16 +583,25 @@
 		}
 	}
 
+	function updateFeedPlaybackOrigin(
+		currentOrigin,
+		feedCardUrl,
+		outsidePlaybackSelection,
+	) {
+		if (feedCardUrl) return feedCardUrl;
+		return outsidePlaybackSelection ? null : currentOrigin;
+	}
+
 	let lastRecordedPlayingUrl = null;
-	let feedPlaybackActive = false;
+	let feedPlaybackOriginUrl = null;
 
 	function recordPlayingFeedTrack() {
 		if (!isFeedPage()) {
-			feedPlaybackActive = false;
+			feedPlaybackOriginUrl = null;
 			lastRecordedPlayingUrl = null;
 			return;
 		}
-		if (!feedPlaybackActive) return;
+		if (!feedPlaybackOriginUrl) return;
 		const playing = document.querySelector(
 			'.playControls .playControl.playing, .playControls__play.playing, .playControls button[title^="Pause"], .playControls button[aria-label^="Pause"]',
 		);
@@ -610,6 +619,7 @@
 		if (card) {
 			saveFeedCheckpointFromCard(card);
 			lastRecordedPlayingUrl = url;
+			feedPlaybackOriginUrl = url;
 		}
 	}
 
@@ -2304,10 +2314,18 @@ a[${STORE_SERVICE_ATTR}] > button::after {
 			const playControl = event.target.closest(
 				'button.playControl, button.sc-button-play, button.sc-button-pause, .soundTitle__playButton, .sound__coverArt .playButton',
 			);
-			if (!playControl) return;
-			const card = playControl.closest(FEED_CARD_SELECTOR);
+			const card = playControl?.closest(FEED_CARD_SELECTOR);
+			const cardUrl = card ? trackUrlFromCard(card) : null;
+			const outsidePlaybackSelection = Boolean(
+				!card &&
+					event.target.closest('.playControls, .playbackSoundBadge, .queue'),
+			);
+			feedPlaybackOriginUrl = updateFeedPlaybackOrigin(
+				feedPlaybackOriginUrl,
+				cardUrl,
+				outsidePlaybackSelection,
+			);
 			if (card) {
-				feedPlaybackActive = true;
 				saveFeedCheckpointFromCard(card);
 			}
 		},
