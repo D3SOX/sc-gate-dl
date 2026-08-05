@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         sc-gate-dl
 // @namespace    https://github.com/D3SOX/sc-gate-dl
-// @version      1.10.4
+// @version      1.10.5
 // @description  Add sc-gate-dl download controls and remember your position in the SoundCloud feed
 // @author       D3SOX
 // @match        https://soundcloud.com/*
@@ -592,9 +592,15 @@
 	}
 
 	let lastRecordedPlayingUrl = null;
+	let feedPlaybackActive = false;
 
 	function recordPlayingFeedTrack() {
-		if (!isFeedPage()) return;
+		if (!isFeedPage()) {
+			feedPlaybackActive = false;
+			lastRecordedPlayingUrl = null;
+			return;
+		}
+		if (!feedPlaybackActive) return;
 		const playing = document.querySelector(
 			'.playControls .playControl.playing, .playControls__play.playing, .playControls button[title^="Pause"], .playControls button[aria-label^="Pause"]',
 		);
@@ -2286,7 +2292,10 @@ a[${STORE_SERVICE_ATTR}] > button::after {
 			);
 			if (!playControl) return;
 			const card = playControl.closest(FEED_CARD_SELECTOR);
-			if (card) saveFeedCheckpointFromCard(card);
+			if (card) {
+				feedPlaybackActive = true;
+				saveFeedCheckpointFromCard(card);
+			}
 		},
 		true,
 	);
