@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         sc-gate-dl
 // @namespace    https://github.com/D3SOX/sc-gate-dl
-// @version      1.10.3
+// @version      1.10.4
 // @description  Add sc-gate-dl download controls and remember your position in the SoundCloud feed
 // @author       D3SOX
 // @match        https://soundcloud.com/*
@@ -295,7 +295,7 @@
 			}
 			if (
 				(host === 'bandcamp.com' || host.endsWith('.bandcamp.com')) &&
-				/^\/(?:track|album)\/[^/]+\/?$/i.test(path)
+				(path === '/' || /^\/(?:track|album)\/[^/]+\/?$/i.test(path))
 			) {
 				return 'bandcamp';
 			}
