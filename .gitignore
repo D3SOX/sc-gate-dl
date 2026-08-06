@@ -35,7 +35,7 @@ report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 
 # browser data (cookies, login sessions)
 browser-data
-browser-data-captcha
+browser-data*
 downloads
 # soundcloud cookies
 soundcloud-cookies.json
@@ -45,3 +45,7 @@ spotify-cookies.json
 config.json
 # exports
 exports
+
+# local debug
+scripts
+*.mhtml

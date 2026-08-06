@@ -2,7 +2,6 @@ import { existsSync } from 'node:fs';
 import { rename } from 'node:fs/promises';
 import { basename, extname, join } from 'node:path';
 import { confirm, input } from '@inquirer/prompts';
-import { execa } from 'execa';
 import type { SoundcloudTrack } from 'soundcloud.ts';
 import {
 	pickUniqueDownloadFilename,
@@ -37,6 +36,29 @@ export class AudioProcessor {
 	constructor(ffmpegBin: string, ffprobeBin: string) {
 		this.ffmpegBin = ffmpegBin;
 		this.ffprobeBin = ffprobeBin;
+	}
+
+	/** Run a binary with argv (no shell); throws on non-zero exit. */
+	private async run(
+		bin: string,
+		args: string[],
+	): Promise<{ stdout: string; stderr: string }> {
+		const proc = Bun.spawn([bin, ...args], {
+			stdin: 'ignore',
+			stdout: 'pipe',
+			stderr: 'pipe',
+		});
+		const [stdout, stderr, exitCode] = await Promise.all([
+			new Response(proc.stdout).text(),
+			new Response(proc.stderr).text(),
+			proc.exited,
+		]);
+		if (exitCode !== 0) {
+			throw new Error(
+				stderr.trim() || `${basename(bin)} exited with code ${exitCode}`,
+			);
+		}
+		return { stdout, stderr };
 	}
 
 	async readMp3Metadata(inputPath: string): Promise<Metadata | null> {
@@ -93,7 +115,7 @@ export class AudioProcessor {
 		);
 
 		try {
-			await execa(this.ffmpegBin, [
+			await this.run(this.ffmpegBin, [
 				'-i',
 				inputPath,
 				'-an',
@@ -302,7 +324,7 @@ export class AudioProcessor {
 
 	private async runFfprobe(inputPath: string): Promise<FfprobeResult | null> {
 		try {
-			const { stdout } = await execa(this.ffprobeBin, [
+			const { stdout } = await this.run(this.ffprobeBin, [
 				'-v',
 				'quiet',
 				'-print_format',
@@ -458,7 +480,7 @@ export class AudioProcessor {
 
 		console.log(`Converting to MP3 (${bitrateKbps}kbps)...`);
 		try {
-			await execa(this.ffmpegBin, args);
+			await this.run(this.ffmpegBin, args);
 		} catch (error) {
 			// Drop the empty reservation if conversion failed.
 			if (existsSync(outputPath) && (await Bun.file(outputPath).size) === 0) {
@@ -534,7 +556,7 @@ export class AudioProcessor {
 
 		console.log('Converting to FLAC...');
 		try {
-			await execa(this.ffmpegBin, args);
+			await this.run(this.ffmpegBin, args);
 			if (replacingFlac) {
 				await Bun.file(inputPath).unlink();
 				await rename(outputPath, inputPath);
@@ -602,7 +624,7 @@ export class AudioProcessor {
 		args.push('-y', outputPath);
 
 		console.log('Retagging MP3...');
-		await execa(this.ffmpegBin, args);
+		await this.run(this.ffmpegBin, args);
 
 		// replace the original file with the retagged one
 		await Bun.write(inputPath, Bun.file(outputPath));

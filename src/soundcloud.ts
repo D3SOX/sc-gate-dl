@@ -1,6 +1,5 @@
 import { join } from 'node:path';
 import { confirm } from '@inquirer/prompts';
-import { execa } from 'execa';
 import { lookpath } from 'find-bin';
 import Soundcloud, {
 	type SoundcloudPlaylist,
@@ -58,6 +57,39 @@ export class SoundcloudClient {
 		}
 
 		this.soundcloud = new Soundcloud(clientId, oauthToken);
+	}
+
+	/** Chrome-TLS curl with argv + optional stdin; never throws on non-zero exit. */
+	private async runCurl(
+		curlBin: string,
+		args: string[],
+		stdin?: string,
+	): Promise<{ stdout: string; stderr: string; exitCode: number }> {
+		const proc = Bun.spawn([curlBin, ...args], {
+			stdin: stdin !== undefined ? new Response(stdin) : 'ignore',
+			stdout: 'pipe',
+			stderr: 'pipe',
+		});
+		const [stdout, stderr, exitCode] = await Promise.all([
+			new Response(proc.stdout).text(),
+			new Response(proc.stderr).text(),
+			proc.exited,
+		]);
+		return { stdout, stderr, exitCode };
+	}
+
+	/** Parse curl `-w __STATUS__:%{http_code}` from stdout only (stderr must not break the marker). */
+	private parseCurlHttpOutput(result: { stdout: string; stderr: string }): {
+		status: number;
+		body: string;
+	} {
+		const statusMatch = result.stdout.match(/__STATUS__:(\d+)\s*$/);
+		const status = statusMatch ? Number(statusMatch[1]) : 0;
+		let body = result.stdout.replace(/\n__STATUS__:\d+\s*$/, '');
+		if (status === 0 && result.stderr.trim()) {
+			body = `${body}\n${result.stderr}`.trim();
+		}
+		return { status, body };
 	}
 
 	async getTrack(url: string) {
@@ -376,14 +408,12 @@ export class SoundcloudClient {
 		if (proxy) args.push('-x', proxy);
 		args.push('--config', '-');
 
-		const result = await execa(curlBin, args, {
-			input: `${configLines.join('\n')}\n`,
-			reject: false,
-		});
-		const output = `${result.stdout}${result.stderr}`;
-		const statusMatch = output.match(/__STATUS__:(\d+)\s*$/);
-		const status = statusMatch ? Number(statusMatch[1]) : 0;
-		const body = output.replace(/\n__STATUS__:\d+\s*$/, '');
+		const result = await this.runCurl(
+			curlBin,
+			args,
+			`${configLines.join('\n')}\n`,
+		);
+		const { status, body } = this.parseCurlHttpOutput(result);
 
 		if (status < 200 || status >= 300) {
 			return { ok: false, status, reason: `http-${status}`, body };
@@ -491,15 +521,12 @@ export class SoundcloudClient {
 
 		args.push('--config', '-');
 
-		const result = await execa(curlBin, args, {
-			input: `${configLines.join('\n')}\n`,
-			reject: false,
-		});
-		const output = `${result.stdout}${result.stderr}`;
-		const statusMatch = output.match(/__STATUS__:(\d+)\s*$/);
-		const status = statusMatch ? Number(statusMatch[1]) : 0;
-		const body = output.replace(/\n__STATUS__:\d+\s*$/, '');
-		return { status, body };
+		const result = await this.runCurl(
+			curlBin,
+			args,
+			`${configLines.join('\n')}\n`,
+		);
+		return this.parseCurlHttpOutput(result);
 	}
 
 	private async bunMutate(
