@@ -718,6 +718,15 @@
 	min-width: 0;
 }
 
+.existing-metadata-cover {
+	display: block;
+	width: 4.5rem;
+	height: 4.5rem;
+	object-fit: cover;
+	border-radius: 4px;
+	border: 1px solid var(--border-subtle);
+}
+
 .btn-copy-existing {
 	display: inline-flex;
 	align-items: center;

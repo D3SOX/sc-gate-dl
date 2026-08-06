@@ -519,10 +519,20 @@ async function runDownloadProcess(jobId: string): Promise<void> {
 		}
 
 		if (isMp3Format(downloadFilename)) {
-			const existingMetadata = await audioProcessor.readMp3Metadata(
-				join('./downloads', downloadFilename),
-			);
-			jobStore.update(jobId, { existingMetadata: existingMetadata ?? {} });
+			const downloadedPath = join('./downloads', downloadFilename);
+			const existingMetadata =
+				await audioProcessor.readMp3Metadata(downloadedPath);
+			const existingArtwork =
+				await audioProcessor.extractMp3CoverArt(downloadedPath);
+			jobStore.update(jobId, {
+				existingMetadata: existingMetadata ?? {},
+				...(existingArtwork
+					? {
+							existingArtworkBuffer: existingArtwork.buffer,
+							existingArtworkFileName: existingArtwork.fileName,
+						}
+					: {}),
+			});
 		}
 
 		throwIfCancelled();
@@ -1212,6 +1222,7 @@ const server = Bun.serve({
 					outputFilename: job.outputFilename,
 					sourceIsLossless: job.sourceIsLossless,
 					hasArtwork: !!job.artworkBuffer,
+					hasExistingArtwork: !!job.existingArtworkBuffer,
 					error: job.error,
 				});
 			},
@@ -1239,6 +1250,33 @@ const server = Bun.serve({
 				return fileResponse(job.artworkBuffer, {
 					'Content-Type': mimeType,
 					'Content-Disposition': `inline; filename="${job.artworkFileName || 'artwork.jpg'}"`,
+				});
+			},
+		},
+
+		'/api/job/:id/existing-artwork': {
+			GET: (req) => {
+				const jobId = req.params.id;
+				const job = jobStore.get(jobId);
+
+				if (!job) {
+					return jsonResponse({ error: 'Job not found' }, { status: 404 });
+				}
+
+				if (!job.existingArtworkBuffer) {
+					return jsonResponse(
+						{ error: 'Existing artwork not available' },
+						{ status: 404 },
+					);
+				}
+
+				const extension =
+					job.existingArtworkFileName?.split('.').pop() || 'jpg';
+				const mimeType = extension === 'png' ? 'image/png' : 'image/jpeg';
+
+				return fileResponse(job.existingArtworkBuffer, {
+					'Content-Type': mimeType,
+					'Content-Disposition': `inline; filename="${job.existingArtworkFileName || 'existing-cover.jpg'}"`,
 				});
 			},
 		},

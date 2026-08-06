@@ -41,6 +41,8 @@ class JobStore {
 			sourceIsLossless: null,
 			artworkBuffer: null,
 			artworkFileName: null,
+			existingArtworkBuffer: null,
+			existingArtworkFileName: null,
 			error: null,
 			createdAt: now,
 			updatedAt: now,

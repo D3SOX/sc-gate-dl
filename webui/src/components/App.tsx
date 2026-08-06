@@ -68,6 +68,7 @@ interface JobState {
 	hypedditUrl: string | null;
 	defaultMetadata: Metadata | null;
 	existingMetadata: Metadata | null;
+	hasExistingArtwork: boolean;
 	outputFormat: OutputFormat;
 	progress: JobProgress | null;
 	downloadFilename: string | null;
@@ -251,6 +252,7 @@ export default function App() {
 		hypedditUrl: null,
 		defaultMetadata: null,
 		existingMetadata: null,
+		hasExistingArtwork: false,
 		outputFormat: 'mp3-320',
 		progress: null,
 		downloadFilename: null,
@@ -315,6 +317,7 @@ export default function App() {
 	const [customArtwork, setCustomArtwork] = useState<File | null>(null);
 	const [nameAsArtistTitle, setNameAsArtistTitle] = useState(false);
 	const [isLoading, setIsLoading] = useState(false);
+	const artworkInputRef = useRef<HTMLInputElement>(null);
 	const cleanupToastShownRef = useRef(false);
 	const autoStartedFromQueryRef = useRef(false);
 	const eventSourceRef = useRef<EventSource | null>(null);
@@ -492,6 +495,7 @@ export default function App() {
 									downloadFilename: data.downloadFilename,
 									outputFilename: data.outputFilename,
 									existingMetadata: data.existingMetadata,
+									hasExistingArtwork: !!data.hasExistingArtwork,
 									outputFormat: data.outputFormat,
 									sourceIsLossless: data.sourceIsLossless,
 								}));
@@ -647,6 +651,7 @@ export default function App() {
 					hypedditUrl: data.hypedditUrl,
 					defaultMetadata: data.defaultMetadata,
 					existingMetadata: null,
+					hasExistingArtwork: false,
 					outputFormat: format,
 					warning: data.soundcloudDownloadWarning ?? null,
 					error: null,
@@ -916,6 +921,31 @@ export default function App() {
 			existingValue: job.existingMetadata?.[key]?.trim() || '',
 		}))
 		.filter(({ existingValue }) => existingValue);
+	const hasExistingMetadata =
+		existingTagRows.length > 0 || job.hasExistingArtwork;
+
+	const copyExistingArtwork = async () => {
+		if (!job.jobId || !job.hasExistingArtwork) return;
+		try {
+			const response = await fetch(
+				`${API_BASE}/api/job/${job.jobId}/existing-artwork`,
+			);
+			if (!response.ok) {
+				throw new Error('Failed to load existing cover art');
+			}
+			const blob = await response.blob();
+			const extension = blob.type === 'image/png' ? 'png' : 'jpg';
+			setCustomArtwork(
+				new File([blob], `existing-cover.${extension}`, {
+					type: blob.type || 'image/jpeg',
+				}),
+			);
+		} catch (err) {
+			toast.error('Could not copy cover art', {
+				description: err instanceof Error ? err.message : 'Unknown error',
+			});
+		}
+	};
 
 	// Reset and start over
 	const handleReset = () => {
@@ -930,6 +960,7 @@ export default function App() {
 			hypedditUrl: null,
 			defaultMetadata: null,
 			existingMetadata: null,
+			hasExistingArtwork: false,
 			outputFormat,
 			progress: null,
 			downloadFilename: null,
@@ -940,6 +971,9 @@ export default function App() {
 		});
 		setMetadata({ title: '', artist: '', album: '', genre: '' });
 		setCustomArtwork(null);
+		if (artworkInputRef.current) {
+			artworkInputRef.current.value = '';
+		}
 		setNameAsArtistTitle(false);
 		setStep('url');
 	};
@@ -1390,13 +1424,13 @@ export default function App() {
 								</p>
 							</div>
 						) : null}
-						{existingTagRows.length > 0 ? (
+						{hasExistingMetadata ? (
 							<div className="existing-metadata">
 								<div>
 									<h3>Existing MP3 Metadata</h3>
 									<p>
-										Copy a tag into the form, or keep the file’s tags unchanged
-										for the whole download.
+										Copy a tag or cover into the form, or keep the file’s tags
+										unchanged for the whole download.
 									</p>
 								</div>
 								<ul className="existing-metadata-list">
@@ -1436,6 +1470,41 @@ export default function App() {
 											</button>
 										</li>
 									))}
+									{job.hasExistingArtwork && job.jobId ? (
+										<li className="existing-metadata-row">
+											<span className="existing-metadata-label">Cover</span>
+											<span className="existing-metadata-value">
+												<img
+													src={`${API_BASE}/api/job/${job.jobId}/existing-artwork`}
+													alt="Existing cover art"
+													className="existing-metadata-cover"
+												/>
+											</span>
+											<button
+												type="button"
+												className="btn-copy-existing"
+												disabled={isLoading}
+												title="Copy cover art into the form"
+												aria-label="Copy cover art into the form"
+												onClick={() => void copyExistingArtwork()}
+											>
+												<svg
+													viewBox="0 0 24 24"
+													width="14"
+													height="14"
+													aria-hidden="true"
+													fill="none"
+													stroke="currentColor"
+													strokeWidth="2"
+													strokeLinecap="round"
+													strokeLinejoin="round"
+												>
+													<rect x="9" y="9" width="13" height="13" rx="2" />
+													<path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+												</svg>
+											</button>
+										</li>
+									) : null}
 								</ul>
 								<button
 									type="button"
@@ -1466,6 +1535,7 @@ export default function App() {
 								</div>
 								<label className="artwork-upload">
 									<input
+										ref={artworkInputRef}
 										type="file"
 										accept="image/*"
 										disabled={isLoading}
@@ -1475,6 +1545,21 @@ export default function App() {
 									/>
 									<span>Change Artwork</span>
 								</label>
+								{customArtwork ? (
+									<button
+										type="button"
+										className="btn-artwork-action"
+										disabled={isLoading}
+										onClick={() => {
+											setCustomArtwork(null);
+											if (artworkInputRef.current) {
+												artworkInputRef.current.value = '';
+											}
+										}}
+									>
+										Reset Artwork
+									</button>
+								) : null}
 								{canCleanupMetadata ? (
 									<button
 										type="button"
