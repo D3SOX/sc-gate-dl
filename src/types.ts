@@ -110,6 +110,9 @@ export interface Job {
 	sourceIsLossless: boolean | null;
 	artworkBuffer: ArrayBuffer | null;
 	artworkFileName: string | null;
+	/** Cover art embedded in the downloaded MP3, when present. */
+	existingArtworkBuffer: ArrayBuffer | null;
+	existingArtworkFileName: string | null;
 	error: string | null;
 	createdAt: Date;
 	updatedAt: Date;

@@ -26,6 +26,7 @@ type FfprobeResult = {
 		codec_type?: string;
 		codec_name?: string;
 		bit_rate?: string;
+		disposition?: { attached_pic?: number };
 	}>;
 };
 
@@ -67,6 +68,66 @@ export class AudioProcessor {
 			album: getTag('album'),
 			genre: getTag('genre'),
 		};
+	}
+
+	/** Extract embedded cover art from an MP3 (APIC / attached picture). */
+	async extractMp3CoverArt(
+		inputPath: string,
+	): Promise<{ buffer: ArrayBuffer; fileName: string } | null> {
+		const probeData = await this.runFfprobe(inputPath);
+		const coverStream = (probeData?.streams ?? []).find(
+			(stream) =>
+				stream.codec_type === 'video' &&
+				(stream.disposition?.attached_pic === 1 ||
+					stream.codec_name === 'mjpeg' ||
+					stream.codec_name === 'png'),
+		);
+		if (!coverStream) {
+			return null;
+		}
+
+		const extension = coverStream.codec_name === 'png' ? 'png' : 'jpg';
+		const outputPath = join(
+			'./downloads',
+			`.existing-cover-${crypto.randomUUID()}.${extension}`,
+		);
+
+		try {
+			await execa(this.ffmpegBin, [
+				'-i',
+				inputPath,
+				'-an',
+				'-vcodec',
+				'copy',
+				'-y',
+				outputPath,
+			]);
+			const file = Bun.file(outputPath);
+			if (!(await file.exists()) || file.size === 0) {
+				return null;
+			}
+			// Bound memory: keep oversized embedded covers out of the job store.
+			const maxCoverBytes = 10 * 1024 * 1024;
+			if (file.size > maxCoverBytes) {
+				console.warn(
+					`Skipping embedded cover art: ${file.size} bytes exceeds ${maxCoverBytes}`,
+				);
+				return null;
+			}
+			return {
+				buffer: await file.arrayBuffer(),
+				fileName: `existing-cover.${extension}`,
+			};
+		} catch (error) {
+			console.warn(
+				`Failed to extract cover art: ${error instanceof Error ? error.message : String(error)}`,
+			);
+			return null;
+		} finally {
+			await Bun.file(outputPath)
+				.unlink()
+				.catch(() => {});
+		}
 	}
 
 	async promptForMetadata(
