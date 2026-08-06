@@ -526,12 +526,14 @@ async function runDownloadProcess(jobId: string): Promise<void> {
 				await audioProcessor.extractMp3CoverArt(downloadedPath);
 			jobStore.update(jobId, {
 				existingMetadata: existingMetadata ?? {},
-				...(existingArtwork
-					? {
-							existingArtworkBuffer: existingArtwork.buffer,
-							existingArtworkFileName: existingArtwork.fileName,
-						}
-					: {}),
+				existingArtworkBuffer: existingArtwork?.buffer ?? null,
+				existingArtworkFileName: existingArtwork?.fileName ?? null,
+			});
+		} else {
+			jobStore.update(jobId, {
+				existingMetadata: null,
+				existingArtworkBuffer: null,
+				existingArtworkFileName: null,
 			});
 		}
 

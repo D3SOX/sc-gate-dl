@@ -106,6 +106,14 @@ export class AudioProcessor {
 			if (!(await file.exists()) || file.size === 0) {
 				return null;
 			}
+			// Bound memory: keep oversized embedded covers out of the job store.
+			const maxCoverBytes = 10 * 1024 * 1024;
+			if (file.size > maxCoverBytes) {
+				console.warn(
+					`Skipping embedded cover art: ${file.size} bytes exceeds ${maxCoverBytes}`,
+				);
+				return null;
+			}
 			return {
 				buffer: await file.arrayBuffer(),
 				fileName: `existing-cover.${extension}`,
