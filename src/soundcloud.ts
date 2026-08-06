@@ -78,6 +78,20 @@ export class SoundcloudClient {
 		return { stdout, stderr, exitCode };
 	}
 
+	/** Parse curl `-w __STATUS__:%{http_code}` from stdout only (stderr must not break the marker). */
+	private parseCurlHttpOutput(result: { stdout: string; stderr: string }): {
+		status: number;
+		body: string;
+	} {
+		const statusMatch = result.stdout.match(/__STATUS__:(\d+)\s*$/);
+		const status = statusMatch ? Number(statusMatch[1]) : 0;
+		let body = result.stdout.replace(/\n__STATUS__:\d+\s*$/, '');
+		if (status === 0 && result.stderr.trim()) {
+			body = `${body}\n${result.stderr}`.trim();
+		}
+		return { status, body };
+	}
+
 	async getTrack(url: string) {
 		return await this.soundcloud.tracks.get(url);
 	}
@@ -399,10 +413,7 @@ export class SoundcloudClient {
 			args,
 			`${configLines.join('\n')}\n`,
 		);
-		const output = `${result.stdout}${result.stderr}`;
-		const statusMatch = output.match(/__STATUS__:(\d+)\s*$/);
-		const status = statusMatch ? Number(statusMatch[1]) : 0;
-		const body = output.replace(/\n__STATUS__:\d+\s*$/, '');
+		const { status, body } = this.parseCurlHttpOutput(result);
 
 		if (status < 200 || status >= 300) {
 			return { ok: false, status, reason: `http-${status}`, body };
@@ -515,11 +526,7 @@ export class SoundcloudClient {
 			args,
 			`${configLines.join('\n')}\n`,
 		);
-		const output = `${result.stdout}${result.stderr}`;
-		const statusMatch = output.match(/__STATUS__:(\d+)\s*$/);
-		const status = statusMatch ? Number(statusMatch[1]) : 0;
-		const body = output.replace(/\n__STATUS__:\d+\s*$/, '');
-		return { status, body };
+		return this.parseCurlHttpOutput(result);
 	}
 
 	private async bunMutate(
