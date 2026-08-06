@@ -1,6 +1,5 @@
 import { join } from 'node:path';
 import { confirm } from '@inquirer/prompts';
-import { execa } from 'execa';
 import { lookpath } from 'find-bin';
 import Soundcloud, {
 	type SoundcloudPlaylist,
@@ -58,6 +57,25 @@ export class SoundcloudClient {
 		}
 
 		this.soundcloud = new Soundcloud(clientId, oauthToken);
+	}
+
+	/** Chrome-TLS curl with argv + optional stdin; never throws on non-zero exit. */
+	private async runCurl(
+		curlBin: string,
+		args: string[],
+		stdin?: string,
+	): Promise<{ stdout: string; stderr: string; exitCode: number }> {
+		const proc = Bun.spawn([curlBin, ...args], {
+			stdin: stdin !== undefined ? new Response(stdin) : 'ignore',
+			stdout: 'pipe',
+			stderr: 'pipe',
+		});
+		const [stdout, stderr, exitCode] = await Promise.all([
+			new Response(proc.stdout).text(),
+			new Response(proc.stderr).text(),
+			proc.exited,
+		]);
+		return { stdout, stderr, exitCode };
 	}
 
 	async getTrack(url: string) {
@@ -376,10 +394,11 @@ export class SoundcloudClient {
 		if (proxy) args.push('-x', proxy);
 		args.push('--config', '-');
 
-		const result = await execa(curlBin, args, {
-			input: `${configLines.join('\n')}\n`,
-			reject: false,
-		});
+		const result = await this.runCurl(
+			curlBin,
+			args,
+			`${configLines.join('\n')}\n`,
+		);
 		const output = `${result.stdout}${result.stderr}`;
 		const statusMatch = output.match(/__STATUS__:(\d+)\s*$/);
 		const status = statusMatch ? Number(statusMatch[1]) : 0;
@@ -491,10 +510,11 @@ export class SoundcloudClient {
 
 		args.push('--config', '-');
 
-		const result = await execa(curlBin, args, {
-			input: `${configLines.join('\n')}\n`,
-			reject: false,
-		});
+		const result = await this.runCurl(
+			curlBin,
+			args,
+			`${configLines.join('\n')}\n`,
+		);
 		const output = `${result.stdout}${result.stderr}`;
 		const statusMatch = output.match(/__STATUS__:(\d+)\s*$/);
 		const status = statusMatch ? Number(statusMatch[1]) : 0;
