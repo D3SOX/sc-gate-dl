@@ -120,7 +120,15 @@ export class PumpyoursoundDownloader {
 
 			const direct = new DirectDownloader();
 			if (this.progressCallback) {
-				direct.setProgressCallback(this.progressCallback);
+				// File bytes come from HTTP, but this job already used the browser and
+				// SoundCloud OAuth — keep browserless false so the Web UI still offers
+				// the SoundCloud cleanup prompt when the download starts.
+				direct.setProgressCallback((stage, message, percent, extra) => {
+					this.progressCallback?.(stage, message, percent, {
+						...extra,
+						browserless: false,
+					});
+				});
 			}
 			this.downloadFilename = await direct.downloadAudio(fileUrl);
 			return this.downloadFilename;
