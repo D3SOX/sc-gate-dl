@@ -225,6 +225,7 @@ export type GateProvider =
 	| 'gaterush'
 	| 'downloadgater'
 	| 'stillhype'
+	| 'pumpyoursound'
 	/** Direct HTTP(S) file URL (Dropbox, Drive, raw audio link, …). */
 	| 'direct'
 	| 'bandcamp'
@@ -244,6 +245,9 @@ const DOWNLOADGATER_URL_RE =
 	/https?:\/\/(?:www\.)?downloadgater\.com\/g\/[A-Za-z0-9_-]+/i;
 const STILLHYPE_URL_RE =
 	/https?:\/\/(?:www\.)?stillhype\.io\/g\/[A-Za-z0-9_-]+/i;
+/** pumpyoursound.com/f/{channel}/{slug}/{id} (channel may be `pys` or the artist). */
+const PUMPYOURSOUND_URL_RE =
+	/https?:\/\/(?:www\.)?pumpyoursound\.com\/f\/[A-Za-z0-9_-]+\/[A-Za-z0-9_-]+\/\d+/i;
 /** artist.bandcamp.com/track|album/... (and bare bandcamp.com). */
 const BANDCAMP_URL_RE =
 	/https?:\/\/(?:[\w-]+\.)?bandcamp\.com\/(?:track|album)\/[^\s?#]+/i;
@@ -280,6 +284,10 @@ export function isDownloadgaterUrl(value: string): boolean {
 
 export function isStillhypeUrl(value: string): boolean {
 	return STILLHYPE_URL_RE.test(value);
+}
+
+export function isPumpyoursoundUrl(value: string): boolean {
+	return PUMPYOURSOUND_URL_RE.test(value);
 }
 
 export function isBandcampUrl(value: string): boolean {
@@ -336,7 +344,7 @@ export function validateGateUrl(value: string): true | string {
 	if (/^https?:\/\/\S+/i.test(value.trim())) {
 		return true;
 	}
-	return 'A valid Hypeddit, Droploud, GateRush, DownloadGater, StillHype, Bandcamp, direct download, SoundCloud, or resolvable http(s) URL is required';
+	return 'A valid Hypeddit, Droploud, GateRush, DownloadGater, StillHype, PumpYourSound, Bandcamp, direct download, SoundCloud, or resolvable http(s) URL is required';
 }
 
 function normalizeGateUrl(
@@ -347,6 +355,7 @@ function normalizeGateUrl(
 		provider === 'gaterush' ||
 		provider === 'downloadgater' ||
 		provider === 'stillhype' ||
+		provider === 'pumpyoursound' ||
 		provider === 'bandcamp' ||
 		provider === 'direct'
 	) {
@@ -395,6 +404,13 @@ function matchTraditionalGateUrl(
 	const stillhypeMatch = value.match(STILLHYPE_URL_RE)?.[0];
 	if (stillhypeMatch) {
 		return normalizeGateUrl(trimExtractedUrl(stillhypeMatch), 'stillhype');
+	}
+	const pumpyoursoundMatch = value.match(PUMPYOURSOUND_URL_RE)?.[0];
+	if (pumpyoursoundMatch) {
+		return normalizeGateUrl(
+			trimExtractedUrl(pumpyoursoundMatch),
+			'pumpyoursound',
+		);
 	}
 	return null;
 }
@@ -570,6 +586,7 @@ export function findKnownGateInHtml(
 				'gaterush',
 				'downloadgater',
 				'stillhype',
+				'pumpyoursound',
 			].includes(match.provider),
 		);
 		if (traditional) return traditional;
@@ -688,8 +705,9 @@ function collectUnresolvedHttpCandidates(
 }
 
 /**
- * Prefer Hypeddit / Droploud / GateRush / DownloadGater from purchase_url or
- * description, then Bandcamp, then direct file links (Dropbox, Drive, …).
+ * Prefer traditional unlock gates (Hypeddit, Droploud, GateRush, DownloadGater,
+ * StillHype, PumpYourSound) from purchase_url or description over Bandcamp /
+ * SoundCloud store links, then direct file links (Dropbox, Drive, …).
  */
 export function extractGateUrl(track: SoundcloudTrack): GateUrlMatch | null {
 	const { purchase_url, description } = track;

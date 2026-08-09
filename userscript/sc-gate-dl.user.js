@@ -126,6 +126,9 @@
 		stillhype: {
 			icon: 'https://www.stillhype.io/favicon-32x32.png',
 		},
+		pumpyoursound: {
+			icon: 'https://pumpyoursound.com/favicon.ico',
+		},
 		bandcamp: {
 			icon: 'https://s4.bcbits.com/client-bundle/1/PageLayout_1/favicon-78ff127104384a042453aca8d73be7dc.static/favicon/favicon-32x32.png',
 		},
@@ -299,6 +302,12 @@
 			}
 			if (host === 'stillhype.io' && /^\/g\/[A-Za-z0-9_-]+\/?$/.test(path)) {
 				return 'stillhype';
+			}
+			if (
+				host === 'pumpyoursound.com' &&
+				/^\/f\/[A-Za-z0-9_-]+\/[A-Za-z0-9_-]+\/\d+\/?$/i.test(path)
+			) {
+				return 'pumpyoursound';
 			}
 			if (
 				(host === 'bandcamp.com' || host.endsWith('.bandcamp.com')) &&

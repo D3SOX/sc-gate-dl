@@ -1028,7 +1028,8 @@ export default function App() {
 					</div>
 					<p className="tagline">
 						Download & tag SoundCloud tracks from Hypeddit, Droploud, GateRush,
-						DownloadGater, StillHype, Bandcamp, or a direct download link
+						DownloadGater, StillHype, PumpYourSound, Bandcamp, or a direct
+						download link
 					</p>
 				</header>
 			)}
@@ -1226,7 +1227,7 @@ export default function App() {
 							<p>
 								{skipAutomaticHypedditFetch
 									? 'Automatic gate lookup is disabled. Enter a gate URL manually, or download the SoundCloud track via yt-dlp.'
-									: 'Gate URL not found in track. Enter a Hypeddit, Droploud, GateRush, DownloadGater, StillHype, Bandcamp, or direct download URL, or download via yt-dlp from SoundCloud.'}
+									: 'Gate URL not found in track. Enter a Hypeddit, Droploud, GateRush, DownloadGater, StillHype, PumpYourSound, Bandcamp, or direct download URL, or download via yt-dlp from SoundCloud.'}
 							</p>
 						</div>
 						<form onSubmit={handleHypedditSubmit}>
@@ -1238,7 +1239,7 @@ export default function App() {
 									name="hypeddit-url"
 									value={hypedditUrlInput}
 									onChange={(e) => setHypedditUrlInput(e.target.value)}
-									placeholder="https://hypeddit.com/... / droploud.com/gate/... / gaterush.me/... / downloadgater.com/g/... / stillhype.io/g/... / artist.bandcamp.com/track/... / https://www.dropbox.com/...?dl=1"
+									placeholder="https://hypeddit.com/... / droploud.com/gate/... / gaterush.me/... / downloadgater.com/g/... / stillhype.io/g/... / pumpyoursound.com/f/... / artist.bandcamp.com/track/... / https://www.dropbox.com/...?dl=1"
 									autoComplete="off"
 									required
 									disabled={isLoading}

@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import {
 	artistTitleFilename,
 	cookiesToNetscape,
+	extractGateUrl,
 	findBandcampHomepageInHtml,
 	findKnownGateInHtml,
 	previewProcessedFilename,
@@ -127,6 +128,28 @@ describe('resolveGateProviderUrl', () => {
 		});
 	});
 
+	test('matches PumpYourSound fangate URLs', () => {
+		expect(
+			resolveGateProviderUrl(
+				'FREE DOWNLOAD: https://pumpyoursound.com/f/pys/aguanile-remix/224680',
+			),
+		).toEqual({
+			url: 'https://pumpyoursound.com/f/pys/aguanile-remix/224680',
+			provider: 'pumpyoursound',
+		});
+	});
+
+	test('prefers PumpYourSound over Bandcamp in the same string', () => {
+		expect(
+			resolveGateProviderUrl(
+				'https://artist.bandcamp.com/track/song and https://pumpyoursound.com/f/larrylars/aguanile-remix/224680',
+			),
+		).toEqual({
+			url: 'https://pumpyoursound.com/f/larrylars/aguanile-remix/224680',
+			provider: 'pumpyoursound',
+		});
+	});
+
 	test('matches raw audio file URLs as direct downloads', () => {
 		expect(
 			resolveGateProviderUrl(
@@ -135,6 +158,23 @@ describe('resolveGateProviderUrl', () => {
 		).toEqual({
 			url: 'https://cdn.example.com/files/track.wav',
 			provider: 'direct',
+		});
+	});
+});
+
+describe('extractGateUrl', () => {
+	test('prefers PumpYourSound in description over Bandcamp purchase_url', () => {
+		expect(
+			extractGateUrl({
+				purchase_url:
+					'https://larrylars.bandcamp.com/track/aguanile-groove-hector-lavoe-larrylars-remix',
+				description:
+					'FREE DOWNLOAD: https://pumpyoursound.com/f/pys/aguanile-remix/224680\n\nBandcamp: larrylars.bandcamp.com/',
+			} as Parameters<typeof extractGateUrl>[0]),
+		).toEqual({
+			url: 'https://pumpyoursound.com/f/pys/aguanile-remix/224680',
+			provider: 'pumpyoursound',
+			type: 'description',
 		});
 	});
 });
