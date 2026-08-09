@@ -170,12 +170,13 @@ export class PumpyoursoundDownloader {
 
 			const needSc = status.some((s) => s.kind === 'soundcloud' && !s.done);
 			const needComment = status.some((s) => s.kind === 'comment' && !s.done);
+			// Twitter is listed on some fangates but has no mark-complete control yet —
+			// leave it out so it surfaces as unsupported instead of a false social miss.
 			const needSocial = status.some(
 				(s) =>
 					(s.kind === 'instagram' ||
 						s.kind === 'facebook' ||
-						s.kind === 'youtube' ||
-						s.kind === 'twitter') &&
+						s.kind === 'youtube') &&
 					!s.done,
 			);
 
@@ -278,20 +279,21 @@ export class PumpyoursoundDownloader {
 			const input = document.querySelector<HTMLInputElement>(
 				'input[name="fangate_comment"], input.fangatex__icomment',
 			);
-			if (input) {
-				input.value = text;
-				input.dispatchEvent(new Event('input', { bubbles: true }));
-				input.dispatchEvent(new Event('change', { bubbles: true }));
+			if (!input) {
+				throw new Error('PumpYourSound comment input not found.');
 			}
+			input.value = text;
+			input.dispatchEvent(new Event('input', { bubbles: true }));
+			input.dispatchEvent(new Event('change', { bubbles: true }));
 			const send = document.querySelector<HTMLElement>('#fangate-send-comment');
-			const href = send?.getAttribute('data-href');
-			if (send && href) {
+			if (!send) {
+				throw new Error('PumpYourSound comment send button not found.');
+			}
+			const href = send.getAttribute('data-href');
+			if (href) {
 				const u = new URL(href, location.origin);
 				u.searchParams.set('text', text);
 				send.setAttribute('data-href', `${u.pathname}${u.search}`);
-			}
-			if (!send) {
-				throw new Error('PumpYourSound comment send button not found.');
 			}
 			send.click();
 		}, comment);
