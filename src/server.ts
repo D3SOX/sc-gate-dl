@@ -13,6 +13,7 @@ import { HypedditDownloader } from './hypeddit';
 import { HypedditHttpDownloader } from './hypedditHttp';
 import { JobQueue } from './jobQueue';
 import { jobStore } from './jobStore';
+import { PumpyoursoundDownloader } from './pumpyoursound';
 import { SoundcloudClient } from './soundcloud';
 import { isSoundcloudDownloadEnabled } from './soundcloudDownload';
 import { StillhypeDownloader } from './stillhype';
@@ -432,6 +433,29 @@ async function runDownloadProcess(jobId: string): Promise<void> {
 			);
 			downloadFilename =
 				await stillhypeDownloader.downloadAudio(downloadSourceUrl);
+			throwIfCancelled();
+		} else if (provider === 'pumpyoursound') {
+			jobStore.updateProgress(
+				jobId,
+				'initializing_browser',
+				'Launching browser for PumpYourSound...',
+				10,
+			);
+			const pumpyoursoundDownloader = new PumpyoursoundDownloader(
+				await prepareBrowserConfig(),
+			);
+			activeDownloaders.set(jobId, pumpyoursoundDownloader);
+			pumpyoursoundDownloader.setProgressCallback(emitProgress);
+			await pumpyoursoundDownloader.initialize();
+			throwIfCancelled();
+			jobStore.updateProgress(
+				jobId,
+				'handling_gates',
+				'Processing PumpYourSound gates...',
+				25,
+			);
+			downloadFilename =
+				await pumpyoursoundDownloader.downloadAudio(downloadSourceUrl);
 			throwIfCancelled();
 		} else if (provider === 'direct') {
 			jobStore.updateProgress(

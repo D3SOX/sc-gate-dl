@@ -7,6 +7,7 @@ import { DroploudDownloader } from './droploud';
 import { GaterushDownloader } from './gaterush';
 import { HypedditDownloader } from './hypeddit';
 import { HypedditHttpDownloader } from './hypedditHttp';
+import { PumpyoursoundDownloader } from './pumpyoursound';
 import { SoundcloudClient } from './soundcloud';
 import { StillhypeDownloader } from './stillhype';
 import {
@@ -79,11 +80,11 @@ try {
 		} else {
 			gateUrl = await input({
 				message:
-					'Enter a Hypeddit, Droploud, GateRush, DownloadGater, Bandcamp, direct download, or smart-link URL',
+					'Enter a Hypeddit, Droploud, GateRush, DownloadGater, StillHype, PumpYourSound, Bandcamp, direct download, or smart-link URL',
 				validate: async (value) => {
 					const resolved = await resolveGateUrlOrFollow(value);
 					if (!resolved || resolved.provider === 'soundcloud') {
-						return 'A valid Hypeddit, Droploud, GateRush, DownloadGater, Bandcamp, direct download, or resolvable gate URL is required';
+						return 'A valid Hypeddit, Droploud, GateRush, DownloadGater, StillHype, PumpYourSound, Bandcamp, direct download, or resolvable gate URL is required';
 					}
 					return true;
 				},
@@ -105,7 +106,7 @@ try {
 
 	if (!gateUrl || !gate) {
 		throw new Error(
-			'A valid Hypeddit, Droploud, GateRush, DownloadGater, Bandcamp, direct download, or SoundCloud URL is required',
+			'A valid Hypeddit, Droploud, GateRush, DownloadGater, StillHype, PumpYourSound, Bandcamp, direct download, or SoundCloud URL is required',
 		);
 	}
 
@@ -245,6 +246,22 @@ try {
 			downloadFilename = await stillhypeDownloader.downloadAudio(gateUrl);
 		} finally {
 			await stillhypeDownloader.close();
+		}
+	} else if (gate.provider === 'pumpyoursound') {
+		usedBrowser = true;
+		const pumpyoursoundDownloader = new PumpyoursoundDownloader(gateConfig);
+		try {
+			await pumpyoursoundDownloader.initialize();
+			if (initializeLogins) {
+				await pumpyoursoundDownloader.prepareLogins();
+				if (config) {
+					await saveConfig({ ...config, initializeLogins: false });
+					console.log('✓ Updated config.json: initializeLogins set to false');
+				}
+			}
+			downloadFilename = await pumpyoursoundDownloader.downloadAudio(gateUrl);
+		} finally {
+			await pumpyoursoundDownloader.close();
 		}
 	} else {
 		// Hypeddit: always try plain HTTP first (email + social skip gates).
