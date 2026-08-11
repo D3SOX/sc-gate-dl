@@ -651,6 +651,7 @@ export class MypresskitDownloader {
 		const reader = response.body.getReader();
 		let received = 0;
 		let completed = false;
+		let lastProgressEmit = 0;
 		const pBar = new SingleBar(
 			{
 				format:
@@ -664,6 +665,43 @@ export class MypresskitDownloader {
 			},
 		);
 
+		const emitDownloadProgress = (force = false) => {
+			const now = Date.now();
+			if (
+				!force &&
+				now - lastProgressEmit < 250 &&
+				!(totalBytes > 0 && received >= totalBytes)
+			) {
+				return;
+			}
+			lastProgressEmit = now;
+			const currentMb = Number((received / 1024 / 1024).toFixed(2));
+			if (totalBytes > 0) {
+				if (pBar.isActive) {
+					pBar.update(received, {
+						total_mb: Number((totalBytes / 1024 / 1024).toFixed(2)),
+						current_mb: currentMb,
+					});
+				} else {
+					pBar.start(totalBytes, received, { prefix: 'Downloading' });
+				}
+				const percent = Math.min(100, (received / totalBytes) * 100);
+				this.emitProgress(
+					'downloading',
+					`Downloading... ${currentMb.toFixed(1)} / ${(totalBytes / 1024 / 1024).toFixed(1)} MB`,
+					percent,
+					{ downloadBytes: received, totalBytes },
+				);
+				return;
+			}
+			this.emitProgress(
+				'downloading',
+				`Downloading... ${currentMb.toFixed(1)} MB`,
+				0,
+				{ downloadBytes: received },
+			);
+		};
+
 		try {
 			while (true) {
 				const { done, value } = await reader.read();
@@ -676,25 +714,15 @@ export class MypresskitDownloader {
 					);
 				}
 				writer.write(value);
-				if (totalBytes > 0) {
-					if (pBar.isActive) {
-						pBar.update(received, {
-							total_mb: Number((totalBytes / 1024 / 1024).toFixed(2)),
-							current_mb: Number((received / 1024 / 1024).toFixed(2)),
-						});
-					} else {
-						pBar.start(totalBytes, received, { prefix: 'Downloading' });
-					}
-					this.emitProgress(
-						'downloading',
-						`Downloading... ${(received / 1024 / 1024).toFixed(1)} / ${(totalBytes / 1024 / 1024).toFixed(1)} MB`,
-						0,
-						{ downloadBytes: received, totalBytes },
-					);
-				}
+				emitDownloadProgress();
 			}
 			await writer.end();
 			completed = true;
+			emitDownloadProgress(true);
+			this.emitProgress('downloading', 'Download complete', 100, {
+				downloadBytes: received,
+				...(totalBytes > 0 ? { totalBytes } : {}),
+			});
 		} finally {
 			pBar.stop();
 			if (!completed) {

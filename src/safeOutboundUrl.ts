@@ -163,6 +163,14 @@ export async function safeFetch(
 							const bytes =
 								typeof chunk === 'string' ? Buffer.from(chunk) : chunk;
 							controller.enqueue(new Uint8Array(bytes));
+							// Pause the socket when the consumer is behind so progress
+							// callbacks can run against live download progress.
+							if (
+								controller.desiredSize !== null &&
+								controller.desiredSize <= 0
+							) {
+								res.pause();
+							}
 						});
 						res.on('end', () => {
 							try {
@@ -172,6 +180,9 @@ export async function safeFetch(
 							}
 						});
 						res.on('error', (err) => controller.error(err));
+					},
+					pull() {
+						res.resume();
 					},
 					cancel() {
 						res.destroy();
