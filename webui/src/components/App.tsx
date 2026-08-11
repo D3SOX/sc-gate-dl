@@ -1163,8 +1163,8 @@ export default function App() {
 					</div>
 					<p className="tagline">
 						Download & tag SoundCloud tracks from Hypeddit, Droploud, GateRush,
-						DownloadGater, StillHype, PumpYourSound, Bandcamp, or a direct
-						download link
+						DownloadGater, StillHype, PumpYourSound, MyPressKit, Bandcamp, or a
+						direct download link
 					</p>
 				</header>
 			)}
@@ -1361,7 +1361,7 @@ export default function App() {
 							<p>
 								{skipAutomaticHypedditFetch
 									? 'Automatic gate lookup is disabled. Enter a gate URL manually, or download the SoundCloud track via yt-dlp.'
-									: 'Gate URL not found in track. Enter a Hypeddit, Droploud, GateRush, DownloadGater, StillHype, PumpYourSound, Bandcamp, or direct download URL, or download via yt-dlp from SoundCloud.'}
+									: 'Gate URL not found in track. Enter a Hypeddit, Droploud, GateRush, DownloadGater, StillHype, PumpYourSound, MyPressKit, Bandcamp, or direct download URL, or download via yt-dlp from SoundCloud.'}
 							</p>
 						</div>
 						<form onSubmit={handleHypedditSubmit}>

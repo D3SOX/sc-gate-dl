@@ -18,6 +18,7 @@ import { HypedditDownloader } from './hypeddit';
 import { HypedditHttpDownloader } from './hypedditHttp';
 import { JobQueue } from './jobQueue';
 import { jobStore } from './jobStore';
+import { MypresskitDownloader } from './mypresskit';
 import { PumpyoursoundDownloader } from './pumpyoursound';
 import { isAllowedCorsOrigin } from './serverCors';
 import { SoundcloudClient } from './soundcloud';
@@ -471,6 +472,30 @@ async function runDownloadProcess(jobId: string): Promise<void> {
 			);
 			downloadFilename =
 				await pumpyoursoundDownloader.downloadAudio(downloadSourceUrl);
+			throwIfCancelled();
+		} else if (provider === 'mypresskit') {
+			jobStore.updateProgress(
+				jobId,
+				'initializing_browser',
+				'Launching browser for MyPressKit...',
+				10,
+			);
+			const mypresskitDownloader = new MypresskitDownloader(
+				await prepareBrowserConfig(),
+			);
+			activeDownloaders.set(jobId, mypresskitDownloader);
+			mypresskitDownloader.setProgressCallback(emitProgress);
+			await mypresskitDownloader.initialize();
+			throwIfCancelled();
+			jobStore.updateProgress(
+				jobId,
+				'handling_gates',
+				'Processing MyPressKit gates...',
+				25,
+				{ browserActive: job.browserMode === 'headed' },
+			);
+			downloadFilename =
+				await mypresskitDownloader.downloadAudio(downloadSourceUrl);
 			throwIfCancelled();
 		} else if (provider === 'direct') {
 			jobStore.updateProgress(

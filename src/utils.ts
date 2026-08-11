@@ -255,6 +255,7 @@ export type GateProvider =
 	| 'downloadgater'
 	| 'stillhype'
 	| 'pumpyoursound'
+	| 'mypresskit'
 	/** Direct HTTP(S) file URL (Dropbox, Drive, raw audio link, …). */
 	| 'direct'
 	| 'bandcamp'
@@ -277,6 +278,9 @@ const STILLHYPE_URL_RE =
 /** pumpyoursound.com/f/{channel}/{slug}/{id} (channel may be `pys` or the artist). */
 const PUMPYOURSOUND_URL_RE =
 	/https?:\/\/(?:www\.)?pumpyoursound\.com\/f\/[A-Za-z0-9_-]+\/[A-Za-z0-9_-]+\/\d+/i;
+/** mypresskit.info/gate/{handle} */
+const MYPRESSKIT_URL_RE =
+	/https?:\/\/(?:www\.)?mypresskit\.info\/gate\/[A-Za-z0-9_-]+/i;
 /** artist.bandcamp.com/track|album/... (and bare bandcamp.com). */
 const BANDCAMP_URL_RE =
 	/https?:\/\/(?:[\w-]+\.)?bandcamp\.com\/(?:track|album)\/[^\s?#]+/i;
@@ -317,6 +321,10 @@ export function isStillhypeUrl(value: string): boolean {
 
 export function isPumpyoursoundUrl(value: string): boolean {
 	return PUMPYOURSOUND_URL_RE.test(value);
+}
+
+export function isMypresskitUrl(value: string): boolean {
+	return MYPRESSKIT_URL_RE.test(value);
 }
 
 export function isBandcampUrl(value: string): boolean {
@@ -373,7 +381,7 @@ export function validateGateUrl(value: string): true | string {
 	if (/^https?:\/\/\S+/i.test(value.trim())) {
 		return true;
 	}
-	return 'A valid Hypeddit, Droploud, GateRush, DownloadGater, StillHype, PumpYourSound, Bandcamp, direct download, SoundCloud, or resolvable http(s) URL is required';
+	return 'A valid Hypeddit, Droploud, GateRush, DownloadGater, StillHype, PumpYourSound, MyPressKit, Bandcamp, direct download, SoundCloud, or resolvable http(s) URL is required';
 }
 
 function normalizeGateUrl(
@@ -385,6 +393,7 @@ function normalizeGateUrl(
 		provider === 'downloadgater' ||
 		provider === 'stillhype' ||
 		provider === 'pumpyoursound' ||
+		provider === 'mypresskit' ||
 		provider === 'bandcamp' ||
 		provider === 'direct'
 	) {
@@ -440,6 +449,10 @@ function matchTraditionalGateUrl(
 			trimExtractedUrl(pumpyoursoundMatch),
 			'pumpyoursound',
 		);
+	}
+	const mypresskitMatch = value.match(MYPRESSKIT_URL_RE)?.[0];
+	if (mypresskitMatch) {
+		return normalizeGateUrl(trimExtractedUrl(mypresskitMatch), 'mypresskit');
 	}
 	return null;
 }
@@ -616,6 +629,7 @@ export function findKnownGateInHtml(
 				'downloadgater',
 				'stillhype',
 				'pumpyoursound',
+				'mypresskit',
 			].includes(match.provider),
 		);
 		if (traditional) return traditional;
@@ -735,8 +749,8 @@ function collectUnresolvedHttpCandidates(
 
 /**
  * Prefer traditional unlock gates (Hypeddit, Droploud, GateRush, DownloadGater,
- * StillHype, PumpYourSound) from purchase_url or description over Bandcamp /
- * SoundCloud store links, then direct file links (Dropbox, Drive, …).
+ * StillHype, PumpYourSound, MyPressKit) from purchase_url or description over
+ * Bandcamp / SoundCloud store links, then direct file links (Dropbox, Drive, …).
  */
 export function extractGateUrl(track: SoundcloudTrack): GateUrlMatch | null {
 	const { purchase_url, description } = track;

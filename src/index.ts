@@ -7,6 +7,7 @@ import { DroploudDownloader } from './droploud';
 import { GaterushDownloader } from './gaterush';
 import { HypedditDownloader } from './hypeddit';
 import { HypedditHttpDownloader } from './hypedditHttp';
+import { MypresskitDownloader } from './mypresskit';
 import { PumpyoursoundDownloader } from './pumpyoursound';
 import { SoundcloudClient } from './soundcloud';
 import { StillhypeDownloader } from './stillhype';
@@ -80,11 +81,11 @@ try {
 		} else {
 			gateUrl = await input({
 				message:
-					'Enter a Hypeddit, Droploud, GateRush, DownloadGater, StillHype, PumpYourSound, Bandcamp, direct download, or smart-link URL',
+					'Enter a Hypeddit, Droploud, GateRush, DownloadGater, StillHype, PumpYourSound, MyPressKit, Bandcamp, direct download, or smart-link URL',
 				validate: async (value) => {
 					const resolved = await resolveGateUrlOrFollow(value);
 					if (!resolved || resolved.provider === 'soundcloud') {
-						return 'A valid Hypeddit, Droploud, GateRush, DownloadGater, StillHype, PumpYourSound, Bandcamp, direct download, or resolvable gate URL is required';
+						return 'A valid Hypeddit, Droploud, GateRush, DownloadGater, StillHype, PumpYourSound, MyPressKit, Bandcamp, direct download, or resolvable gate URL is required';
 					}
 					return true;
 				},
@@ -106,7 +107,7 @@ try {
 
 	if (!gateUrl || !gate) {
 		throw new Error(
-			'A valid Hypeddit, Droploud, GateRush, DownloadGater, StillHype, PumpYourSound, Bandcamp, direct download, or SoundCloud URL is required',
+			'A valid Hypeddit, Droploud, GateRush, DownloadGater, StillHype, PumpYourSound, MyPressKit, Bandcamp, direct download, or SoundCloud URL is required',
 		);
 	}
 
@@ -262,6 +263,22 @@ try {
 			downloadFilename = await pumpyoursoundDownloader.downloadAudio(gateUrl);
 		} finally {
 			await pumpyoursoundDownloader.close();
+		}
+	} else if (gate.provider === 'mypresskit') {
+		usedBrowser = true;
+		const mypresskitDownloader = new MypresskitDownloader(gateConfig);
+		try {
+			await mypresskitDownloader.initialize();
+			if (initializeLogins) {
+				await mypresskitDownloader.prepareLogins();
+				if (config) {
+					await saveConfig({ ...config, initializeLogins: false });
+					console.log('✓ Updated config.json: initializeLogins set to false');
+				}
+			}
+			downloadFilename = await mypresskitDownloader.downloadAudio(gateUrl);
+		} finally {
+			await mypresskitDownloader.close();
 		}
 	} else {
 		// Hypeddit: always try plain HTTP first (email + social skip gates).

@@ -191,6 +191,28 @@ describe('resolveGateProviderUrl', () => {
 		});
 	});
 
+	test('matches MyPressKit gate URLs and normalizes http to https', () => {
+		expect(
+			resolveGateProviderUrl(
+				'http://www.mypresskit.info/gate/dj-felge-rihanna-umbrella-dj-felge-x-kluge-edit',
+			),
+		).toEqual({
+			url: 'https://www.mypresskit.info/gate/dj-felge-rihanna-umbrella-dj-felge-x-kluge-edit',
+			provider: 'mypresskit',
+		});
+	});
+
+	test('prefers MyPressKit over Bandcamp in the same string', () => {
+		expect(
+			resolveGateProviderUrl(
+				'https://artist.bandcamp.com/track/song and https://www.mypresskit.info/gate/some-track',
+			),
+		).toEqual({
+			url: 'https://www.mypresskit.info/gate/some-track',
+			provider: 'mypresskit',
+		});
+	});
+
 	test('prefers PumpYourSound over Bandcamp in the same string', () => {
 		expect(
 			resolveGateProviderUrl(
@@ -227,6 +249,21 @@ describe('extractGateUrl', () => {
 			url: 'https://pumpyoursound.com/f/pys/aguanile-remix/224680',
 			provider: 'pumpyoursound',
 			type: 'description',
+		});
+	});
+
+	test('prefers MyPressKit purchase_url over Bandcamp description', () => {
+		expect(
+			extractGateUrl({
+				purchase_url:
+					'https://www.mypresskit.info/gate/dj-felge-rihanna-umbrella-dj-felge-x-kluge-edit',
+				description:
+					'Also on Bandcamp: https://artist.bandcamp.com/track/umbrella',
+			} as Parameters<typeof extractGateUrl>[0]),
+		).toEqual({
+			url: 'https://www.mypresskit.info/gate/dj-felge-rihanna-umbrella-dj-felge-x-kluge-edit',
+			provider: 'mypresskit',
+			type: 'purchase_url',
 		});
 	});
 });
