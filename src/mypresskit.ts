@@ -33,10 +33,23 @@ function filenameFromContentDisposition(value: string | null): string | null {
 	if (!value) return null;
 	const star = value.match(/filename\*=(?:UTF-8'')?([^;]+)/i)?.[1];
 	if (star) {
-		return decodeURIComponent(star.replace(/["']/g, ''));
+		const raw = star.replace(/["']/g, '');
+		try {
+			return decodeURIComponent(raw);
+		} catch {
+			return raw;
+		}
 	}
 	const plain = value.match(/filename=["']?([^"';]+)["']?/i)?.[1];
 	return plain ? plain.trim() : null;
+}
+
+function safeDecodeURIComponent(value: string): string {
+	try {
+		return decodeURIComponent(value);
+	} catch {
+		return value;
+	}
 }
 
 function safePageUrl(page: Page): string {
@@ -287,7 +300,7 @@ export class MypresskitDownloader {
 		const result = await page.evaluate(async (id) => {
 			const res = await fetch(
 				`/api/download-gates/${encodeURIComponent(id)}/verify-step`,
-				{ credentials: 'include' },
+				{ credentials: 'include', signal: AbortSignal.timeout(15_000) },
 			);
 			if (!res.ok) {
 				return { ok: false as const, status: res.status };
@@ -306,10 +319,13 @@ export class MypresskitDownloader {
 			return;
 		}
 
-		if (
-			step.type.startsWith('soundcloud-') ||
-			step.type.startsWith('spotify-')
-		) {
+		if (step.type.startsWith('spotify-')) {
+			throw new Error(
+				`MyPressKit Spotify steps are not supported yet (got “${step.type}”).`,
+			);
+		}
+
+		if (step.type.startsWith('soundcloud-')) {
 			await this.runOauthStep(page, gateId, step);
 			return;
 		}
@@ -324,6 +340,7 @@ export class MypresskitDownloader {
 						headers: { 'Content-Type': 'application/json' },
 						credentials: 'include',
 						body: JSON.stringify({ stepIndex }),
+						signal: AbortSignal.timeout(15_000),
 					},
 				);
 			},
@@ -358,6 +375,7 @@ export class MypresskitDownloader {
 					headers: { 'Content-Type': 'application/json' },
 					credentials: 'include',
 					body: JSON.stringify({ email: value, stepIndex: index }),
+					signal: AbortSignal.timeout(15_000),
 				});
 			},
 			gateId,
@@ -390,7 +408,6 @@ export class MypresskitDownloader {
 		}
 
 		const popupPromise = new Promise<Page | null>((resolve) => {
-			const timer = setTimeout(() => resolve(null), 20_000);
 			const onTarget = async (target: { page: () => Promise<Page | null> }) => {
 				const p = await target.page().catch(() => null);
 				if (!p) return;
@@ -398,14 +415,15 @@ export class MypresskitDownloader {
 				this.browser.off('targetcreated', onTarget);
 				resolve(p);
 			};
+			const timer = setTimeout(() => {
+				this.browser.off('targetcreated', onTarget);
+				resolve(null);
+			}, 20_000);
 			this.browser.on('targetcreated', onTarget);
 		});
 
-		const provider = step.type.startsWith('spotify-')
-			? 'spotify'
-			: 'soundcloud';
 		const openMethod = await page.evaluate(
-			(stepIndex, stepType, comment, id, oauthProvider) => {
+			(stepIndex, stepType, comment, id) => {
 				const labels: Record<string, RegExp> = {
 					'soundcloud-follow': /follow on soundcloud/i,
 					'soundcloud-repost': /repost/i,
@@ -432,7 +450,7 @@ export class MypresskitDownloader {
 				});
 				if (stepType === 'soundcloud-comment') params.set('comment', comment);
 				window.open(
-					`/api/download-gates/oauth/${oauthProvider}/start?${params}`,
+					`/api/download-gates/oauth/soundcloud/start?${params}`,
 					'mpk-gate-oauth',
 					'width=520,height=720',
 				);
@@ -442,7 +460,6 @@ export class MypresskitDownloader {
 			step.type,
 			this.config.comment.trim(),
 			gateId,
-			provider,
 		);
 		console.log(`MyPressKit OAuth open (${openMethod}) for step ${step.index}`);
 
@@ -591,7 +608,9 @@ export class MypresskitDownloader {
 	): Promise<string> {
 		this.emitProgress('handling_gates', 'Preparing MyPressKit download...', 75);
 		const downloadUrl = `https://www.mypresskit.info/api/download-gates/${encodeURIComponent(gateId)}/download?token=${encodeURIComponent(token)}`;
-		const cookies = await page.cookies('https://www.mypresskit.info');
+		const cookies = await page
+			.browserContext()
+			.cookies('https://www.mypresskit.info');
 		const cookieHeader = cookies.map((c) => `${c.name}=${c.value}`).join('; ');
 
 		await mkdir('./downloads', { recursive: true });
@@ -619,7 +638,7 @@ export class MypresskitDownloader {
 		let suggested =
 			sanitizeFilenamePart(basename(fromHeader || '')) ||
 			sanitizeFilenamePart(
-				decodeURIComponent(basename(new URL(finalUrl).pathname)),
+				safeDecodeURIComponent(basename(new URL(finalUrl).pathname)),
 			) ||
 			`mypresskit-${gateId}`;
 		if (!/\.[a-z0-9]{2,5}$/i.test(suggested)) {
