@@ -15,6 +15,7 @@ export class GaterushDownloader {
 	private downloadFilename: string | null = null;
 	private config: HypedditConfig;
 	private progressCallback: ProgressCallback | null = null;
+	private cancelPendingDownloadWait: (() => void) | null = null;
 
 	constructor(config: HypedditConfig) {
 		this.config = config;
@@ -132,6 +133,8 @@ export class GaterushDownloader {
 	}
 
 	async close() {
+		this.cancelPendingDownloadWait?.();
+		this.cancelPendingDownloadWait = null;
 		await this.browser?.close();
 	}
 
@@ -540,6 +543,10 @@ export class GaterushDownloader {
 			downloadCompleteResolve = resolve;
 			downloadCompleteReject = reject;
 		});
+		const cancelPendingDownloadWait = () => {
+			downloadCompleteReject(new Error('Download was canceled'));
+		};
+		this.cancelPendingDownloadWait = cancelPendingDownloadWait;
 		const downloadTimer = setTimeout(
 			() =>
 				downloadCompleteReject(
@@ -621,6 +628,9 @@ export class GaterushDownloader {
 		try {
 			await Promise.all([clickDownload(), downloadCompletePromise]);
 		} finally {
+			if (this.cancelPendingDownloadWait === cancelPendingDownloadWait) {
+				this.cancelPendingDownloadWait = null;
+			}
 			clearTimeout(downloadTimer);
 			clearTimeout(retryTimer);
 			pBar.stop();
