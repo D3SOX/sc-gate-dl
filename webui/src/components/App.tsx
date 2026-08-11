@@ -342,7 +342,7 @@ export default function App() {
 				if (response.ok) {
 					const capabilities = await response.json();
 					modes = parseAvailableBrowserModes(capabilities);
-					viewUrl = parseBrowserViewUrl(capabilities);
+					viewUrl = parseBrowserViewUrl(capabilities, window.location.hostname);
 				}
 			} catch {
 				// Keep the portable modes when the API is unavailable.

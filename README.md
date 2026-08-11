@@ -226,9 +226,9 @@ mkdir -p ~/.local/state/sc-gate-dl
 sh -c 'umask 077; touch "$HOME/.local/state/sc-gate-dl/xauthority"; chmod 600 "$HOME/.local/state/sc-gate-dl/xauthority"; xauth -f "$HOME/.local/state/sc-gate-dl/xauthority" add :99 . "$(mcookie)"'
 ```
 
-Add the runtime environment to the project `.env`. Replace `SERVER_ADDRESS`
-with the stable hostname or IP address reachable by the browser that opens the
-Web UI:
+Add the runtime environment to the project `.env`. The `{host}` placeholder
+makes the noVNC URL follow the hostname or IP address used to open the Web UI,
+so the same server works through both a LAN address and Tailscale:
 
 ```dotenv
 DISPLAY=:99
@@ -237,8 +237,11 @@ XDG_SESSION_TYPE=x11
 OZONE_PLATFORM=x11
 SC_GATE_DL_DISABLE_GPU=true
 SC_GATE_DL_DISABLE_DEV_SHM=true
-BROWSER_VIEW_URL="http://SERVER_ADDRESS:6080/vnc.html?autoconnect=true&resize=scale"
+BROWSER_VIEW_URL="http://{host}:6080/vnc.html?autoconnect=true&resize=scale"
 ```
+
+A fixed noVNC hostname or IP address is still supported when the viewer is
+reachable through only one address.
 
 `SC_GATE_DL_DISABLE_DEV_SHM` is mainly useful for containers or constrained
 hosts. It may be omitted when Chromium can use `/dev/shm` normally.
@@ -317,6 +320,8 @@ Environment=DISPLAY=:99
 Environment=XAUTHORITY=/home/YOUR_USER/.local/state/sc-gate-dl/xauthority
 Environment=XDG_SESSION_TYPE=x11
 Environment=OZONE_PLATFORM=x11
+# Comma-separated hostnames used to open the Vite-powered Web UI:
+Environment=__VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS=SERVER_NAME,SERVER_NAME.TAILNET.ts.net
 ExecStart=/home/YOUR_USER/.bun/bin/bun webui
 Restart=on-failure
 RestartSec=3
@@ -372,6 +377,48 @@ systemctl --user stop sc-gate-dl.target
 systemctl --user start sc-gate-dl.target
 ```
 
+##### Private Tailscale access
+
+Keep the application available on its LAN addresses and add private tailnet
+listeners for the API, Web UI, and noVNC gateway:
+
+```bash
+tailscale serve --bg --http=3000 http://127.0.0.1:3000
+tailscale serve --bg --http=4321 http://127.0.0.1:4321
+tailscale serve --bg --http=6080 http://127.0.0.1:6080
+tailscale serve status
+```
+
+When Tailscale itself runs in Docker with userspace networking, run those
+commands inside its container, for example `docker exec tailscaled tailscale
+serve ...`. Use Tailscale **Serve**, not **Funnel**: Serve is restricted to the
+tailnet, while Funnel publishes the service to the internet.
+
+Vite rejects unlisted DNS hostnames even when they are private. Add the short
+MagicDNS name and fully qualified tailnet name to the app service as shown
+above, or place the same setting in the root `.env`:
+
+```dotenv
+__VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS=SERVER_NAME,SERVER_NAME.TAILNET.ts.net
+```
+
+Do not use `server.allowedHosts: true`; an explicit allowlist retains Vite's
+DNS-rebinding protection. After changing the environment, reload the systemd
+configuration and restart the app:
+
+```bash
+systemctl --user daemon-reload
+systemctl --user restart sc-gate-app.service
+```
+
+With `BROWSER_VIEW_URL` using `{host}`, both addresses can be used without
+changing the server again:
+
+```text
+http://192.168.1.50:4321
+http://SERVER_NAME:4321
+```
+
 If you intentionally keep a plaintext password file instead of
 `~/.vnc/passwd`, protect it with mode `600` and use x11vnc's `-passwdfile`
 option. Do not pass a plaintext file to `-rfbauth`; that option expects
@@ -412,7 +459,7 @@ http://localhost:4321/?url=https://soundcloud.com/artist/track&outputFormat=mp3-
 
 ### Browser userscript
 
-Adds a download icon next to SoundCloud store/buy links (feed and track pages). Clicking it opens the **exact Web UI** in a floating, movable panel on the right (resizable from all edges) — the page behind stays usable (no dimmed overlay). Choose both output format and browser mode from the panel toolbar, or from Violentmonkey's **Choose output format…** and **Choose browser mode…** menu commands. Both choices are remembered and passed to the Web UI. Auto-close after the **browser file download** (Download MP3/Original) or **Start New Download** is on by default — toggle via **Auto-close after browser download**. Closing the panel (× / Escape) or **Cancel download** in the Web UI stops an in-progress job and exits the browser cleanly.
+Adds a download icon next to SoundCloud store/buy links (feed and track pages). Clicking it opens the **exact Web UI** in a floating, movable panel on the right (resizable from all edges) — the page behind stays usable (no dimmed overlay). Choose both output format and browser mode from the panel toolbar, or from Violentmonkey's **Choose output format…** and **Choose browser mode…** menu commands. Both choices are remembered and passed to the Web UI. Enable **Always open downloads in new tab** from Violentmonkey's userscript menu to bypass the modal for every download; the choice is remembered. Auto-close after the **browser file download** (Download MP3/Original) or **Start New Download** is on by default — toggle via **Auto-close after browser download**. Closing the panel (× / Escape) or **Cancel download** in the Web UI stops an in-progress job and exits the browser cleanly.
 
 **Recommended:** [Violentmonkey](https://violentmonkey.github.io/) (Firefox / Chrome / Edge). Tampermonkey also works.
 

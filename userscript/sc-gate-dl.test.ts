@@ -93,6 +93,14 @@ describe('Web UI preferences', () => {
 		expect(source).toContain('class="sc-gate-dl-server"');
 	});
 
+	test('offers a remembered always-open-in-tab mode', () => {
+		expect(source).toContain('sc-gate-dl-always-open-tab');
+		expect(source).toContain('Always open downloads in new tab:');
+		expect(source).toContain(
+			"window.open(buildWebuiSrc(trackUrl), '_blank', 'noopener,noreferrer')",
+		);
+	});
+
 	test('passes the remembered browser mode through the deep link', () => {
 		expect(source).toContain('browserMode: getBrowserMode()');
 		expect(source).toContain('class="sc-gate-dl-browser-mode"');

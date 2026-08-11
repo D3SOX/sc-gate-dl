@@ -100,6 +100,21 @@ describe('browser-view capability', () => {
 		).toBe('http://192.168.178.57:6080/vnc.html?autoconnect=true');
 	});
 
+	test('uses the Web UI hostname for a host template', () => {
+		const capability = {
+			browserViewUrl: 'http://{host}:6080/vnc.html?autoconnect=true',
+		};
+		expect(parseBrowserViewUrl(capability, '192.168.178.57')).toBe(
+			'http://192.168.178.57:6080/vnc.html?autoconnect=true',
+		);
+		expect(parseBrowserViewUrl(capability, 'homelan')).toBe(
+			'http://homelan:6080/vnc.html?autoconnect=true',
+		);
+		expect(parseBrowserViewUrl(capability, 'fd7a:115c:a1e0::1')).toBe(
+			'http://[fd7a:115c:a1e0::1]:6080/vnc.html?autoconnect=true',
+		);
+	});
+
 	test('rejects invalid and executable URLs', () => {
 		expect(
 			parseBrowserViewUrl({ browserViewUrl: 'javascript:alert(1)' }),

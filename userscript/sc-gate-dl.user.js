@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         sc-gate-dl
 // @namespace    https://github.com/D3SOX/sc-gate-dl
-// @version      1.10.12
+// @version      1.10.13
 // @description  Add sc-gate-dl download controls and remember your position in the SoundCloud feed
 // @author       D3SOX
 // @match        https://soundcloud.com/*
@@ -31,6 +31,7 @@
 	const OUTPUT_FORMAT_KEY = 'sc-gate-dl-output-format';
 	const BROWSER_MODE_KEY = 'sc-gate-dl-browser-mode';
 	const AUTO_CLOSE_KEY = 'sc-gate-dl-auto-close';
+	const ALWAYS_OPEN_TAB_KEY = 'sc-gate-dl-always-open-tab';
 	const FEED_CHECKPOINT_KEY = 'sc-gate-dl-feed-checkpoint';
 	const DEFAULT_WEBUI_BASE = 'http://localhost:4321';
 	const BUTTON_ATTR = 'data-sc-gate-dl-btn';
@@ -171,6 +172,41 @@
 		}
 	}
 
+	function getAlwaysOpenTab() {
+		try {
+			if (typeof GM_getValue === 'function') {
+				const stored = GM_getValue(ALWAYS_OPEN_TAB_KEY, null);
+				if (typeof stored === 'boolean') return stored;
+			}
+		} catch {
+			// ignore
+		}
+		try {
+			const stored = localStorage.getItem(ALWAYS_OPEN_TAB_KEY);
+			if (stored === '1' || stored === 'true') return true;
+			if (stored === '0' || stored === 'false') return false;
+		} catch {
+			// ignore
+		}
+		return false;
+	}
+
+	function setAlwaysOpenTab(value) {
+		const enabled = Boolean(value);
+		try {
+			if (typeof GM_setValue === 'function') {
+				GM_setValue(ALWAYS_OPEN_TAB_KEY, enabled);
+			}
+		} catch {
+			// ignore
+		}
+		try {
+			localStorage.setItem(ALWAYS_OPEN_TAB_KEY, enabled ? '1' : '0');
+		} catch {
+			// ignore
+		}
+	}
+
 	function getOutputFormat() {
 		try {
 			if (typeof GM_getValue === 'function') {
@@ -262,6 +298,7 @@
 	}
 
 	let autoCloseMenuId;
+	let alwaysOpenTabMenuId;
 
 	function refreshAutoCloseMenu() {
 		if (typeof GM_registerMenuCommand !== 'function') return;
@@ -285,6 +322,28 @@
 		);
 	}
 
+	function refreshAlwaysOpenTabMenu() {
+		if (typeof GM_registerMenuCommand !== 'function') return;
+		if (
+			typeof GM_unregisterMenuCommand === 'function' &&
+			alwaysOpenTabMenuId != null
+		) {
+			try {
+				GM_unregisterMenuCommand(alwaysOpenTabMenuId);
+			} catch {
+				// ignore
+			}
+		}
+		const enabled = getAlwaysOpenTab();
+		alwaysOpenTabMenuId = GM_registerMenuCommand(
+			`Always open downloads in new tab: ${enabled ? 'ON' : 'OFF'}`,
+			() => {
+				setAlwaysOpenTab(!getAlwaysOpenTab());
+				refreshAlwaysOpenTabMenu();
+			},
+		);
+	}
+
 	function registerMenuCommands() {
 		if (typeof GM_registerMenuCommand !== 'function') return;
 		GM_registerMenuCommand('Configure server…', () => {
@@ -299,6 +358,7 @@
 		GM_registerMenuCommand('Choose browser mode…', () => {
 			openBrowserModeDialog();
 		});
+		refreshAlwaysOpenTabMenu();
 		refreshAutoCloseMenu();
 	}
 
@@ -2254,6 +2314,10 @@ a[${STORE_SERVICE_ATTR}] > button::after {
 	}
 
 	function requestDownload(trackUrl) {
+		if (getAlwaysOpenTab()) {
+			window.open(buildWebuiSrc(trackUrl), '_blank', 'noopener,noreferrer');
+			return;
+		}
 		if (isPanelBusy()) {
 			enqueueDownload(trackUrl);
 			return;

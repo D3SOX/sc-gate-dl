@@ -51,13 +51,22 @@ export function parseAvailableBrowserModes(value: unknown): BrowserMode[] {
 	return parsed.length > 0 ? parsed : ['headless', 'headed'];
 }
 
-export function parseBrowserViewUrl(value: unknown): string | null {
+export function parseBrowserViewUrl(
+	value: unknown,
+	currentHostname?: string,
+): string | null {
 	if (!value || typeof value !== 'object') return null;
 	const browserViewUrl = (value as { browserViewUrl?: unknown }).browserViewUrl;
 	if (typeof browserViewUrl !== 'string') return null;
 
 	try {
-		const url = new URL(browserViewUrl);
+		const hostname = currentHostname?.includes(':')
+			? `[${currentHostname.replace(/^\[|\]$/g, '')}]`
+			: currentHostname;
+		const resolvedUrl = hostname
+			? browserViewUrl.replaceAll('{host}', hostname)
+			: browserViewUrl;
+		const url = new URL(resolvedUrl);
 		return url.protocol === 'http:' || url.protocol === 'https:'
 			? url.href
 			: null;
