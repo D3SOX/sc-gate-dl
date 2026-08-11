@@ -8,11 +8,63 @@ import {
 	extractGateUrl,
 	findBandcampHomepageInHtml,
 	findKnownGateInHtml,
+	loadCookies,
 	previewProcessedFilename,
 	resolveGateProviderUrl,
 	sanitizeFilenamePart,
+	writeBrowserCookies,
 	writeSoundcloudNetscapeCookies,
 } from './utils';
+
+describe('browser cookie persistence', () => {
+	test('treats missing and blank cookie files as empty', async () => {
+		const dir = await mkdtemp(join(tmpdir(), 'sc-gate-dl-test-'));
+		try {
+			expect(await loadCookies(join(dir, 'missing.json'))).toEqual([]);
+			const blankPath = join(dir, 'blank.json');
+			await writeFile(blankPath, '  \n', 'utf8');
+			expect(await loadCookies(blankPath)).toEqual([]);
+		} finally {
+			await rm(dir, { recursive: true, force: true });
+		}
+	});
+
+	test('exports browser cookies for subsequent browser and yt-dlp use', async () => {
+		const dir = await mkdtemp(join(tmpdir(), 'sc-gate-dl-test-'));
+		const cookiePath = join(dir, 'cookies.json');
+		try {
+			await writeBrowserCookies(
+				[
+					{
+						name: 'oauth_token',
+						value: 'secret',
+						domain: '.soundcloud.com',
+						path: '/',
+						expires: 1_900_000_000,
+						size: 17,
+						httpOnly: true,
+						secure: true,
+						session: false,
+					},
+				],
+				cookiePath,
+			);
+			expect(await loadCookies(cookiePath)).toEqual([
+				{
+					name: 'oauth_token',
+					value: 'secret',
+					domain: '.soundcloud.com',
+					path: '/',
+					expires: 1_900_000_000,
+					httpOnly: true,
+					secure: true,
+				},
+			]);
+		} finally {
+			await rm(dir, { recursive: true, force: true });
+		}
+	});
+});
 
 describe('resolveGateProviderUrl', () => {
 	test('extracts Bandcamp track URLs from surrounding prose', () => {

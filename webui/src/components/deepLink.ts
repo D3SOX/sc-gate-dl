@@ -8,6 +8,11 @@ export function readStoredBrowserMode(
 	return isBrowserMode(storedMode) ? storedMode : null;
 }
 
+export function readRequestedBrowserMode(search: string): BrowserMode | null {
+	const mode = new URLSearchParams(search).get('browserMode');
+	return isBrowserMode(mode) ? mode : null;
+}
+
 export function shouldAutoStartDeepLink(
 	browserModeHydrated: boolean,
 	alreadyStarted: boolean,
@@ -26,4 +31,19 @@ export function parseAvailableBrowserModes(value: unknown): BrowserMode[] {
 	if (!Array.isArray(browserModes)) return ['headless', 'headed'];
 	const parsed = browserModes.filter(isBrowserMode);
 	return parsed.length > 0 ? parsed : ['headless', 'headed'];
+}
+
+export function parseBrowserViewUrl(value: unknown): string | null {
+	if (!value || typeof value !== 'object') return null;
+	const browserViewUrl = (value as { browserViewUrl?: unknown }).browserViewUrl;
+	if (typeof browserViewUrl !== 'string') return null;
+
+	try {
+		const url = new URL(browserViewUrl);
+		return url.protocol === 'http:' || url.protocol === 'https:'
+			? url.href
+			: null;
+	} catch {
+		return null;
+	}
 }

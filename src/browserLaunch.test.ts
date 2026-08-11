@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import {
 	buildXvfbBrowserEnv,
 	createXvfbManager,
+	getGpuWorkaroundArgs,
 	isXvfbSupported,
 	readXvfbDisplay,
 	type XvfbSession,
@@ -95,6 +96,18 @@ describe('buildXvfbBrowserEnv', () => {
 			OZONE_PLATFORM: 'x11',
 			PATH: '/usr/bin',
 		});
+	});
+});
+
+describe('getGpuWorkaroundArgs', () => {
+	test('enables GPU and shared-memory workarounds independently', () => {
+		expect(getGpuWorkaroundArgs({ SC_GATE_DL_DISABLE_GPU: ' TRUE ' })).toEqual([
+			'--disable-gpu',
+		]);
+		expect(getGpuWorkaroundArgs({ SC_GATE_DL_DISABLE_DEV_SHM: '1' })).toEqual([
+			'--disable-dev-shm-usage',
+		]);
+		expect(getGpuWorkaroundArgs({})).toEqual([]);
 	});
 });
 

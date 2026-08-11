@@ -1,8 +1,9 @@
 import crypto from 'node:crypto';
+import { rename, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { lookpath } from 'find-bin';
-import type { CookieData } from 'puppeteer';
+import type { Cookie, CookieData } from 'puppeteer';
 import type { SoundcloudTrack } from 'soundcloud.ts';
 import packageJson from '../package.json' with { type: 'json' };
 import {
@@ -97,9 +98,11 @@ export function parseDatadomeCheckCookie(body: string): {
 }
 
 export async function loadCookies(filename: string): Promise<CookieData[]> {
-	const cookiesData: LocalCookieData[] = JSON.parse(
-		await Bun.file(filename).text(),
-	);
+	const file = Bun.file(filename);
+	if (!(await file.exists())) return [];
+	const text = (await file.text()).trim();
+	if (!text) return [];
+	const cookiesData = JSON.parse(text) as LocalCookieData[];
 	return cookiesData.map((cookie) => {
 		const puppeteerCookie: CookieData = {
 			name: cookie.name,
@@ -123,6 +126,32 @@ export async function loadCookies(filename: string): Promise<CookieData[]> {
 
 		return puppeteerCookie;
 	});
+}
+
+/** Persist browser cookies in the JSON format accepted by loadCookies(). */
+export async function writeBrowserCookies(
+	cookies: Cookie[],
+	filename = 'soundcloud-cookies.json',
+): Promise<void> {
+	const serialized: LocalCookieData[] = cookies.map((cookie) => ({
+		name: cookie.name,
+		value: cookie.value,
+		domain: cookie.domain,
+		path: cookie.path,
+		expirationDate: cookie.expires > 0 ? cookie.expires : undefined,
+		httpOnly: cookie.httpOnly,
+		secure: cookie.secure,
+		sameSite: cookie.sameSite,
+	}));
+	const temporary = `${filename}.${crypto.randomUUID()}.tmp`;
+	try {
+		await Bun.write(temporary, `${JSON.stringify(serialized, null, 2)}\n`, {
+			mode: 0o600,
+		});
+		await rename(temporary, filename);
+	} finally {
+		await rm(temporary, { force: true }).catch(() => {});
+	}
 }
 
 /**

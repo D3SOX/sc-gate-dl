@@ -18,6 +18,8 @@ export interface EnqueueResult {
 /** Serializes download jobs shared by every Web UI tab connected to the server. */
 export class JobQueue {
 	private activeJobId: string | null = null;
+	private activeRun: QueuedJob | null = null;
+	private activeCompletion: Promise<void> | null = null;
 	private waiting: QueuedJob[] = [];
 
 	constructor(private readonly hooks: JobQueueHooks) {}
@@ -54,8 +56,27 @@ export class JobQueue {
 		return index === -1 ? 0 : index + 1;
 	}
 
+	/** Wait until an active job has fully released the serial queue slot. */
+	async waitForCompletion(id: string): Promise<void> {
+		if (this.activeJobId !== id) return;
+		await this.activeCompletion;
+	}
+
+	/** Release a cancelled active job after its downloader has been closed. */
+	releaseActive(id: string): boolean {
+		if (this.activeJobId !== id) return false;
+		this.activeJobId = null;
+		this.activeRun = null;
+		this.activeCompletion = null;
+		const next = this.waiting.shift();
+		this.notifyPositions();
+		if (next) this.start(next);
+		return true;
+	}
+
 	private start(job: QueuedJob): void {
 		this.activeJobId = job.id;
+		this.activeRun = job;
 
 		let task: Promise<void>;
 		try {
@@ -64,10 +85,17 @@ export class JobQueue {
 			task = Promise.reject(error);
 		}
 
-		void task
-			.catch((error) => this.hooks.onTaskError(job.id, error))
+		this.activeCompletion = task
+			.catch((error) => {
+				if (this.activeRun === job) {
+					this.hooks.onTaskError(job.id, error);
+				}
+			})
 			.finally(() => {
-				if (this.activeJobId === job.id) this.activeJobId = null;
+				if (this.activeRun !== job) return;
+				this.activeJobId = null;
+				this.activeRun = null;
+				this.activeCompletion = null;
 				const next = this.waiting.shift();
 				this.notifyPositions();
 				if (next) this.start(next);

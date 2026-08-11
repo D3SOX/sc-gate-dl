@@ -69,6 +69,8 @@ export interface JobProgress {
 	// True when the download was handled without a browser. Such downloads never
 	// touch the SoundCloud account, so the UI can skip the cleanup prompt.
 	browserless?: boolean;
+	/** True once a visible headed browser is running and can be viewed remotely. */
+	browserActive?: boolean;
 	/** Present while stage is `waiting_bandcamp_track`. */
 	bandcampAlbumTracks?: BandcampAlbumTrackChoice[];
 	/** One-based position among jobs waiting for the server's download slot. */

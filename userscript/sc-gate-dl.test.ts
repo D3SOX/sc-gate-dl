@@ -29,3 +29,18 @@ describe('feed playback origin', () => {
 		expect(updateFeedPlaybackOrigin(origin, null, false)).toBe(origin);
 	});
 });
+
+describe('Web UI preferences', () => {
+	test('passes the remembered browser mode through the deep link', () => {
+		expect(source).toContain('browserMode: getBrowserMode()');
+		expect(source).toContain('class="sc-gate-dl-browser-mode"');
+		expect(source).toContain("GM_registerMenuCommand('Choose browser mode…'");
+	});
+
+	test('releases remote pointer capture when mouseup happens outside iframe', () => {
+		expect(source).toContain("type: 'release-remote-pointer'");
+		expect(source).toContain(
+			"window.addEventListener('pointerup', releaseRemotePointer, true)",
+		);
+	});
+});

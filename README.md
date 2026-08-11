@@ -75,9 +75,16 @@ Install the [EditThisCookie2](https://addons.mozilla.org/en-US/firefox/addon/etc
 **For Chromium-based browsers (Chrome, Edge, Brave, Helium, etc.):**
 Install the [EditThisCookie (fork)](https://chromewebstore.google.com/detail/editthiscookie-fork/ihfmcbadakjehneaijebhpogkegajgnk) extension
 
-#### SoundCloud Cookies (Required)
+#### SoundCloud Cookies
 
 Used for SoundCloud API/session automation and for **yt-dlp** when downloading a SoundCloud track directly (so downloadable tracks can fetch the original upload, not only the 128k stream).
+
+You can omit `soundcloud-cookies.json` and use **Initialize Logins** in the Web
+UI instead. Sign in through the visible or remote browser; after SoundCloud's
+Library page opens, sc-gate-dl saves the browser cookies to
+`soundcloud-cookies.json` with owner-only permissions. A blank file and `[]` are
+also treated as an empty cookie set. The exported cookies are reused by browser
+gate jobs and yt-dlp.
 
 **Steps:**
 
@@ -151,9 +158,94 @@ bun webui
 
 Wait for Astro to be started. It will then tell you the address it's available on, most likely [`http://localhost:4321`](http://localhost:4321).
 
+The Web UI also listens on the local network and automatically calls the API on
+port `3000` of the same host. For example, a Web UI opened at
+`http://192.168.1.50:4321` uses `http://192.168.1.50:3000`. Set
+`PUBLIC_API_BASE_URL` when the public API uses a different host or port. If a
+reverse proxy gives the Web UI a different origin, add it to the comma-separated
+`SC_GATE_DL_ALLOWED_ORIGINS` environment variable.
+
+Set `SC_GATE_DL_DELETE_AFTER_DOWNLOAD=true` on the server to remove completed
+MP3, FLAC, and original files after their HTTP response has been transferred in
+full. This applies to headless, Xvfb, and visible-headed jobs. Interrupted or
+failed transfers retain the file so the download can be retried.
+
+For a remotely hosted headed browser, set `BROWSER_VIEW_URL` to an HTTP(S)
+viewer such as noVNC. The Web UI then shows a **View Browser** button next to
+**Initialize Logins**. Virtual displays without GPU device access can set
+`SC_GATE_DL_DISABLE_GPU=true`. Containers with a constrained `/dev/shm` can
+separately set `SC_GATE_DL_DISABLE_DEV_SHM=true`.
+
+#### Remotely hosted headed browser with noVNC
+
+This setup lets a headless server open Chromium in headed mode while you view
+and control it inside the sc-gate-dl Web UI. It is useful for **Initialize
+Logins**, OAuth consent, and captchas.
+
+Install a virtual X server and VNC server. On Arch Linux / Arch Linux ARM:
+
+```bash
+pkexec pacman -S --needed xorg-server-xvfb xorg-xauth x11vnc
+```
+
+Install [noVNC](https://github.com/novnc/noVNC) from your distribution, or use
+an upstream release in your user account:
+
+```bash
+mkdir -p ~/.local/share/sc-gate-dl
+git clone --depth 1 --branch v1.7.0 https://github.com/novnc/noVNC.git \
+  ~/.local/share/sc-gate-dl/noVNC
+mkdir -p ~/.vnc
+x11vnc -storepasswd
+```
+
+Start these processes with your service manager or in separate terminals:
+
+```bash
+sh -c 'umask 077; touch "$HOME/.Xauthority-sc-gate-dl"; chmod 600 "$HOME/.Xauthority-sc-gate-dl"; xauth -f "$HOME/.Xauthority-sc-gate-dl" add :99 . "$(mcookie)"'
+Xvfb :99 -screen 0 1920x1080x24 -nolisten tcp \
+  -auth "$HOME/.Xauthority-sc-gate-dl"
+x11vnc -display :99 -auth "$HOME/.Xauthority-sc-gate-dl" \
+  -forever -shared -localhost -usepw -rfbport 5900 \
+  -noxdamage -repeat
+~/.local/share/sc-gate-dl/noVNC/utils/novnc_proxy \
+  --listen 6080 --vnc localhost:5900
+env DISPLAY=:99 XAUTHORITY="$HOME/.Xauthority-sc-gate-dl" \
+  XDG_SESSION_TYPE=x11 OZONE_PLATFORM=x11 \
+  SC_GATE_DL_DISABLE_GPU=true \
+  BROWSER_VIEW_URL=http://SERVER_ADDRESS:6080/vnc.html \
+  bun webui
+```
+
+Replace `SERVER_ADDRESS` with a hostname or IP address reachable by the browser
+that opens the Web UI. Port `5900` remains local to the server; only the noVNC
+WebSocket gateway on port `6080` needs to be reachable.
+
+The monitor icon in the top-right opens a floating browser panel without
+blocking the Web UI behind it. The panel is draggable, resizable proportionally
+from its corners, defaults to the remote desktop's native view size (scaled down
+to fit), remembers its geometry, and automatically opens once a visible headed
+gate browser has actually started or login initialization starts. Selecting
+visible headed mode alone does not open it. Leaving that browser flow or
+switching to another browser mode closes, disconnects, and hides the viewer.
+On the first
+connection, enter the VNC password and optionally select **Remember on this
+device**. The password is stored only in that browser profile's `localStorage`,
+never in an API request, URL, or server log. Use **Forget credentials** to
+remove it. The remember choice itself is persisted, and turning it off removes
+any saved password immediately. Closing and reopening the panel keeps the
+established VNC connection. Use the header controls to zoom, disconnect, or
+maximize/restore the viewer. Double-clicking the header also toggles maximized
+mode, while dragging a maximized header restores the floating window.
+
+VNC authentication does not encrypt the connection. Keep port `6080` on a
+trusted LAN, or put the Web UI, API, and noVNC behind an authenticated HTTPS
+reverse proxy. When the Web UI uses HTTPS, `BROWSER_VIEW_URL` must also use
+HTTPS so the embedded client connects over `wss://`.
+
 If it's the first time you're running it you will need to initialize the logins by clicking the button in the footer.
 
-You can deep-link a track with `?url=` (also accepted as `?soundcloudUrl=`) and optional `outputFormat` (`mp3-320`, `flac`, or `original`), which pre-fills the form and starts the job. FLAC output preserves lossless sources; converting a lossy source to FLAC changes the container but cannot restore lost quality.
+You can deep-link a track with `?url=` (also accepted as `?soundcloudUrl=`), optional `outputFormat` (`mp3-320`, `flac`, or `original`), and optional `browserMode` (`headless`, `xvfb`, or `headed`), which pre-fills the form and starts the job. FLAC output preserves lossless sources; converting a lossy source to FLAC changes the container but cannot restore lost quality.
 
 ```text
 http://localhost:4321/?url=https://soundcloud.com/artist/track&outputFormat=mp3-320
@@ -161,7 +253,7 @@ http://localhost:4321/?url=https://soundcloud.com/artist/track&outputFormat=mp3-
 
 ### Browser userscript
 
-Adds a download icon next to SoundCloud store/buy links (feed and track pages). Clicking it opens the **exact Web UI** in a floating, movable panel on the right (resizable from all edges) — the page behind stays usable (no dimmed overlay). Choose output format via the panel toolbar, or Violentmonkey → **Choose output format…**. Auto-close after the **browser file download** (Download MP3/Original) or **Start New Download** is on by default — toggle via **Auto-close after browser download**. Closing the panel (× / Escape) or **Cancel download** in the Web UI stops an in-progress job and exits the browser cleanly.
+Adds a download icon next to SoundCloud store/buy links (feed and track pages). Clicking it opens the **exact Web UI** in a floating, movable panel on the right (resizable from all edges) — the page behind stays usable (no dimmed overlay). Choose both output format and browser mode from the panel toolbar, or from Violentmonkey's **Choose output format…** and **Choose browser mode…** menu commands. Both choices are remembered and passed to the Web UI. Auto-close after the **browser file download** (Download MP3/Original) or **Start New Download** is on by default — toggle via **Auto-close after browser download**. Closing the panel (× / Escape) or **Cancel download** in the Web UI stops an in-progress job and exits the browser cleanly.
 
 **Recommended:** [Violentmonkey](https://violentmonkey.github.io/) (Firefox / Chrome / Edge). Tampermonkey also works.
 

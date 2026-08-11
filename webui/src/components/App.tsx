@@ -2,12 +2,17 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Toaster, toast } from 'sonner';
 import type { BrowserMode } from '../../../src/types';
 import './App.css';
+import { resolveApiBase } from './apiBase';
 import {
 	parseAvailableBrowserModes,
+	parseBrowserViewUrl,
+	readRequestedBrowserMode,
 	readStoredBrowserMode,
 	shouldAutoStartDeepLink,
 	shouldUseEmbeddedLayout,
 } from './deepLink';
+import { RemoteBrowserPanel } from './RemoteBrowserPanel';
+import { REMOTE_POINTER_RELEASE_EVENT } from './remoteBrowser';
 
 type Step = 'url' | 'gate' | 'download' | 'metadata' | 'complete';
 type OutputFormat = 'original' | 'mp3-320' | 'flac';
@@ -34,6 +39,7 @@ interface JobProgress {
 	downloadBytes?: number;
 	totalBytes?: number;
 	browserless?: boolean;
+	browserActive?: boolean;
 	bandcampAlbumTracks?: BandcampAlbumTrackChoice[];
 	queuePosition?: number;
 }
@@ -78,7 +84,10 @@ interface JobState {
 	error: string | null;
 }
 
-const API_BASE = 'http://localhost:3000';
+const API_BASE = resolveApiBase(
+	typeof window === 'undefined' ? undefined : window.location,
+	import.meta.env.PUBLIC_API_BASE_URL,
+);
 const BROWSER_MODE_STORAGE_KEY = 'sc-gate-dl-browser-mode';
 const BROWSER_MODE_LABELS: Record<BrowserMode, string> = {
 	headless: 'Headless',
@@ -136,20 +145,68 @@ export function cleanPromoTags(value: string): string {
 	return result.trim();
 }
 
-/** Strip a leading/trailing `Artist - ` / ` - Artist` duplicate from the title. */
-function stripDuplicateArtistFromTitle(title: string, artist: string): string {
+export function shouldActivateBrowserView(
+	browserMode: BrowserMode,
+	progress: Pick<JobProgress, 'browserActive'>,
+	browserViewUrl: string | null,
+): boolean {
+	return (
+		browserMode === 'headed' &&
+		progress.browserActive === true &&
+		Boolean(browserViewUrl)
+	);
+}
+
+export function shouldAutoCloseBrowserView(
+	stage: JobProgress['stage'],
+	alreadyClosed: boolean,
+): boolean {
+	return stage === 'downloading' && !alreadyClosed;
+}
+
+function normalizedArtistCredits(value: string): string[] {
+	return value
+		.normalize('NFKD')
+		.replace(/\p{M}/gu, '')
+		.toLocaleLowerCase()
+		.replace(/\b(?:featuring|feat|ft|with|versus|vs)\.?\b/gu, '&')
+		.split(/\s*(?:,|&|\+|×)\s*|\s+and\s+/u)
+		.map((credit) => credit.replace(/[^\p{L}\p{N}]+/gu, ''))
+		.filter(Boolean)
+		.sort();
+}
+
+function artistCreditsMatch(left: string, right: string): boolean {
+	const leftCredits = normalizedArtistCredits(left);
+	const rightCredits = normalizedArtistCredits(right);
+	return (
+		leftCredits.length > 0 &&
+		leftCredits.length === rightCredits.length &&
+		leftCredits.every((credit, index) => credit === rightCredits[index])
+	);
+}
+
+/** Strip a leading/trailing artist credit even when its separators differ. */
+export function stripDuplicateArtistFromTitle(
+	title: string,
+	artist: string,
+): string {
 	const trimmedArtist = artist.trim();
 	const trimmedTitle = title.trim();
 	if (!trimmedArtist || !trimmedTitle) return trimmedTitle;
 
-	const escaped = trimmedArtist.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-	return trimmedTitle
-		.replace(new RegExp(String.raw`^${escaped}\s*[-–—|:]\s*`, 'i'), '')
-		.replace(new RegExp(String.raw`\s*[-–—|:]\s*${escaped}$`, 'i'), '')
-		.trim();
+	for (const separator of trimmedTitle.matchAll(/\s+[-–—|:]\s+/gu)) {
+		const index = separator.index;
+		const left = trimmedTitle.slice(0, index).trim();
+		const right = trimmedTitle.slice(index + separator[0].length).trim();
+		if (artistCreditsMatch(left, trimmedArtist)) return right;
+		if (artistCreditsMatch(right, trimmedArtist)) return left;
+	}
+
+	return trimmedTitle;
 }
 
-function cleanMetadataFields(meta: Metadata): Metadata {
+export function cleanMetadataFields(meta: Metadata): Metadata {
 	const artist = cleanPromoTags(meta.artist || '');
 	const title = stripDuplicateArtistFromTitle(
 		cleanPromoTags(meta.title || ''),
@@ -244,6 +301,9 @@ export default function App() {
 		BrowserMode[]
 	>(['headless', 'headed']);
 	const [browserModeHydrated, setBrowserModeHydrated] = useState(false);
+	const [browserViewUrl, setBrowserViewUrl] = useState<string | null>(null);
+	const [browserViewActive, setBrowserViewActive] = useState(false);
+	const [browserViewOpen, setBrowserViewOpen] = useState(false);
 	const [embedded, setEmbedded] = useState(false);
 	const [outputFormat, setOutputFormat] = useState<OutputFormat>('mp3-320');
 	const [job, setJob] = useState<JobState>({
@@ -274,10 +334,13 @@ export default function App() {
 
 		const hydrateBrowserModes = async () => {
 			let modes: BrowserMode[] = ['headless', 'headed'];
+			let viewUrl: string | null = null;
 			try {
 				const response = await fetch(`${API_BASE}/api/capabilities`);
 				if (response.ok) {
-					modes = parseAvailableBrowserModes(await response.json());
+					const capabilities = await response.json();
+					modes = parseAvailableBrowserModes(capabilities);
+					viewUrl = parseBrowserViewUrl(capabilities);
 				}
 			} catch {
 				// Keep the portable modes when the API is unavailable.
@@ -285,19 +348,34 @@ export default function App() {
 
 			if (cancelled) return;
 			setAvailableBrowserModes(modes);
+			setBrowserViewUrl(viewUrl);
+			const requestedMode = readRequestedBrowserMode(window.location.search);
+			let storedMode: BrowserMode | null = null;
 			try {
-				const storedMode = readStoredBrowserMode(
+				storedMode = readStoredBrowserMode(
 					localStorage,
 					BROWSER_MODE_STORAGE_KEY,
 				);
-				if (storedMode && modes.includes(storedMode)) {
-					setBrowserMode(storedMode);
-				}
 			} catch {
 				// Storage may be blocked when the Web UI is embedded cross-origin.
-			} finally {
-				setBrowserModeHydrated(true);
 			}
+			const preferredMode =
+				requestedMode && modes.includes(requestedMode)
+					? requestedMode
+					: storedMode && modes.includes(storedMode)
+						? storedMode
+						: null;
+			if (preferredMode) {
+				setBrowserMode(preferredMode);
+				if (requestedMode === preferredMode) {
+					try {
+						localStorage.setItem(BROWSER_MODE_STORAGE_KEY, preferredMode);
+					} catch {
+						// The requested mode still applies for this session.
+					}
+				}
+			}
+			setBrowserModeHydrated(true);
 		};
 
 		void hydrateBrowserModes();
@@ -308,6 +386,10 @@ export default function App() {
 
 	const updateBrowserMode = (mode: BrowserMode) => {
 		setBrowserMode(mode);
+		if (mode !== 'headed') {
+			setBrowserViewOpen(false);
+			setBrowserViewActive(false);
+		}
 		try {
 			localStorage.setItem(BROWSER_MODE_STORAGE_KEY, mode);
 		} catch {
@@ -319,6 +401,8 @@ export default function App() {
 	const [isLoading, setIsLoading] = useState(false);
 	const artworkInputRef = useRef<HTMLInputElement>(null);
 	const cleanupToastShownRef = useRef(false);
+	const browserViewAutoClosedRef = useRef(false);
+	const browserViewAutoOpenedRef = useRef(false);
 	const autoStartedFromQueryRef = useRef(false);
 	const eventSourceRef = useRef<EventSource | null>(null);
 	const cancelRequestedRef = useRef(false);
@@ -424,6 +508,8 @@ export default function App() {
 			const effectiveBrowserMode = retryBrowserMode ?? browserMode;
 			setLastAttemptedBrowserMode(effectiveBrowserMode);
 			cancelRequestedRef.current = false;
+			browserViewAutoClosedRef.current = false;
+			browserViewAutoOpenedRef.current = false;
 			setStep('gate');
 			setJob((prev) => ({
 				...prev,
@@ -462,8 +548,30 @@ export default function App() {
 				eventSource.onmessage = (event) => {
 					const progress: JobProgress = JSON.parse(event.data);
 					setJob((prev) => ({ ...prev, progress }));
+					if (
+						progress.stage !== 'downloading' &&
+						!browserViewAutoOpenedRef.current &&
+						shouldActivateBrowserView(
+							effectiveBrowserMode,
+							progress,
+							browserViewUrl,
+						)
+					) {
+						browserViewAutoOpenedRef.current = true;
+						setBrowserViewActive(true);
+						setBrowserViewOpen(true);
+					}
 
 					if (progress.stage === 'downloading') {
+						if (
+							shouldAutoCloseBrowserView(
+								progress.stage,
+								browserViewAutoClosedRef.current,
+							)
+						) {
+							browserViewAutoClosedRef.current = true;
+							setBrowserViewOpen(false);
+						}
 						setStep('download');
 					} else if (progress.stage === 'processing_audio') {
 						setStep('metadata');
@@ -484,6 +592,8 @@ export default function App() {
 					}
 
 					if (progress.stage === 'ready') {
+						setBrowserViewOpen(false);
+						setBrowserViewActive(false);
 						eventSource.close();
 						eventSourceRef.current = null;
 						notifyParent('ready');
@@ -517,10 +627,14 @@ export default function App() {
 							error: null,
 						}));
 					} else if (progress.stage === 'error') {
+						setBrowserViewOpen(false);
+						setBrowserViewActive(false);
 						eventSource.close();
 						eventSourceRef.current = null;
 						setJob((prev) => ({ ...prev, error: progress.message }));
 					} else if (progress.stage === 'cancelled') {
+						setBrowserViewOpen(false);
+						setBrowserViewActive(false);
 						eventSource.close();
 						eventSourceRef.current = null;
 						setJob((prev) => ({
@@ -556,7 +670,7 @@ export default function App() {
 				}));
 			}
 		},
-		[browserMode, showCleanupSoundcloudToast],
+		[browserMode, browserViewUrl, showCleanupSoundcloudToast],
 	);
 
 	const cancelDownload = useCallback(async () => {
@@ -600,6 +714,8 @@ export default function App() {
 			error: null,
 		}));
 		setStep('url');
+		setBrowserViewOpen(false);
+		setBrowserViewActive(false);
 		notifyParent('cancelled');
 	}, [job.jobId]);
 
@@ -608,9 +724,11 @@ export default function App() {
 		const onMessage = (event: MessageEvent) => {
 			if (!ALLOWED_HOST_ORIGINS.has(event.origin)) return;
 			const data = event.data;
-			if (!data || data.source !== 'sc-gate-dl-host') return;
+			if (data?.source !== 'sc-gate-dl-host') return;
 			if (data.type === 'cancel') {
 				void cancelDownload();
+			} else if (data.type === 'release-remote-pointer') {
+				window.dispatchEvent(new Event(REMOTE_POINTER_RELEASE_EVENT));
 			}
 		};
 		window.addEventListener('message', onMessage);
@@ -975,18 +1093,24 @@ export default function App() {
 			artworkInputRef.current.value = '';
 		}
 		setNameAsArtistTitle(false);
+		setBrowserViewOpen(false);
+		setBrowserViewActive(false);
 		setStep('url');
 	};
 
 	const handleInitializeLogins = async () => {
 		toast('Initialize logins?', {
 			description:
-				'This will open a browser window (non-headless) to initialize SoundCloud and Spotify logins. You may need to solve a captcha if the built-in solver fails.',
+				'This opens a browser on the server to initialize SoundCloud and Spotify logins. Use View Browser to interact with it or solve a captcha.',
 			closeButton: false,
 			duration: Infinity,
 			action: {
 				label: 'Confirm',
 				onClick: async () => {
+					if (browserViewUrl) {
+						setBrowserViewActive(true);
+						setBrowserViewOpen(true);
+					}
 					const toastId = toast.loading('Initializing logins...');
 
 					try {
@@ -1007,6 +1131,9 @@ export default function App() {
 							id: toastId,
 							description: err instanceof Error ? err.message : 'Unknown error',
 						});
+					} finally {
+						setBrowserViewOpen(false);
+						setBrowserViewActive(false);
 					}
 				},
 			},
@@ -1020,6 +1147,14 @@ export default function App() {
 	return (
 		<div className="app">
 			<Toaster richColors closeButton theme="dark" />
+			{browserViewUrl && browserViewActive ? (
+				<RemoteBrowserPanel
+					open={browserViewOpen}
+					viewUrl={browserViewUrl}
+					onOpen={() => setBrowserViewOpen(true)}
+					onClose={() => setBrowserViewOpen(false)}
+				/>
+			) : null}
 			{!embedded && (
 				<header className="header">
 					<div className="logo">
@@ -1080,8 +1215,7 @@ export default function App() {
 					{job.jobId && job.progress?.stage === 'error'
 						? availableBrowserModes
 								.filter(
-									(mode) =>
-										mode !== (lastAttemptedBrowserMode ?? browserMode),
+									(mode) => mode !== (lastAttemptedBrowserMode ?? browserMode),
 								)
 								.map((mode) => (
 									<button

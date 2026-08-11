@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         sc-gate-dl
 // @namespace    https://github.com/D3SOX/sc-gate-dl
-// @version      1.10.9
+// @version      1.10.10
 // @description  Add sc-gate-dl download controls and remember your position in the SoundCloud feed
 // @author       D3SOX
 // @match        https://soundcloud.com/*
@@ -29,6 +29,7 @@
 	const PANEL_GEOM_KEY = 'sc-gate-dl-panel-geom';
 	const QUEUE_GEOM_KEY = 'sc-gate-dl-queue-geom';
 	const OUTPUT_FORMAT_KEY = 'sc-gate-dl-output-format';
+	const BROWSER_MODE_KEY = 'sc-gate-dl-browser-mode';
 	const AUTO_CLOSE_KEY = 'sc-gate-dl-auto-close';
 	const FEED_CHECKPOINT_KEY = 'sc-gate-dl-feed-checkpoint';
 	const DEFAULT_WEBUI_BASE = 'http://localhost:4321';
@@ -193,7 +194,8 @@
 	function setOutputFormat(value) {
 		if (value !== 'original' && value !== 'mp3-320' && value !== 'flac') return;
 		try {
-			if (typeof GM_setValue === 'function') GM_setValue(OUTPUT_FORMAT_KEY, value);
+			if (typeof GM_setValue === 'function')
+				GM_setValue(OUTPUT_FORMAT_KEY, value);
 		} catch {
 			// ignore
 		}
@@ -203,6 +205,53 @@
 			// ignore
 		}
 		syncFormatSelect(value);
+		const panel = document.getElementById(PANEL_ID);
+		if (panel && !panel.hidden && panel.dataset.trackUrl) {
+			loadTrackIntoPanel(panel, panel.dataset.trackUrl);
+		}
+	}
+
+	function getBrowserMode() {
+		try {
+			if (typeof GM_getValue === 'function') {
+				const gm = GM_getValue(BROWSER_MODE_KEY, null);
+				if (gm === 'headless' || gm === 'xvfb' || gm === 'headed') return gm;
+			}
+		} catch {
+			// ignore
+		}
+		try {
+			const value = localStorage.getItem(BROWSER_MODE_KEY);
+			if (value === 'headless' || value === 'xvfb' || value === 'headed') {
+				return value;
+			}
+		} catch {
+			// ignore
+		}
+		return 'headless';
+	}
+
+	function syncBrowserModeSelect(value) {
+		const select = document.querySelector(
+			`#${PANEL_ID} .sc-gate-dl-browser-mode`,
+		);
+		if (select instanceof HTMLSelectElement) select.value = value;
+	}
+
+	function setBrowserMode(value) {
+		if (value !== 'headless' && value !== 'xvfb' && value !== 'headed') return;
+		try {
+			if (typeof GM_setValue === 'function')
+				GM_setValue(BROWSER_MODE_KEY, value);
+		} catch {
+			// ignore
+		}
+		try {
+			localStorage.setItem(BROWSER_MODE_KEY, value);
+		} catch {
+			// ignore
+		}
+		syncBrowserModeSelect(value);
 		const panel = document.getElementById(PANEL_ID);
 		if (panel && !panel.hidden && panel.dataset.trackUrl) {
 			loadTrackIntoPanel(panel, panel.dataset.trackUrl);
@@ -240,6 +289,9 @@
 		});
 		GM_registerMenuCommand('Choose output format…', () => {
 			openFormatDialog();
+		});
+		GM_registerMenuCommand('Choose browser mode…', () => {
+			openBrowserModeDialog();
 		});
 		refreshAutoCloseMenu();
 	}
@@ -455,9 +507,9 @@
 			feedCards().find(
 				(card) =>
 					trackUrlFromCard(card) === normalized ||
-					Array.from(card.querySelectorAll('a.trackItem__trackTitle[href]')).some(
-						(link) => normalizeTrackUrl(link.href) === normalized,
-					),
+					Array.from(
+						card.querySelectorAll('a.trackItem__trackTitle[href]'),
+					).some((link) => normalizeTrackUrl(link.href) === normalized),
 			) || null
 		);
 	}
@@ -477,13 +529,9 @@
 		return {
 			url,
 			label:
-				typeof value.label === 'string'
-					? value.label
-					: trackLabelFromUrl(url),
+				typeof value.label === 'string' ? value.label : trackLabelFromUrl(url),
 			feedTimestamp:
-				typeof value.feedTimestamp === 'number'
-					? value.feedTimestamp
-					: null,
+				typeof value.feedTimestamp === 'number' ? value.feedTimestamp : null,
 			savedAt: typeof value.savedAt === 'number' ? value.savedAt : 0,
 		};
 	}
@@ -1107,14 +1155,66 @@
 		dialog.addEventListener('click', (e) => {
 			if (e.target === dialog) close();
 		});
-		dialog.querySelector('.sc-gate-dl-format-cancel')?.addEventListener('click', close);
-		dialog.querySelector('.sc-gate-dl-format-save')?.addEventListener('click', () => {
-			const selected = dialog.querySelector(
-				'input[name="sc-gate-dl-fmt"]:checked',
-			);
-			if (selected instanceof HTMLInputElement) setOutputFormat(selected.value);
-			close();
+		dialog
+			.querySelector('.sc-gate-dl-format-cancel')
+			?.addEventListener('click', close);
+		dialog
+			.querySelector('.sc-gate-dl-format-save')
+			?.addEventListener('click', () => {
+				const selected = dialog.querySelector(
+					'input[name="sc-gate-dl-fmt"]:checked',
+				);
+				if (selected instanceof HTMLInputElement)
+					setOutputFormat(selected.value);
+				close();
+			});
+		document.documentElement.appendChild(dialog);
+	}
+
+	function openBrowserModeDialog() {
+		ensureStyles();
+		document.getElementById('sc-gate-dl-browser-mode-dialog')?.remove();
+		const current = getBrowserMode();
+		const dialog = document.createElement('div');
+		dialog.id = 'sc-gate-dl-browser-mode-dialog';
+		dialog.innerHTML = `
+			<div class="sc-gate-dl-format-card" role="dialog" aria-label="Browser mode">
+				<div class="sc-gate-dl-format-title">Browser mode</div>
+				<label class="sc-gate-dl-format-option">
+					<input type="radio" name="sc-gate-dl-browser-mode" value="headless"${current === 'headless' ? ' checked' : ''}/>
+					<span>Headless</span>
+				</label>
+				<label class="sc-gate-dl-format-option">
+					<input type="radio" name="sc-gate-dl-browser-mode" value="xvfb"${current === 'xvfb' ? ' checked' : ''}/>
+					<span>Invisible headed (Xvfb)</span>
+				</label>
+				<label class="sc-gate-dl-format-option">
+					<input type="radio" name="sc-gate-dl-browser-mode" value="headed"${current === 'headed' ? ' checked' : ''}/>
+					<span>Visible headed window</span>
+				</label>
+				<div class="sc-gate-dl-format-actions">
+					<button type="button" class="sc-gate-dl-format-cancel">Cancel</button>
+					<button type="button" class="sc-gate-dl-format-save">Save</button>
+				</div>
+			</div>
+		`;
+		const close = () => dialog.remove();
+		dialog.addEventListener('click', (event) => {
+			if (event.target === dialog) close();
 		});
+		dialog
+			.querySelector('.sc-gate-dl-format-cancel')
+			?.addEventListener('click', close);
+		dialog
+			.querySelector('.sc-gate-dl-format-save')
+			?.addEventListener('click', () => {
+				const selected = dialog.querySelector(
+					'input[name="sc-gate-dl-browser-mode"]:checked',
+				);
+				if (selected instanceof HTMLInputElement)
+					setBrowserMode(selected.value);
+				close();
+			});
 		document.documentElement.appendChild(dialog);
 	}
 
@@ -1139,7 +1239,7 @@
 			el instanceof Element &&
 			(el.hasAttribute(BUTTON_ATTR) ||
 				el.hasAttribute(WRAP_ATTR) ||
-				!!el.closest(`[${BUTTON_ATTR}], [${WRAP_ATTR}], #${PANEL_ID}`) )
+				!!el.closest(`[${BUTTON_ATTR}], [${WRAP_ATTR}], #${PANEL_ID}`))
 		);
 	}
 
@@ -1203,7 +1303,8 @@
 	gap: 6px;
 	flex-shrink: 0;
 }
-#${PANEL_ID} .sc-gate-dl-format {
+#${PANEL_ID} .sc-gate-dl-format,
+#${PANEL_ID} .sc-gate-dl-browser-mode {
 	appearance: none;
 	background: #0f0f12;
 	color: #ddd;
@@ -1214,6 +1315,7 @@
 	cursor: pointer;
 	max-width: 118px;
 }
+#${PANEL_ID} .sc-gate-dl-browser-mode { max-width: 92px; }
 #${PANEL_ID} .sc-gate-dl-toolbar button.sc-gate-dl-close {
 	appearance: none;
 	border: 0;
@@ -1459,7 +1561,7 @@
 }
 
 /* Format chooser (Violentmonkey menu) */
-#sc-gate-dl-format-dialog {
+:is(#sc-gate-dl-format-dialog, #sc-gate-dl-browser-mode-dialog) {
 	position: fixed;
 	inset: 0;
 	z-index: 2147483647;
@@ -1467,9 +1569,9 @@
 	align-items: flex-start;
 	justify-content: flex-end;
 	padding: 72px 16px 16px;
-	pointer-events: none;
+	pointer-events: auto;
 }
-#sc-gate-dl-format-dialog .sc-gate-dl-format-card {
+:is(#sc-gate-dl-format-dialog, #sc-gate-dl-browser-mode-dialog) .sc-gate-dl-format-card {
 	pointer-events: auto;
 	width: min(280px, calc(100vw - 32px));
 	background: #16161c;
@@ -1480,24 +1582,24 @@
 	padding: 14px;
 	font: 500 13px/1.35 Interstate, "Lucida Grande", Arial, sans-serif;
 }
-#sc-gate-dl-format-dialog .sc-gate-dl-format-title {
+:is(#sc-gate-dl-format-dialog, #sc-gate-dl-browser-mode-dialog) .sc-gate-dl-format-title {
 	font-weight: 700;
 	margin-bottom: 10px;
 }
-#sc-gate-dl-format-dialog .sc-gate-dl-format-option {
+:is(#sc-gate-dl-format-dialog, #sc-gate-dl-browser-mode-dialog) .sc-gate-dl-format-option {
 	display: flex;
 	align-items: center;
 	gap: 8px;
 	padding: 8px 4px;
 	cursor: pointer;
 }
-#sc-gate-dl-format-dialog .sc-gate-dl-format-actions {
+:is(#sc-gate-dl-format-dialog, #sc-gate-dl-browser-mode-dialog) .sc-gate-dl-format-actions {
 	display: flex;
 	justify-content: flex-end;
 	gap: 8px;
 	margin-top: 12px;
 }
-#sc-gate-dl-format-dialog button {
+:is(#sc-gate-dl-format-dialog, #sc-gate-dl-browser-mode-dialog) button {
 	appearance: none;
 	border: 1px solid rgba(255,255,255,0.14);
 	background: #0f0f12;
@@ -1507,7 +1609,7 @@
 	cursor: pointer;
 	font: inherit;
 }
-#sc-gate-dl-format-dialog .sc-gate-dl-format-save {
+:is(#sc-gate-dl-format-dialog, #sc-gate-dl-browser-mode-dialog) .sc-gate-dl-format-save {
 	background: #f50;
 	border-color: #f50;
 	color: #fff;
@@ -1632,7 +1734,8 @@ a[${STORE_SERVICE_ATTR}] > button::after {
 		const rect = panel.getBoundingClientRect();
 		if (rect.width <= 0 || rect.height <= 0) return;
 		const maxLeft = window.innerWidth - Math.min(rect.width, window.innerWidth);
-		const maxTop = window.innerHeight - Math.min(rect.height, window.innerHeight);
+		const maxTop =
+			window.innerHeight - Math.min(rect.height, window.innerHeight);
 		const left = Math.min(Math.max(0, rect.left), Math.max(0, maxLeft));
 		const top = Math.min(Math.max(0, rect.top), Math.max(0, maxTop));
 		panel.style.left = `${left}px`;
@@ -1789,6 +1892,7 @@ a[${STORE_SERVICE_ATTR}] > button::after {
 		const params = new URLSearchParams({
 			url: trackUrl,
 			outputFormat: getOutputFormat(),
+			browserMode: getBrowserMode(),
 		});
 		if (embedded) params.set('embedded', '1');
 		return `${getWebuiBase()}/?${params.toString()}`;
@@ -1852,9 +1956,12 @@ a[${STORE_SERVICE_ATTR}] > button::after {
 			}
 		}
 		try {
-			await fetch(`${getApiBase()}/api/job/${encodeURIComponent(jobId)}/cancel`, {
-				method: 'POST',
-			});
+			await fetch(
+				`${getApiBase()}/api/job/${encodeURIComponent(jobId)}/cancel`,
+				{
+					method: 'POST',
+				},
+			);
 		} catch {
 			// ignore — panel still closes
 		}
@@ -1892,7 +1999,8 @@ a[${STORE_SERVICE_ATTR}] > button::after {
 		const rect = el.getBoundingClientRect();
 		if (rect.width <= 0 || rect.height <= 0) return;
 		const maxLeft = window.innerWidth - Math.min(rect.width, window.innerWidth);
-		const maxTop = window.innerHeight - Math.min(rect.height, window.innerHeight);
+		const maxTop =
+			window.innerHeight - Math.min(rect.height, window.innerHeight);
 		const left = Math.min(Math.max(0, rect.left), Math.max(0, maxLeft));
 		const top = Math.min(Math.max(0, rect.top), Math.max(0, maxTop));
 		el.style.left = `${left}px`;
@@ -2073,6 +2181,22 @@ a[${STORE_SERVICE_ATTR}] > button::after {
 
 	let autoCloseTimer = 0;
 
+	function releaseRemotePointer() {
+		const iframe = document.getElementById(PANEL_ID)?.querySelector('iframe');
+		if (!iframe?.contentWindow) return;
+		try {
+			iframe.contentWindow.postMessage(
+				{ source: 'sc-gate-dl-host', type: 'release-remote-pointer' },
+				new URL(getWebuiBase()).origin,
+			);
+		} catch {
+			// The iframe may be navigating or already closed.
+		}
+	}
+
+	window.addEventListener('pointerup', releaseRemotePointer, true);
+	window.addEventListener('blur', releaseRemotePointer);
+
 	window.addEventListener('message', (event) => {
 		const data = event.data;
 		if (!data || data.source !== 'sc-gate-dl') return;
@@ -2124,10 +2248,18 @@ a[${STORE_SERVICE_ATTR}] > button::after {
 			panel.setAttribute('aria-modal', 'false');
 			panel.setAttribute('aria-label', 'sc-gate-dl');
 			const format = getOutputFormat();
+			const browserMode = getBrowserMode();
 			panel.innerHTML = `
 				<div class="sc-gate-dl-toolbar">
 					<span>sc-gate-dl · <a class="sc-gate-dl-open-tab" href="#" target="_blank" rel="noopener">open in tab</a></span>
 					<span class="sc-gate-dl-actions">
+						<label>
+							<select class="sc-gate-dl-browser-mode" aria-label="Browser mode" title="Browser mode">
+								<option value="headless"${browserMode === 'headless' ? ' selected' : ''}>Headless</option>
+								<option value="xvfb"${browserMode === 'xvfb' ? ' selected' : ''}>Xvfb</option>
+								<option value="headed"${browserMode === 'headed' ? ' selected' : ''}>Visible</option>
+							</select>
+						</label>
 						<label>
 							<select class="sc-gate-dl-format" aria-label="Output format" title="Output format">
 								<option value="mp3-320"${format === 'mp3-320' ? ' selected' : ''}>MP3 320</option>
@@ -2150,6 +2282,13 @@ a[${STORE_SERVICE_ATTR}] > button::after {
 				?.addEventListener('click', () => {
 					// Let the target=_blank navigation happen, then tear down this job.
 					void closePanel();
+				});
+			panel
+				.querySelector('.sc-gate-dl-browser-mode')
+				?.addEventListener('change', (e) => {
+					const select = e.target;
+					if (!(select instanceof HTMLSelectElement)) return;
+					setBrowserMode(select.value);
 				});
 			panel
 				.querySelector('.sc-gate-dl-format')
@@ -2237,7 +2376,9 @@ a[${STORE_SERVICE_ATTR}] > button::after {
 			el.closest?.('.purchaseLink__container') ||
 			(el.classList?.contains('purchaseLink__container') ? el : null);
 		if (!container) {
-			return el.closest?.('a.soundActions__purchaseLink, a.sc-button-buy') || el;
+			return (
+				el.closest?.('a.soundActions__purchaseLink, a.sc-button-buy') || el
+			);
 		}
 		const actions = container.closest('.soundActions');
 		const wrap = container.parentElement;
@@ -2257,7 +2398,8 @@ a[${STORE_SERVICE_ATTR}] > button::after {
 		// Do not append inside the cart wrapper — it is ~16px tall and clips the icon.
 		const anchorPoint = classicAnchorPoint(el);
 		if (isOurNode(anchorPoint) || alreadyInjectedNear(anchorPoint)) return;
-		const actions = anchorPoint.closest?.('.soundActions') || anchorPoint.parentElement;
+		const actions =
+			anchorPoint.closest?.('.soundActions') || anchorPoint.parentElement;
 		if (actions instanceof HTMLElement) {
 			actions.style.overflow = 'visible';
 			actions.style.alignItems = 'center';
@@ -2269,7 +2411,11 @@ a[${STORE_SERVICE_ATTR}] > button::after {
 		if (!(el instanceof HTMLAnchorElement)) return false;
 		if (isOurNode(el)) return false;
 		// Never treat classic SC purchase links as MUI (caused duplicate under-cart inject)
-		if (el.closest('.purchaseLink__container, .soundActions, .sound__soundActions')) {
+		if (
+			el.closest(
+				'.purchaseLink__container, .soundActions, .sound__soundActions',
+			)
+		) {
 			return false;
 		}
 		if (el.classList.contains('soundActions__purchaseLink')) return false;
@@ -2313,7 +2459,8 @@ a[${STORE_SERVICE_ATTR}] > button::after {
 	}
 
 	function scan(root = document) {
-		const scope = root instanceof Element || root === document ? root : document;
+		const scope =
+			root instanceof Element || root === document ? root : document;
 
 		// Drop buttons that landed on playlist/album cards (e.g. before class hydrated)
 		for (const wrap of scope.querySelectorAll?.(`[${WRAP_ATTR}]`) || []) {
@@ -2336,7 +2483,8 @@ a[${STORE_SERVICE_ATTR}] > button::after {
 		}
 
 		// Classic layout only — one control per purchaseLink__container
-		const containers = scope.querySelectorAll?.('.purchaseLink__container') || [];
+		const containers =
+			scope.querySelectorAll?.('.purchaseLink__container') || [];
 		for (const el of containers) {
 			if (isOurNode(el)) continue;
 			injectClassic(el);

@@ -3,6 +3,7 @@ import { browserModeToLaunchOptions, launchAppBrowser } from './browserLaunch';
 import { DirectDownloader } from './directDownload';
 import type { ProgressCallback } from './hypeddit';
 import Selectors from './selectors';
+import { waitForSoundcloudLogin } from './soundcloudLogin';
 import type { HypedditConfig } from './types';
 import { loadCookies, timeout, trimExtractedUrl } from './utils';
 
@@ -21,6 +22,7 @@ const SC_AUTHORIZE_RE = /secure\.soundcloud\.com\/authorize/i;
  */
 export class PumpyoursoundDownloader {
 	private browser!: Browser;
+	private directDownloader: DirectDownloader | null = null;
 	private downloadFilename: string | null = null;
 	private config: HypedditConfig;
 	private progressCallback: ProgressCallback | null = null;
@@ -119,6 +121,7 @@ export class PumpyoursoundDownloader {
 			);
 
 			const direct = new DirectDownloader();
+			this.directDownloader = direct;
 			if (this.progressCallback) {
 				// File bytes come from HTTP, but this job already used the browser and
 				// SoundCloud OAuth — keep browserless false so the Web UI still offers
@@ -138,6 +141,7 @@ export class PumpyoursoundDownloader {
 	}
 
 	async close() {
+		await this.directDownloader?.close();
 		await this.browser?.close();
 	}
 
@@ -309,7 +313,7 @@ export class PumpyoursoundDownloader {
 		gatePage: Page,
 		expect: 'soundcloud' | 'comment',
 	) {
-		const deadline = Date.now() + 180_000;
+		let deadline = Date.now() + 180_000;
 		let lastLog = 0;
 		let lastAllowAt = 0;
 
@@ -364,9 +368,17 @@ export class PumpyoursoundDownloader {
 					})
 					.catch(() => false);
 				if (needsLogin) {
-					throw new Error(
-						'SoundCloud is not logged in for PumpYourSound OAuth. Run Initialize Logins (or CLI initializeLogins) first.',
-					);
+					await waitForSoundcloudLogin(candidate, {
+						interactive: this.config.browserMode === 'headed',
+						onWaiting: () =>
+							this.emitProgress(
+								'handling_gates',
+								'Log in to SoundCloud in the browser to continue...',
+								50,
+								{ currentGate: 'soundcloud', browserActive: true },
+							),
+					});
+					deadline = Date.now() + 180_000;
 				}
 			}
 

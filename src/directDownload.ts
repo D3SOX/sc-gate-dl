@@ -95,6 +95,7 @@ async function writeBodyWithSizeLimit(
 
 export class DirectDownloader {
 	private progressCallback: ProgressCallback | null = null;
+	private abortController = new AbortController();
 
 	setProgressCallback(callback: ProgressCallback): void {
 		this.progressCallback = callback;
@@ -115,7 +116,10 @@ export class DirectDownloader {
 
 		for (let hop = 0; hop < MAX_REDIRECTS; hop++) {
 			const result = await safeFetch(current, {
-				signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+				signal: AbortSignal.any([
+					this.abortController.signal,
+					AbortSignal.timeout(FETCH_TIMEOUT_MS),
+				]),
 				headers: {
 					'user-agent': USER_AGENT,
 					accept: '*/*',
@@ -219,6 +223,6 @@ export class DirectDownloader {
 	}
 
 	async close(): Promise<void> {
-		// no-op (browserless)
+		this.abortController.abort();
 	}
 }
