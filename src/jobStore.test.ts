@@ -29,6 +29,27 @@ describe('jobStore Bandcamp track selection', () => {
 		}
 	});
 
+	test('reports cancellation as terminal only after teardown completes', () => {
+		const job = jobStore.create('https://soundcloud.com/a/b', 'mp3-320');
+		const stages: string[] = [];
+		const unsubscribe = jobStore.subscribe(job.id, (progress) => {
+			stages.push(progress.stage);
+		});
+		try {
+			jobStore.requestCancellation(job.id);
+			expect(jobStore.isCancelled(job.id)).toBeTrue();
+			expect(jobStore.get(job.id)?.progress.stage).toBe('cancelling');
+			expect(stages).toEqual(['cancelling']);
+
+			jobStore.cancel(job.id);
+			expect(jobStore.get(job.id)?.progress.stage).toBe('cancelled');
+			expect(stages).toEqual(['cancelling', 'cancelled']);
+		} finally {
+			unsubscribe();
+			jobStore.delete(job.id);
+		}
+	});
+
 	test('delete resolves pending wait with null', async () => {
 		const job = jobStore.create('https://soundcloud.com/a/b', 'mp3');
 		const wait = jobStore.waitForBandcampTrackSelection(job.id);

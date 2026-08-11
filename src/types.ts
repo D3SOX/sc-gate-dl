@@ -53,6 +53,7 @@ export type JobStage =
 	| 'processing_audio'
 	| 'ready'
 	| 'error'
+	| 'cancelling'
 	| 'cancelled';
 
 /** Candidate track on a Bandcamp album when auto title-match fails. */

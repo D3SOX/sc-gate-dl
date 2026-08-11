@@ -138,6 +138,25 @@ class JobStore {
 		return this.jobs.get(id)?.cancelled === true;
 	}
 
+	/** Mark an active job for cancellation without reporting terminal completion. */
+	requestCancellation(id: string): Job | undefined {
+		const job = this.jobs.get(id);
+		if (!job) return undefined;
+
+		job.cancelled = true;
+		job.error = null;
+		job.bandcampAlbumTracks = null;
+		job.progress = {
+			stage: 'cancelling',
+			message: 'Cancelling download…',
+			percent: job.progress.percent,
+		};
+		job.updatedAt = new Date();
+		this.resolveBandcampTrackSelection(id, null);
+		this.notifyListeners(id, job.progress);
+		return job;
+	}
+
 	/**
 	 * Mark a job cancelled and notify listeners. Caller closes the browser.
 	 */

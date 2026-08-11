@@ -391,8 +391,25 @@ tailscale serve status
 
 When Tailscale itself runs in Docker with userspace networking, run those
 commands inside its container, for example `docker exec tailscaled tailscale
-serve ...`. Use Tailscale **Serve**, not **Funnel**: Serve is restricted to the
-tailnet, while Funnel publishes the service to the internet.
+serve ...`. The `127.0.0.1` targets above work only when that container uses
+host networking. For a bridge-mode container, add
+`host.docker.internal:host-gateway` as an extra host and replace each target
+with the container-reachable host name, for example:
+
+```yaml
+extra_hosts:
+  - "host.docker.internal:host-gateway"
+```
+
+```bash
+docker exec tailscaled tailscale serve --bg --http=3000 http://host.docker.internal:3000
+docker exec tailscaled tailscale serve --bg --http=4321 http://host.docker.internal:4321
+docker exec tailscaled tailscale serve --bg --http=6080 http://host.docker.internal:6080
+```
+
+The host services must listen on an interface reachable from the Docker bridge.
+Use Tailscale **Serve**, not **Funnel**: Serve is restricted to the tailnet,
+while Funnel publishes the service to the internet.
 
 Vite rejects unlisted DNS hostnames even when they are private. Add the short
 MagicDNS name and fully qualified tailnet name to the app service as shown

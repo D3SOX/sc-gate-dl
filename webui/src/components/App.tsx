@@ -51,6 +51,7 @@ const GATE_PROGRESS_STAGES = new Set([
 	'preparing_logins',
 	'handling_gates',
 	'waiting_bandcamp_track',
+	'cancelling',
 ]);
 
 const ACTIVE_JOB_STAGES = new Set([
@@ -61,6 +62,7 @@ const ACTIVE_JOB_STAGES = new Set([
 	'waiting_bandcamp_track',
 	'downloading',
 	'processing_audio',
+	'cancelling',
 ]);
 
 interface BandcampAlbumTrackChoice {
@@ -703,7 +705,7 @@ export default function App() {
 
 	const cancelDownload = useCallback(async () => {
 		const jobId = job.jobId;
-		if (!jobId) return;
+		if (!jobId || cancelRequestedRef.current) return;
 		cancelRequestedRef.current = true;
 
 		try {
@@ -1046,6 +1048,7 @@ export default function App() {
 	});
 	const isHandlingGate =
 		step === 'gate' && GATE_PROGRESS_STAGES.has(job.progress?.stage ?? '');
+	const isCancelling = job.progress?.stage === 'cancelling';
 	const existingTagRows = (
 		[
 			{ key: 'title', label: 'Title' },
@@ -1327,7 +1330,7 @@ export default function App() {
 									onChange={(e) =>
 										updateOutputFormat(e.target.value as OutputFormat)
 									}
-									disabled={isLoading}
+									disabled={isLoading || isCancelling}
 								>
 									<option value="mp3-320">MP3 320 kbps</option>
 									<option value="flac">FLAC</option>
@@ -1497,7 +1500,7 @@ export default function App() {
 									type="button"
 									className="btn-secondary btn-cancel-download"
 									onClick={() => void cancelDownload()}
-									disabled={isLoading}
+									disabled={isLoading || isCancelling}
 								>
 									Cancel download
 								</button>
@@ -1561,6 +1564,7 @@ export default function App() {
 									type="button"
 									className="btn-secondary btn-cancel-download"
 									onClick={() => void cancelDownload()}
+									disabled={isCancelling}
 								>
 									Cancel download
 								</button>
