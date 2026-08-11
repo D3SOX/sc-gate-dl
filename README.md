@@ -182,10 +182,20 @@ This setup lets a headless server open Chromium in headed mode while you view
 and control it inside the sc-gate-dl Web UI. It is useful for **Initialize
 Logins**, OAuth consent, and captchas.
 
-Install a virtual X server and VNC server. On Arch Linux / Arch Linux ARM:
+##### Prerequisites
+
+- A Linux host with systemd user services and a stable hostname or IP address.
+- Bun and the sc-gate-dl dependencies installed for the service user.
+- Xvfb, `xauth`, x11vnc, and noVNC.
+- LAN or reverse-proxy access to the API (`3000`), Web UI (`4321`), and noVNC
+  (`6080`) ports. Keep the raw VNC port (`5900`) bound to localhost.
+- A VNC password. Traditional VNC authentication uses only the first eight
+  password characters and does not encrypt the connection.
+
+On Arch Linux / Arch Linux ARM, install the native packages:
 
 ```bash
-pkexec pacman -S --needed xorg-server-xvfb xorg-xauth x11vnc
+sudo pacman -S --needed xorg-server-xvfb xorg-xauth x11vnc
 ```
 
 Install [noVNC](https://github.com/novnc/noVNC) from your distribution, or use
@@ -199,27 +209,173 @@ mkdir -p ~/.vnc
 x11vnc -storepasswd
 ```
 
-Start these processes with your service manager or in separate terminals:
+Install both dependency sets before creating the services:
 
 ```bash
-sh -c 'umask 077; touch "$HOME/.Xauthority-sc-gate-dl"; chmod 600 "$HOME/.Xauthority-sc-gate-dl"; xauth -f "$HOME/.Xauthority-sc-gate-dl" add :99 . "$(mcookie)"'
-Xvfb :99 -screen 0 1920x1080x24 -nolisten tcp \
-  -auth "$HOME/.Xauthority-sc-gate-dl"
-x11vnc -display :99 -auth "$HOME/.Xauthority-sc-gate-dl" \
-  -forever -shared -localhost -usepw -rfbport 5900 \
-  -noxdamage -repeat
-~/.local/share/sc-gate-dl/noVNC/utils/novnc_proxy \
-  --listen 6080 --vnc localhost:5900
-env DISPLAY=:99 XAUTHORITY="$HOME/.Xauthority-sc-gate-dl" \
-  XDG_SESSION_TYPE=x11 OZONE_PLATFORM=x11 \
-  SC_GATE_DL_DISABLE_GPU=true \
-  BROWSER_VIEW_URL=http://SERVER_ADDRESS:6080/vnc.html \
-  bun webui
+cd ~/sc-gate-dl
+bun install --frozen-lockfile
+cd webui
+bun install --frozen-lockfile
 ```
 
-Replace `SERVER_ADDRESS` with a hostname or IP address reachable by the browser
-that opens the Web UI. Port `5900` remains local to the server; only the noVNC
-WebSocket gateway on port `6080` needs to be reachable.
+Create a private Xauthority file once. Xvfb, x11vnc, and the app service must
+use this same file:
+
+```bash
+mkdir -p ~/.local/state/sc-gate-dl
+sh -c 'umask 077; touch "$HOME/.local/state/sc-gate-dl/xauthority"; chmod 600 "$HOME/.local/state/sc-gate-dl/xauthority"; xauth -f "$HOME/.local/state/sc-gate-dl/xauthority" add :99 . "$(mcookie)"'
+```
+
+Add the runtime environment to the project `.env`. Replace `SERVER_ADDRESS`
+with the stable hostname or IP address reachable by the browser that opens the
+Web UI:
+
+```dotenv
+DISPLAY=:99
+XAUTHORITY=/home/YOUR_USER/.local/state/sc-gate-dl/xauthority
+XDG_SESSION_TYPE=x11
+OZONE_PLATFORM=x11
+SC_GATE_DL_DISABLE_GPU=true
+SC_GATE_DL_DISABLE_DEV_SHM=true
+BROWSER_VIEW_URL="http://SERVER_ADDRESS:6080/vnc.html?autoconnect=true&resize=scale"
+```
+
+`SC_GATE_DL_DISABLE_DEV_SHM` is mainly useful for containers or constrained
+hosts. It may be omitted when Chromium can use `/dev/shm` normally.
+
+##### Automatic startup with systemd user services
+
+Create the following files under `~/.config/systemd/user/`. Replace
+`YOUR_USER` and `/home/YOUR_USER/sc-gate-dl` where shown. The examples use the
+encrypted `~/.vnc/passwd` produced by `x11vnc -storepasswd`.
+
+`sc-gate-xvfb.service`:
+
+```ini
+[Unit]
+Description=sc-gate-dl virtual X server
+PartOf=sc-gate-dl.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/Xvfb :99 -screen 0 1920x1080x24 -nolisten tcp \
+  -auth /home/YOUR_USER/.local/state/sc-gate-dl/xauthority
+Restart=on-failure
+RestartSec=2
+```
+
+`sc-gate-x11vnc.service`:
+
+```ini
+[Unit]
+Description=sc-gate-dl VNC server
+Requires=sc-gate-xvfb.service
+After=sc-gate-xvfb.service
+PartOf=sc-gate-dl.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/x11vnc -display :99 \
+  -auth /home/YOUR_USER/.local/state/sc-gate-dl/xauthority \
+  -forever -shared -localhost -usepw -rfbport 5900 -noxdamage -repeat
+Restart=on-failure
+RestartSec=2
+```
+
+`sc-gate-novnc.service`:
+
+```ini
+[Unit]
+Description=sc-gate-dl noVNC web gateway
+Requires=sc-gate-x11vnc.service
+After=sc-gate-x11vnc.service
+PartOf=sc-gate-dl.target
+
+[Service]
+Type=simple
+ExecStart=/home/YOUR_USER/.local/share/sc-gate-dl/noVNC/utils/novnc_proxy \
+  --listen 6080 --vnc localhost:5900
+Restart=on-failure
+RestartSec=2
+```
+
+`sc-gate-app.service`:
+
+```ini
+[Unit]
+Description=sc-gate-dl API and Web UI
+Requires=sc-gate-xvfb.service
+Wants=sc-gate-novnc.service
+After=sc-gate-xvfb.service sc-gate-novnc.service
+PartOf=sc-gate-dl.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/YOUR_USER/sc-gate-dl
+Environment=PATH=/home/YOUR_USER/.bun/bin:/usr/local/bin:/usr/bin
+Environment=DISPLAY=:99
+Environment=XAUTHORITY=/home/YOUR_USER/.local/state/sc-gate-dl/xauthority
+Environment=XDG_SESSION_TYPE=x11
+Environment=OZONE_PLATFORM=x11
+ExecStart=/home/YOUR_USER/.bun/bin/bun webui
+Restart=on-failure
+RestartSec=3
+```
+
+`sc-gate-dl.target`:
+
+```ini
+[Unit]
+Description=sc-gate-dl remote headed browser stack
+Requires=sc-gate-xvfb.service sc-gate-x11vnc.service \
+  sc-gate-novnc.service sc-gate-app.service
+After=sc-gate-xvfb.service sc-gate-x11vnc.service \
+  sc-gate-novnc.service sc-gate-app.service
+
+[Install]
+WantedBy=default.target
+```
+
+Validate the units, enable user services at boot, and start the stack:
+
+```bash
+systemd-analyze --user verify ~/.config/systemd/user/sc-gate-*.service \
+  ~/.config/systemd/user/sc-gate-dl.target
+sudo loginctl enable-linger "$USER"
+systemctl --user daemon-reload
+systemctl --user enable --now sc-gate-dl.target
+```
+
+The lingering user manager is required for startup before the user logs in.
+Check the complete stack and follow the app logs with:
+
+```bash
+systemctl --user status sc-gate-dl.target
+journalctl --user -u sc-gate-app.service -f
+```
+
+For future application updates, only the app service needs restarting:
+
+```bash
+cd ~/sc-gate-dl
+git pull --ff-only
+bun install --frozen-lockfile
+cd webui && bun install --frozen-lockfile && cd ..
+systemctl --user restart sc-gate-app.service
+```
+
+To restart the complete display/VNC/application stack, stop and start the
+target so `PartOf=` cleanly stops every service:
+
+```bash
+systemctl --user stop sc-gate-dl.target
+systemctl --user start sc-gate-dl.target
+```
+
+If you intentionally keep a plaintext password file instead of
+`~/.vnc/passwd`, protect it with mode `600` and use x11vnc's `-passwdfile`
+option. Do not pass a plaintext file to `-rfbauth`; that option expects
+x11vnc's encrypted password-file format.
 
 The monitor icon in the top-right opens a floating browser panel without
 blocking the Web UI behind it. The panel is draggable, resizable proportionally
