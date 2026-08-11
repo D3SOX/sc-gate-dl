@@ -30,6 +30,14 @@ describe('feed playback origin', () => {
 	});
 });
 
+describe('store link branding', () => {
+	test('recognizes MyPressKit gate URLs', () => {
+		expect(source).toContain("host === 'mypresskit.info'");
+		expect(source).toContain("return 'mypresskit'");
+		expect(source).toContain('https://www.mypresskit.info/favicon.ico');
+	});
+});
+
 describe('Web UI preferences', () => {
 	test('passes the remembered browser mode through the deep link', () => {
 		expect(source).toContain('browserMode: getBrowserMode()');
