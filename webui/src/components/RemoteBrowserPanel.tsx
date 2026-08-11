@@ -9,6 +9,10 @@ import {
 	useState,
 } from 'react';
 import {
+	createMobileRemoteControls,
+	type MobileTouch,
+} from './mobileRemoteControls';
+import {
 	browserPasswordStorageKey,
 	browserRememberStorageKey,
 	browserViewWebSocketUrl,
@@ -627,44 +631,19 @@ export function RemoteBrowserPanel({
 		const screen = screenContainerRef.current;
 		if (!screen) return;
 
-		type TouchSession = {
-			identifier: number;
-			startX: number;
-			startY: number;
-			lastX: number;
-			lastY: number;
-			moved: boolean;
-			longPressed: boolean;
-			multiple: boolean;
-			holdTimer: number;
-		};
-
-		let session: TouchSession | null = null;
-		let panCenter: { x: number; y: number } | null = null;
-
-		const touchByIdentifier = (touches: TouchList, identifier: number) => {
+		const touchesFrom = (touches: TouchList): MobileTouch[] => {
+			const result: MobileTouch[] = [];
 			for (let index = 0; index < touches.length; index += 1) {
 				const touch = touches.item(index);
-				if (touch?.identifier === identifier) return touch;
+				if (touch) {
+					result.push({
+						identifier: touch.identifier,
+						clientX: touch.clientX,
+						clientY: touch.clientY,
+					});
+				}
 			}
-			return null;
-		};
-
-		const touchCenter = (touches: TouchList) => {
-			if (touches.length < 2) return null;
-			const first = touches.item(0);
-			const second = touches.item(1);
-			if (!first || !second) return null;
-			return {
-				x: (first.clientX + second.clientX) / 2,
-				y: (first.clientY + second.clientY) / 2,
-			};
-		};
-
-		const clearHoldTimer = () => {
-			if (!session?.holdTimer) return;
-			window.clearTimeout(session.holdTimer);
-			session.holdTimer = 0;
+			return result;
 		};
 
 		const dispatchRemoteMouse = (
@@ -697,120 +676,62 @@ export function RemoteBrowserPanel({
 			dispatchRemoteMouse('mouseup', clientX, clientY, button);
 		};
 
-		const finishPan = () => {
-			panCenter = null;
-			if (viewportInteractionRef.current === 'pan') {
-				viewportInteractionRef.current = null;
-			}
-			screen.classList.remove('is-panning');
-		};
+		const controls = createMobileRemoteControls({
+			getZoom: () => zoomRef.current,
+			moveTolerance: TOUCH_MOVE_TOLERANCE,
+			longPressMs: TOUCH_LONG_PRESS_MS,
+			schedule: (callback, delay) => {
+				const timer = window.setTimeout(callback, delay);
+				return () => window.clearTimeout(timer);
+			},
+			movePointer: (clientX, clientY) => {
+				dispatchRemoteMouse('mousemove', clientX, clientY);
+			},
+			click: clickRemote,
+			panBy: (deltaX, deltaY) => {
+				screen.scrollLeft -= deltaX;
+				screen.scrollTop -= deltaY;
+			},
+			setPanning: (active) => {
+				if (active) {
+					viewportInteractionRef.current = 'pan';
+					screen.classList.add('is-panning');
+				} else {
+					if (viewportInteractionRef.current === 'pan') {
+						viewportInteractionRef.current = null;
+					}
+					screen.classList.remove('is-panning');
+				}
+			},
+		});
 
 		const handleTouchStart = (event: TouchEvent) => {
 			event.preventDefault();
 			event.stopImmediatePropagation();
 			suppressRemoteClickRef.current = false;
-
-			if (event.touches.length >= 2) {
-				if (session) session.multiple = true;
-				clearHoldTimer();
-				panCenter = touchCenter(event.touches);
-				if (zoomRef.current > MIN_ZOOM) {
-					viewportInteractionRef.current = 'pan';
-					screen.classList.add('is-panning');
-				}
-				return;
-			}
-
-			const touch = event.touches.item(0);
-			if (!touch) return;
-			session = {
-				identifier: touch.identifier,
-				startX: touch.clientX,
-				startY: touch.clientY,
-				lastX: touch.clientX,
-				lastY: touch.clientY,
-				moved: false,
-				longPressed: false,
-				multiple: false,
-				holdTimer: 0,
-			};
-			session.holdTimer = window.setTimeout(() => {
-				if (!session || session.moved || session.multiple) return;
-				session.longPressed = true;
-				clickRemote(session.lastX, session.lastY, 2);
-			}, TOUCH_LONG_PRESS_MS);
+			controls.start(touchesFrom(event.touches));
 		};
 
 		const handleTouchMove = (event: TouchEvent) => {
 			event.preventDefault();
 			event.stopImmediatePropagation();
 
-			if (event.touches.length >= 2) {
-				if (session) session.multiple = true;
-				clearHoldTimer();
-				const nextCenter = touchCenter(event.touches);
-				if (zoomRef.current > MIN_ZOOM && panCenter && nextCenter) {
-					screen.scrollLeft -= nextCenter.x - panCenter.x;
-					screen.scrollTop -= nextCenter.y - panCenter.y;
-				}
-				panCenter = nextCenter;
-				return;
-			}
-
-			if (!session || session.multiple) return;
-			const touch = touchByIdentifier(event.touches, session.identifier);
-			if (!touch) return;
-			session.lastX = touch.clientX;
-			session.lastY = touch.clientY;
-			if (
-				Math.hypot(
-					touch.clientX - session.startX,
-					touch.clientY - session.startY,
-				) > TOUCH_MOVE_TOLERANCE
-			) {
-				session.moved = true;
-				clearHoldTimer();
-			}
-			if (session.moved) {
-				dispatchRemoteMouse('mousemove', touch.clientX, touch.clientY);
-			}
+			controls.move(touchesFrom(event.touches));
 		};
 
 		const handleTouchEnd = (event: TouchEvent) => {
 			event.preventDefault();
 			event.stopImmediatePropagation();
-			if (event.touches.length > 0) {
-				if (event.touches.length < 2) finishPan();
-				return;
-			}
-
-			clearHoldTimer();
-			finishPan();
-			if (
-				session &&
-				!session.moved &&
-				!session.longPressed &&
-				!session.multiple
-			) {
-				const touch = touchByIdentifier(
-					event.changedTouches,
-					session.identifier,
-				);
-				clickRemote(
-					touch?.clientX ?? session.lastX,
-					touch?.clientY ?? session.lastY,
-					0,
-				);
-			}
-			session = null;
+			controls.end(
+				touchesFrom(event.touches),
+				touchesFrom(event.changedTouches),
+			);
 		};
 
 		const handleTouchCancel = (event: TouchEvent) => {
 			event.preventDefault();
 			event.stopImmediatePropagation();
-			clearHoldTimer();
-			finishPan();
-			session = null;
+			controls.cancel();
 		};
 
 		screen.addEventListener('touchstart', handleTouchStart, {
@@ -830,8 +751,7 @@ export function RemoteBrowserPanel({
 			passive: false,
 		});
 		return () => {
-			clearHoldTimer();
-			finishPan();
+			controls.cancel();
 			screen.removeEventListener('touchstart', handleTouchStart, true);
 			screen.removeEventListener('touchmove', handleTouchMove, true);
 			screen.removeEventListener('touchend', handleTouchEnd, true);
