@@ -35,6 +35,10 @@ export interface Metadata {
 
 export type OutputFormat = 'original' | 'mp3-320' | 'flac';
 
+export function isOutputFormat(value: unknown): value is OutputFormat {
+	return value === 'original' || value === 'mp3-320' || value === 'flac';
+}
+
 // Job system types for Web UI
 export type JobStage =
 	| 'pending'

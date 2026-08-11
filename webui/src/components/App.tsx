@@ -1,13 +1,15 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Toaster, toast } from 'sonner';
-import type { BrowserMode } from '../../../src/types';
+import type { BrowserMode, OutputFormat } from '../../../src/types';
 import './App.css';
 import { resolveApiBase } from './apiBase';
 import {
 	parseAvailableBrowserModes,
 	parseBrowserViewUrl,
 	readRequestedBrowserMode,
+	readRequestedOutputFormat,
 	readStoredBrowserMode,
+	readStoredOutputFormat,
 	shouldAutoStartDeepLink,
 	shouldUseEmbeddedLayout,
 } from './deepLink';
@@ -15,7 +17,6 @@ import { RemoteBrowserPanel } from './RemoteBrowserPanel';
 import { REMOTE_POINTER_RELEASE_EVENT } from './remoteBrowser';
 
 type Step = 'url' | 'gate' | 'download' | 'metadata' | 'complete';
-type OutputFormat = 'original' | 'mp3-320' | 'flac';
 
 interface Metadata {
 	title?: string;
@@ -89,6 +90,7 @@ const API_BASE = resolveApiBase(
 	import.meta.env.PUBLIC_API_BASE_URL,
 );
 const BROWSER_MODE_STORAGE_KEY = 'sc-gate-dl-browser-mode';
+const OUTPUT_FORMAT_STORAGE_KEY = 'sc-gate-dl-output-format';
 const BROWSER_MODE_LABELS: Record<BrowserMode, string> = {
 	headless: 'Headless',
 	xvfb: 'Invisible headed (Xvfb)',
@@ -351,10 +353,15 @@ export default function App() {
 			setBrowserViewUrl(viewUrl);
 			const requestedMode = readRequestedBrowserMode(window.location.search);
 			let storedMode: BrowserMode | null = null;
+			let storedFormat: ReturnType<typeof readStoredOutputFormat> = null;
 			try {
 				storedMode = readStoredBrowserMode(
 					localStorage,
 					BROWSER_MODE_STORAGE_KEY,
+				);
+				storedFormat = readStoredOutputFormat(
+					localStorage,
+					OUTPUT_FORMAT_STORAGE_KEY,
 				);
 			} catch {
 				// Storage may be blocked when the Web UI is embedded cross-origin.
@@ -375,6 +382,18 @@ export default function App() {
 					}
 				}
 			}
+			const requestedFormat = readRequestedOutputFormat(window.location.search);
+			const preferredFormat = requestedFormat ?? storedFormat;
+			if (preferredFormat) {
+				setOutputFormat(preferredFormat);
+				if (requestedFormat === preferredFormat) {
+					try {
+						localStorage.setItem(OUTPUT_FORMAT_STORAGE_KEY, preferredFormat);
+					} catch {
+						// The requested format still applies for this session.
+					}
+				}
+			}
 			setBrowserModeHydrated(true);
 		};
 
@@ -392,6 +411,15 @@ export default function App() {
 		}
 		try {
 			localStorage.setItem(BROWSER_MODE_STORAGE_KEY, mode);
+		} catch {
+			// Keep the in-memory selection when persistent storage is unavailable.
+		}
+	};
+
+	const updateOutputFormat = (format: OutputFormat) => {
+		setOutputFormat(format);
+		try {
+			localStorage.setItem(OUTPUT_FORMAT_STORAGE_KEY, format);
 		} catch {
 			// Keep the in-memory selection when persistent storage is unavailable.
 		}
@@ -831,16 +859,9 @@ export default function App() {
 			// keep queryUrl as-is
 		}
 
-		const formatParam = params.get('outputFormat');
-		const format: OutputFormat | undefined =
-			formatParam === 'original' ||
-			formatParam === 'mp3-320' ||
-			formatParam === 'flac'
-				? formatParam
-				: undefined;
-		if (format) {
-			setOutputFormat(format);
-		}
+		// Format is already hydrated from the query/localStorage before this runs.
+		const format =
+			readRequestedOutputFormat(window.location.search) ?? undefined;
 		setSoundcloudUrl(queryUrl);
 		void createJob(queryUrl, format);
 	}, [browserModeHydrated, createJob]);
@@ -1304,7 +1325,7 @@ export default function App() {
 									id="output-format"
 									value={outputFormat}
 									onChange={(e) =>
-										setOutputFormat(e.target.value as OutputFormat)
+										updateOutputFormat(e.target.value as OutputFormat)
 									}
 									disabled={isLoading}
 								>
@@ -1485,9 +1506,10 @@ export default function App() {
 							<>
 								<div className="progress-stage">
 									<span className="stage-label">
-										{job.progress?.downloadBytes !== undefined
-											? 'Downloading...'
-											: job.progress?.message || 'Initializing...'}
+										{job.progress?.message ||
+											(job.progress?.downloadBytes !== undefined
+												? 'Downloading...'
+												: 'Initializing...')}
 									</span>
 									{job.progress?.currentGate && (
 										<span className="gate-badge">
@@ -1508,24 +1530,30 @@ export default function App() {
 								{step === 'download' && (
 									<>
 										<div className="progress-bar">
-											<div
-												className="progress-fill"
-												style={{ width: `${job.progress?.percent || 0}%` }}
-											/>
+											{job.progress?.totalBytes ? (
+												<div
+													className="progress-fill"
+													style={{ width: `${job.progress?.percent || 0}%` }}
+												/>
+											) : (
+												<div className="progress-fill progress-fill-indeterminate" />
+											)}
 										</div>
 										<div className="progress-stats">
-											<span>{formatPercent(job.progress?.percent)}%</span>
-											{job.progress?.downloadBytes !== undefined &&
-												job.progress?.totalBytes !== undefined && (
-													<span>
-														{(job.progress.downloadBytes / 1024 / 1024).toFixed(
-															1,
-														)}{' '}
-														/{' '}
-														{(job.progress.totalBytes / 1024 / 1024).toFixed(1)}{' '}
-														MB
-													</span>
-												)}
+											{job.progress?.totalBytes ? (
+												<span>{formatPercent(job.progress?.percent)}%</span>
+											) : null}
+											{job.progress?.downloadBytes !== undefined && (
+												<span>
+													{(job.progress.downloadBytes / 1024 / 1024).toFixed(
+														1,
+													)}
+													{job.progress.totalBytes
+														? ` / ${(job.progress.totalBytes / 1024 / 1024).toFixed(1)}`
+														: ''}{' '}
+													MB
+												</span>
+											)}
 										</div>
 									</>
 								)}
