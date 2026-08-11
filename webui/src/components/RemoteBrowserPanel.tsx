@@ -12,7 +12,9 @@ import {
 	browserPasswordStorageKey,
 	browserRememberStorageKey,
 	browserViewWebSocketUrl,
+	markInternalRemotePointerRelease,
 	REMOTE_POINTER_RELEASE_EVENT,
+	shouldBlockRemoteMouseEvent,
 } from './remoteBrowser';
 import {
 	clampPanelGeometry,
@@ -398,15 +400,17 @@ export function RemoteBrowserPanel({
 			const pointer = remotePointerPositionRef.current;
 			if (!canvas || !pointer) return;
 			canvas.dispatchEvent(
-				new MouseEvent('mouseup', {
-					bubbles: true,
-					cancelable: true,
-					view: window,
-					button: 0,
-					buttons: 0,
-					clientX: pointer.x,
-					clientY: pointer.y,
-				}),
+				markInternalRemotePointerRelease(
+					new MouseEvent('mouseup', {
+						bubbles: true,
+						cancelable: true,
+						view: window,
+						button: 0,
+						buttons: 0,
+						clientX: pointer.x,
+						clientY: pointer.y,
+					}),
+				),
 			);
 		};
 		window.addEventListener(REMOTE_POINTER_RELEASE_EVENT, releaseRemotePointer);
@@ -576,7 +580,13 @@ export function RemoteBrowserPanel({
 			);
 		};
 		const blockRemoteMouse = (event: MouseEvent) => {
-			if (!viewportInteractionRef.current && !suppressRemoteClickRef.current) {
+			if (
+				!shouldBlockRemoteMouseEvent(
+					event,
+					Boolean(viewportInteractionRef.current),
+					suppressRemoteClickRef.current,
+				)
+			) {
 				return;
 			}
 			if (!viewportInteractionRef.current && event.type === 'mousedown') {

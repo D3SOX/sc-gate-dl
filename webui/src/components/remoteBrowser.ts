@@ -1,5 +1,22 @@
 const PASSWORD_KEY_PREFIX = 'sc-gate-dl-vnc-password:';
 export const REMOTE_POINTER_RELEASE_EVENT = 'sc-gate-dl-release-remote-pointer';
+const internalRemotePointerReleaseEvents = new WeakSet<Event>();
+
+export function markInternalRemotePointerRelease<T extends Event>(event: T): T {
+	internalRemotePointerReleaseEvents.add(event);
+	return event;
+}
+
+export function shouldBlockRemoteMouseEvent(
+	event: Event,
+	interactionActive: boolean,
+	suppressRemoteClick: boolean,
+): boolean {
+	return (
+		!internalRemotePointerReleaseEvents.has(event) &&
+		(interactionActive || suppressRemoteClick)
+	);
+}
 
 export function browserViewWebSocketUrl(browserViewUrl: string): string {
 	const url = new URL(browserViewUrl);

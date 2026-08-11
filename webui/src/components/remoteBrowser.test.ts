@@ -5,6 +5,8 @@ import {
 	browserPasswordStorageKey,
 	browserRememberStorageKey,
 	browserViewWebSocketUrl,
+	markInternalRemotePointerRelease,
+	shouldBlockRemoteMouseEvent,
 } from './remoteBrowser';
 
 describe('browserViewWebSocketUrl', () => {
@@ -38,5 +40,15 @@ describe('browserRememberStorageKey', () => {
 		expect(browserRememberStorageKey('http://pi:6080/vnc.html')).toBe(
 			'sc-gate-dl-vnc-password:ws://pi:6080/websockify:remember',
 		);
+	});
+});
+
+describe('remote pointer release', () => {
+	test('lets the internal release reach noVNC during local touch zoom', () => {
+		const release = markInternalRemotePointerRelease(new Event('mouseup'));
+		expect(shouldBlockRemoteMouseEvent(release, true, true)).toBeFalse();
+		expect(
+			shouldBlockRemoteMouseEvent(new Event('mouseup'), true, true),
+		).toBeTrue();
 	});
 });
