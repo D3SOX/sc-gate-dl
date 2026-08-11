@@ -424,7 +424,13 @@ Or open the raw file: [`userscript/sc-gate-dl.user.js`](https://raw.githubuserco
 
 Chrome may ask once to allow the page to access your local network (`localhost`). If the panel iframe is blocked, use **open in tab** in the panel toolbar.
 
-To point at a different Web UI origin (from the SoundCloud tab console):
+To point the userscript at another machine without developer tools, click the
+gear button in its panel header or choose **Configure server…** from
+Violentmonkey's userscript menu. Enter the complete Web UI address, for example
+`http://192.168.178.57:4321`. The setting is remembered across browser
+restarts. Leaving the address empty resets it to localhost.
+
+The same setting can also be changed from the SoundCloud tab console:
 
 ```js
 localStorage.setItem('sc-gate-dl-webui-base', 'http://localhost:4321')

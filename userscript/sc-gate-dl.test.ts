@@ -7,6 +7,7 @@ type UpdateFeedPlaybackOrigin = (
 ) => string | null;
 
 type StoreServiceForUrl = (href: string) => string | null;
+type NormalizeWebuiBase = (value: string) => string;
 
 const source = await Bun.file(
 	new URL('./sc-gate-dl.user.js', import.meta.url),
@@ -33,6 +34,11 @@ const storeServiceForUrl = extractHelper<StoreServiceForUrl>(
 	'\tfunction storeServiceForUrl(',
 	'\n\n\tfunction decorateStoreLink(',
 	'storeServiceForUrl',
+);
+const normalizeWebuiBase = extractHelper<NormalizeWebuiBase>(
+	'\tfunction normalizeWebuiBase(',
+	'\n\n\tfunction setWebuiBase(',
+	'normalizeWebuiBase',
 );
 
 describe('feed playback origin', () => {
@@ -72,6 +78,21 @@ describe('store link branding', () => {
 });
 
 describe('Web UI preferences', () => {
+	test('normalizes HTTP(S) server addresses', () => {
+		expect(normalizeWebuiBase(' http://192.168.178.57:4321/ ')).toBe(
+			'http://192.168.178.57:4321',
+		);
+		expect(normalizeWebuiBase('https://downloads.example.com/?old=1#top')).toBe(
+			'https://downloads.example.com',
+		);
+		expect(() => normalizeWebuiBase('ftp://downloads.example.com')).toThrow();
+	});
+
+	test('offers server configuration without developer tools', () => {
+		expect(source).toContain("GM_registerMenuCommand('Configure server…'");
+		expect(source).toContain('class="sc-gate-dl-server"');
+	});
+
 	test('passes the remembered browser mode through the deep link', () => {
 		expect(source).toContain('browserMode: getBrowserMode()');
 		expect(source).toContain('class="sc-gate-dl-browser-mode"');

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         sc-gate-dl
 // @namespace    https://github.com/D3SOX/sc-gate-dl
-// @version      1.10.11
+// @version      1.10.12
 // @description  Add sc-gate-dl download controls and remember your position in the SoundCloud feed
 // @author       D3SOX
 // @match        https://soundcloud.com/*
@@ -287,6 +287,9 @@
 
 	function registerMenuCommands() {
 		if (typeof GM_registerMenuCommand !== 'function') return;
+		GM_registerMenuCommand('Configure server…', () => {
+			configureWebuiBase();
+		});
 		GM_registerMenuCommand('Feed position controls…', () => {
 			toggleFeedNavigator();
 		});
@@ -999,12 +1002,70 @@
 
 	function getWebuiBase() {
 		try {
-			return (
-				localStorage.getItem(WEBUI_BASE_KEY)?.replace(/\/$/, '') ||
-				DEFAULT_WEBUI_BASE
-			);
+			const stored = localStorage.getItem(WEBUI_BASE_KEY);
+			if (stored?.trim()) return normalizeWebuiBase(stored);
 		} catch {
-			return DEFAULT_WEBUI_BASE;
+			// ignore
+		}
+		try {
+			if (typeof GM_getValue === 'function') {
+				const stored = GM_getValue(WEBUI_BASE_KEY, null);
+				if (typeof stored === 'string' && stored.trim()) {
+					return normalizeWebuiBase(stored);
+				}
+			}
+		} catch {
+			// ignore
+		}
+		return DEFAULT_WEBUI_BASE;
+	}
+
+	function normalizeWebuiBase(value) {
+		const url = new URL(value.trim());
+		if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+			throw new TypeError('The Web UI address must use HTTP or HTTPS.');
+		}
+		url.search = '';
+		url.hash = '';
+		return url.href.replace(/\/$/, '');
+	}
+
+	function setWebuiBase(value) {
+		const normalized = value.trim()
+			? normalizeWebuiBase(value)
+			: DEFAULT_WEBUI_BASE;
+		try {
+			if (typeof GM_setValue === 'function') {
+				GM_setValue(WEBUI_BASE_KEY, normalized);
+			}
+		} catch {
+			// ignore
+		}
+		try {
+			localStorage.setItem(WEBUI_BASE_KEY, normalized);
+		} catch {
+			// ignore
+		}
+		return normalized;
+	}
+
+	function configureWebuiBase() {
+		const value = window.prompt(
+			'Web UI address (leave empty to reset to localhost):',
+			getWebuiBase(),
+		);
+		if (value === null) return;
+		try {
+			const normalized = setWebuiBase(value);
+			const panel = document.getElementById(PANEL_ID);
+			if (panel && !panel.hidden && panel.dataset.trackUrl) {
+				loadTrackIntoPanel(panel, panel.dataset.trackUrl);
+			}
+			window.alert(`sc-gate-dl server set to ${normalized}`);
+		} catch {
+			window.alert(
+				'Enter a complete HTTP(S) address, for example http://192.168.178.57:4321',
+			);
 		}
 	}
 
@@ -1288,6 +1349,7 @@
 #${PANEL_ID}[hidden] { display: none !important; }
 #${PANEL_ID} .sc-gate-dl-toolbar {
 	display: flex;
+	flex-wrap: wrap;
 	align-items: center;
 	justify-content: space-between;
 	gap: 8px;
@@ -1311,6 +1373,7 @@
 	align-items: center;
 	gap: 6px;
 	flex-shrink: 0;
+	margin-left: auto;
 }
 #${PANEL_ID} .sc-gate-dl-format,
 #${PANEL_ID} .sc-gate-dl-browser-mode {
@@ -1325,6 +1388,24 @@
 	max-width: 118px;
 }
 #${PANEL_ID} .sc-gate-dl-browser-mode { max-width: 92px; }
+#${PANEL_ID} .sc-gate-dl-server {
+	display: inline-grid;
+	place-items: center;
+	width: 28px;
+	height: 28px;
+	padding: 0;
+	border: 1px solid rgba(255,255,255,0.14);
+	border-radius: 6px;
+	background: #0f0f12;
+	color: #ccc;
+	cursor: pointer;
+}
+#${PANEL_ID} .sc-gate-dl-server:hover { color: #fff; }
+#${PANEL_ID} .sc-gate-dl-server svg {
+	width: 15px;
+	height: 15px;
+	fill: currentColor;
+}
 #${PANEL_ID} .sc-gate-dl-toolbar button.sc-gate-dl-close {
 	appearance: none;
 	border: 0;
@@ -2262,6 +2343,9 @@ a[${STORE_SERVICE_ATTR}] > button::after {
 				<div class="sc-gate-dl-toolbar">
 					<span>sc-gate-dl · <a class="sc-gate-dl-open-tab" href="#" target="_blank" rel="noopener">open in tab</a></span>
 					<span class="sc-gate-dl-actions">
+						<button type="button" class="sc-gate-dl-server" aria-label="Configure server" title="Configure server">
+							<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19.14 12.94a7.8 7.8 0 0 0 .05-.94 7.8 7.8 0 0 0-.05-.94l2.03-1.58a.5.5 0 0 0 .12-.64l-1.92-3.32a.5.5 0 0 0-.61-.22l-2.39.96a7.3 7.3 0 0 0-1.62-.94L14.39 2.8a.5.5 0 0 0-.5-.42h-3.84a.5.5 0 0 0-.5.42l-.36 2.52a7.3 7.3 0 0 0-1.62.94L5.18 5.3a.5.5 0 0 0-.61.22L2.65 8.84a.5.5 0 0 0 .12.64l2.03 1.58a7.8 7.8 0 0 0-.05.94c0 .32.02.63.05.94l-2.03 1.58a.5.5 0 0 0-.12.64l1.92 3.32a.5.5 0 0 0 .61.22l2.39-.96c.5.39 1.04.7 1.62.94l.36 2.52a.5.5 0 0 0 .5.42h3.84a.5.5 0 0 0 .5-.42l.36-2.52a7.3 7.3 0 0 0 1.62-.94l2.39.96a.5.5 0 0 0 .61-.22l1.92-3.32a.5.5 0 0 0-.12-.64l-2.03-1.58ZM12 15.5A3.5 3.5 0 1 1 12 8a3.5 3.5 0 0 1 0 7.5Z"/></svg>
+						</button>
 						<label>
 							<select class="sc-gate-dl-browser-mode" aria-label="Browser mode" title="Browser mode">
 								<option value="headless"${browserMode === 'headless' ? ' selected' : ''}>Headless</option>
@@ -2292,6 +2376,9 @@ a[${STORE_SERVICE_ATTR}] > button::after {
 					// Let the target=_blank navigation happen, then tear down this job.
 					void closePanel();
 				});
+			panel
+				.querySelector('.sc-gate-dl-server')
+				?.addEventListener('click', configureWebuiBase);
 			panel
 				.querySelector('.sc-gate-dl-browser-mode')
 				?.addEventListener('change', (e) => {
