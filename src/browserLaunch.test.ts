@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import {
 	buildXvfbBrowserEnv,
 	createXvfbManager,
+	getGpuWorkaroundArgs,
 	isXvfbSupported,
 	readXvfbDisplay,
 	type XvfbSession,
@@ -95,6 +96,16 @@ describe('buildXvfbBrowserEnv', () => {
 			OZONE_PLATFORM: 'x11',
 			PATH: '/usr/bin',
 		});
+	});
+});
+
+describe('getGpuWorkaroundArgs', () => {
+	test('disables GPU access only when explicitly requested', () => {
+		expect(getGpuWorkaroundArgs({ SC_GATE_DL_DISABLE_GPU: 'true' })).toEqual([
+			'--disable-gpu',
+			'--disable-dev-shm-usage',
+		]);
+		expect(getGpuWorkaroundArgs({})).toEqual([]);
 	});
 });
 

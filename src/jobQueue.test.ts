@@ -79,4 +79,57 @@ describe('JobQueue', () => {
 		expect(started).toEqual(['broken', 'next']);
 		expect(errors[0]?.id).toBe('broken');
 	});
+
+	test('lets cancellation wait until the active slot is released', async () => {
+		const active = deferred();
+		const queue = new JobQueue({
+			onQueued: () => {},
+			onTaskError: () => {},
+		});
+		queue.enqueue('active', () => active.promise);
+
+		let released = false;
+		const waiting = queue.waitForCompletion('active').then(() => {
+			released = true;
+		});
+		await Bun.sleep(0);
+		expect(released).toBeFalse();
+
+		active.resolve();
+		await waiting;
+		expect(released).toBeTrue();
+		expect(queue.enqueue('next', async () => {})).toEqual({
+			queued: false,
+			position: 0,
+		});
+	});
+
+	test('releases a cancelled active slot without letting its stale task clear a retry', async () => {
+		const stale = deferred();
+		const retry = deferred();
+		const started: string[] = [];
+		const queue = new JobQueue({
+			onQueued: () => {},
+			onTaskError: () => {},
+		});
+		queue.enqueue('same-id', () => stale.promise);
+
+		expect(queue.releaseActive('same-id')).toBeTrue();
+		expect(
+			queue.enqueue('same-id', () => {
+				started.push('retry');
+				return retry.promise;
+			}),
+		).toEqual({ queued: false, position: 0 });
+
+		stale.resolve();
+		await Bun.sleep(0);
+		expect(
+			queue.enqueue('next', async () => {
+				started.push('next');
+			}),
+		).toEqual({ queued: true, position: 1 });
+		expect(started).toEqual(['retry']);
+		retry.resolve();
+	});
 });

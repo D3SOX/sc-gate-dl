@@ -4,6 +4,7 @@ import { launchConfiguredBrowser } from './browserLaunch';
 import type { ProgressCallback } from './hypeddit';
 import Selectors from './selectors';
 import { SoundcloudClient } from './soundcloud';
+import { waitForSoundcloudLogin } from './soundcloudLogin';
 import type { HypedditConfig } from './types';
 import { loadCookies, timeout } from './utils';
 
@@ -724,6 +725,10 @@ export class DroploudDownloader {
 			);
 		}
 
+		// A DataDome challenge can replace the popup before any repost request.
+		// Clear it before trying GraphQL or the visible Repost control.
+		await this.handlePossibleCaptcha(page);
+
 		// Prefer webi GraphQL (same mutation the real Repost button fires).
 		if (await this.repostViaPageFetch(page, trackUrl)) {
 			console.log('Droploud: SoundCloud repost ensured via GraphQL.');
@@ -817,7 +822,13 @@ export class DroploudDownloader {
 						// logged inside isTrackReposted
 					}
 				}
-				await this.tryClickRepostButton(page).catch(() => null);
+				const manualAction = await this.tryClickRepostButton(page).catch(
+					() => null,
+				);
+				if (manualAction === 'clicked') {
+					await timeout(800);
+					await this.handlePossibleCaptcha(page).catch(() => false);
+				}
 				await timeout(1_000);
 			}
 		}
@@ -1511,6 +1522,9 @@ export class DroploudDownloader {
 					return;
 				}
 
+				// SoundCloud may insert DataDome immediately before the repost UI or
+				// after the popup has been sitting open for a moment.
+				await this.handlePossibleCaptcha(page);
 				const action = await this.tryClickRepostButton(page);
 				if (action === 'already') {
 					console.log('Droploud: track already looks reposted in the browser.');
@@ -1739,7 +1753,7 @@ export class DroploudDownloader {
 			// popup may already be closing
 		}
 
-		const deadline = Date.now() + 90_000;
+		let deadline = Date.now() + 90_000;
 		while (Date.now() < deadline) {
 			if (oauthPage.isClosed()) {
 				return;
@@ -1776,9 +1790,18 @@ export class DroploudDownloader {
 					})
 					.catch(() => false);
 				if (needsLogin) {
-					throw new Error(
-						'SoundCloud is not logged in. Run Initialize Logins (or CLI initializeLogins) first.',
-					);
+					await waitForSoundcloudLogin(oauthPage, {
+						interactive: this.config.browserMode === 'headed',
+						onWaiting: () =>
+							this.emitProgress(
+								'handling_gates',
+								'Log in to SoundCloud in the browser to continue...',
+								50,
+								{ currentGate: 'soundcloud', browserActive: true },
+							),
+					});
+					deadline = Date.now() + 90_000;
+					continue;
 				}
 
 				const clicked = await this.clickSoundcloudOauthAllow(oauthPage);

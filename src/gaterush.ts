@@ -3,6 +3,10 @@ import type { Browser, Page } from 'puppeteer';
 import { launchConfiguredBrowser } from './browserLaunch';
 import type { ProgressCallback } from './hypeddit';
 import Selectors from './selectors';
+import {
+	isSoundcloudLoginPage,
+	waitForSoundcloudLogin,
+} from './soundcloudLogin';
 import type { HypedditConfig } from './types';
 import { loadCookies, timeout } from './utils';
 
@@ -287,7 +291,7 @@ export class GaterushDownloader {
 	 * GateRush to mark the SoundCloud step complete. Never force-closes Allow.
 	 */
 	private async completeSoundcloudOauth(gatePage: Page) {
-		const deadline = Date.now() + 120_000;
+		let deadline = Date.now() + 120_000;
 		let lastLog = 0;
 		let lastAllowAt = 0;
 
@@ -305,6 +309,22 @@ export class GaterushDownloader {
 					console.log('GateRush: SoundCloud step marked completed.');
 					return;
 				}
+			}
+
+			for (const candidate of await this.browser.pages(true)) {
+				if (!(await isSoundcloudLoginPage(candidate))) continue;
+				await waitForSoundcloudLogin(candidate, {
+					interactive: this.config.browserMode === 'headed',
+					onWaiting: () =>
+						this.emitProgress(
+							'handling_gates',
+							'Log in to SoundCloud in the browser to continue...',
+							50,
+							{ currentGate: 'soundcloud', browserActive: true },
+						),
+				});
+				deadline = Date.now() + 120_000;
+				break;
 			}
 
 			const authorizePage = await this.findAuthorizePageWithAllow();

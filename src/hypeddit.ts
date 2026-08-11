@@ -2,6 +2,7 @@ import { Presets, SingleBar } from 'cli-progress';
 import type { Browser, Page } from 'puppeteer';
 import { browserModeToLaunchOptions, launchAppBrowser } from './browserLaunch';
 import Selectors from './selectors';
+import { waitForSoundcloudLogin } from './soundcloudLogin';
 import type { HypedditConfig, JobProgress, JobStage } from './types';
 import { loadCookies, REPO_URL, timeout } from './utils';
 
@@ -500,6 +501,16 @@ export class HypedditDownloader {
 		await soundCloudWindow.bringToFront();
 		await soundCloudWindow.setViewport({ width: 1920, height: 1080 });
 		await soundCloudWindow.waitForNetworkIdle({ timeout: 15_000 });
+		await waitForSoundcloudLogin(soundCloudWindow, {
+			interactive: this.config.browserMode === 'headed',
+			onWaiting: () =>
+				this.emitProgress(
+					'handling_gates',
+					'Log in to SoundCloud in the browser to continue...',
+					50,
+					{ currentGate: 'soundcloud', browserActive: true },
+				),
+		});
 
 		const submitApprovalButton = await soundCloudWindow.waitForSelector(
 			Selectors.SC_SUBMIT_APPROVAL_BUTTON,

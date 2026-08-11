@@ -1,0 +1,482 @@
+.remote-browser-launcher {
+	position: fixed;
+	top: 16px;
+	right: 16px;
+	z-index: 1002;
+	display: grid;
+	place-items: center;
+	width: 44px;
+	height: 44px;
+	color: var(--text-secondary);
+	background: rgba(18, 18, 26, 0.94);
+	border: 1px solid var(--border-strong);
+	border-radius: 10px;
+	box-shadow: 0 8px 32px rgba(0, 0, 0, 0.35);
+	cursor: pointer;
+	transition:
+		color var(--transition-fast),
+		border-color var(--transition-fast),
+		box-shadow var(--transition-fast),
+		transform var(--transition-fast),
+		opacity var(--transition-fast),
+		visibility var(--transition-fast);
+}
+
+.remote-browser-launcher:hover,
+.remote-browser-launcher.is-open {
+	color: var(--neon-cyan);
+	border-color: var(--neon-cyan);
+	box-shadow: var(--glow-cyan);
+}
+
+.remote-browser-launcher:active {
+	transform: scale(0.94);
+}
+
+.remote-browser-launcher.is-maximized {
+	pointer-events: none;
+	visibility: hidden;
+	opacity: 0;
+	transform: scale(0.75);
+}
+
+.remote-browser-launcher svg {
+	width: 22px;
+	height: 22px;
+	fill: none;
+	stroke: currentColor;
+	stroke-width: 1.8;
+	stroke-linecap: round;
+	stroke-linejoin: round;
+}
+
+.remote-browser-launcher-dot {
+	position: absolute;
+	right: 6px;
+	bottom: 6px;
+	width: 7px;
+	height: 7px;
+	background: var(--text-muted);
+	border: 1px solid var(--bg-surface);
+	border-radius: 50%;
+}
+
+.remote-browser-launcher-dot.is-connected {
+	background: var(--neon-green);
+	box-shadow: 0 0 8px var(--neon-green);
+}
+
+.remote-browser-launcher-dot.is-error {
+	background: var(--neon-orange);
+}
+
+.remote-browser-panel {
+	position: fixed;
+	z-index: 1003;
+	display: flex;
+	flex-direction: column;
+	min-width: min(320px, 100vw);
+	min-height: min(240px, 100vh);
+	overflow: visible;
+	pointer-events: none;
+	visibility: hidden;
+	opacity: 0;
+	transform: scale(0.08);
+	transform-origin: var(--remote-browser-origin-x)
+		var(--remote-browser-origin-y);
+	background: var(--bg-surface);
+	border: 1px solid var(--border-strong);
+	border-radius: 12px;
+	box-shadow: 0 22px 90px rgba(0, 0, 0, 0.65);
+	transition:
+		opacity 180ms ease,
+		transform 220ms cubic-bezier(0.2, 0.8, 0.2, 1),
+		visibility 0s linear 220ms;
+	container-type: inline-size;
+}
+
+.remote-browser-panel.is-open {
+	pointer-events: auto;
+	visibility: visible;
+	opacity: 1;
+	transform: scale(1);
+	transition:
+		opacity 180ms ease,
+		transform 220ms cubic-bezier(0.2, 0.8, 0.2, 1),
+		visibility 0s;
+}
+
+.remote-browser-panel.is-maximized {
+	border-radius: 0;
+}
+
+.remote-browser-toolbar {
+	display: flex;
+	flex: none;
+	align-items: center;
+	justify-content: space-between;
+	gap: var(--space-md);
+	padding: var(--space-sm) var(--space-md);
+	touch-action: none;
+	user-select: none;
+	background: var(--bg-elevated);
+	border-bottom: 1px solid var(--border-subtle);
+	border-radius: 11px 11px 0 0;
+	cursor: grab;
+}
+
+.remote-browser-toolbar:active {
+	cursor: grabbing;
+}
+
+.remote-browser-toolbar > div {
+	display: flex;
+	align-items: center;
+	gap: var(--space-sm);
+}
+
+.remote-browser-toolbar-heading {
+	min-width: 0;
+	flex: 1 1 auto;
+}
+
+.remote-browser-toolbar h2 {
+	font-size: 1rem;
+}
+
+.remote-browser-toolbar button {
+	padding: var(--space-xs) var(--space-sm);
+	color: var(--text-secondary);
+	background: transparent;
+	border: 1px solid var(--border-strong);
+	border-radius: 6px;
+	cursor: pointer;
+}
+
+.remote-browser-toolbar button:hover {
+	color: var(--neon-cyan);
+	border-color: var(--neon-cyan);
+}
+
+.remote-browser-toolbar button:disabled {
+	opacity: 0.4;
+	cursor: default;
+}
+
+.remote-browser-toolbar-actions {
+	display: flex;
+	flex: 0 0 auto;
+	align-items: center;
+	gap: var(--space-xs);
+	margin-left: auto;
+}
+
+.remote-browser-zoom {
+	display: flex;
+	flex: none;
+	align-items: center;
+	min-width: 0;
+	margin: 0;
+	padding: 0;
+	border: 0;
+}
+
+.remote-browser-zoom button {
+	display: grid;
+	flex: none;
+	place-items: center;
+	min-width: 28px;
+	height: 30px;
+	padding: var(--space-xs);
+	border-radius: 0;
+}
+
+.remote-browser-zoom svg,
+.remote-browser-action-button svg {
+	width: 14px;
+	height: 14px;
+	fill: none;
+	stroke: currentColor;
+	stroke-width: 1.5;
+	stroke-linecap: round;
+	stroke-linejoin: round;
+}
+
+.remote-browser-zoom button:first-child {
+	border-radius: 6px 0 0 6px;
+}
+
+.remote-browser-zoom button + button {
+	margin-left: -1px;
+}
+
+.remote-browser-zoom button:nth-child(2) {
+	min-width: 52px;
+	font-family: var(--font-mono);
+	font-size: 0.68rem;
+}
+
+.remote-browser-zoom button:last-child {
+	border-radius: 0 6px 6px 0;
+}
+
+.remote-browser-window-control svg {
+	display: block;
+	width: 14px;
+	height: 14px;
+	fill: none;
+	stroke: currentColor;
+	stroke-width: 1.3;
+	stroke-linecap: round;
+	stroke-linejoin: round;
+}
+
+.remote-browser-action-button {
+	display: inline-flex;
+	flex: none;
+	align-items: center;
+	justify-content: center;
+	gap: var(--space-xs);
+	white-space: nowrap;
+}
+
+.remote-browser-window-control {
+	display: grid;
+	flex: none;
+	place-items: center;
+	width: 30px;
+	height: 30px;
+	padding: 0;
+}
+
+.remote-browser-status {
+	font-family: var(--font-mono);
+	font-size: 0.68rem;
+	text-transform: uppercase;
+	color: var(--text-muted);
+}
+
+.remote-browser-status.is-connected {
+	color: var(--neon-green);
+}
+
+.remote-browser-status.is-error {
+	color: var(--neon-orange);
+}
+
+.remote-browser-screen {
+	flex: 1;
+	min-height: 0;
+	overflow: auto;
+	background: #000;
+	border-radius: 0 0 11px 11px;
+}
+
+.remote-browser-screen.is-shift-held,
+.remote-browser-screen.is-shift-held * {
+	/* biome-ignore lint/complexity/noImportantStyles: noVNC sets an inline cursor on its canvas. */
+	cursor: grab !important;
+}
+
+.remote-browser-screen.is-alt-held:not(.is-shift-held),
+.remote-browser-screen.is-alt-held:not(.is-shift-held) * {
+	/* biome-ignore lint/complexity/noImportantStyles: noVNC sets an inline cursor on its canvas. */
+	cursor: zoom-in !important;
+}
+
+.remote-browser-screen.is-zooming,
+.remote-browser-screen.is-zooming * {
+	/* biome-ignore lint/complexity/noImportantStyles: the zoom gesture overrides noVNC's inline cursor. */
+	cursor: zoom-in !important;
+	user-select: none;
+}
+
+.remote-browser-screen.is-panning,
+.remote-browser-screen.is-panning * {
+	/* biome-ignore lint/complexity/noImportantStyles: the active drag cursor overrides modifier cursors. */
+	cursor: grabbing !important;
+	user-select: none;
+}
+
+.remote-browser-viewport {
+	min-width: 1px;
+	min-height: 1px;
+}
+
+.remote-browser-login {
+	position: absolute;
+	top: 50%;
+	left: 50%;
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-md);
+	width: min(90%, 360px);
+	padding: var(--space-xl);
+	transform: translate(-50%, -50%);
+	background: rgba(18, 18, 26, 0.96);
+	border: 1px solid var(--border-strong);
+	border-radius: 10px;
+	box-shadow: 0 18px 80px rgba(0, 0, 0, 0.55);
+}
+
+.remote-browser-clipboard {
+	position: absolute;
+	z-index: 3;
+	top: calc(var(--remote-browser-toolbar-height) + var(--space-sm));
+	right: var(--space-md);
+	display: grid;
+	gap: var(--space-sm);
+	width: min(360px, calc(100% - 2 * var(--space-md)));
+	padding: var(--space-md);
+	background: rgba(18, 18, 26, 0.98);
+	border: 1px solid var(--border-strong);
+	border-radius: 8px;
+	box-shadow: 0 12px 48px rgba(0, 0, 0, 0.55);
+}
+
+.remote-browser-clipboard textarea {
+	min-height: 72px;
+	resize: vertical;
+	color: var(--text-primary);
+	background: var(--bg-deep);
+	border: 1px solid var(--border-strong);
+	border-radius: 6px;
+}
+
+.remote-browser-clipboard p {
+	color: var(--neon-orange);
+	font-size: 0.8rem;
+}
+
+.remote-browser-clipboard > div {
+	display: flex;
+	justify-content: flex-end;
+	gap: var(--space-xs);
+}
+
+.remote-browser-clipboard button {
+	min-width: 72px;
+	padding: var(--space-xs) var(--space-md);
+	font: inherit;
+	font-weight: 600;
+	color: var(--text-secondary);
+	background: transparent;
+	border: 1px solid var(--border-strong);
+	border-radius: 6px;
+	cursor: pointer;
+}
+
+.remote-browser-clipboard button:hover:not(:disabled) {
+	color: var(--neon-cyan);
+	border-color: var(--neon-cyan);
+}
+
+.remote-browser-clipboard button.is-send {
+	color: var(--bg-deep);
+	background: var(--neon-cyan);
+	border-color: var(--neon-cyan);
+}
+
+.remote-browser-clipboard button:disabled {
+	opacity: 0.45;
+	cursor: default;
+}
+
+.remote-browser-login input[type="password"] {
+	width: 100%;
+	padding: var(--space-sm) var(--space-md);
+	color: var(--text-primary);
+	background: var(--bg-deep);
+	border: 1px solid var(--border-strong);
+	border-radius: 6px;
+}
+
+.remote-browser-error {
+	color: var(--neon-orange);
+	font-size: 0.85rem;
+}
+
+.remote-browser-resize-handle {
+	position: absolute;
+	z-index: 2;
+	touch-action: none;
+}
+
+.remote-browser-resize-handle.is-north-east,
+.remote-browser-resize-handle.is-north-west,
+.remote-browser-resize-handle.is-south-east,
+.remote-browser-resize-handle.is-south-west {
+	width: 16px;
+	height: 16px;
+}
+
+.remote-browser-resize-handle.is-north-east {
+	top: -4px;
+	right: -4px;
+	cursor: nesw-resize;
+}
+
+.remote-browser-resize-handle.is-north-west {
+	top: -4px;
+	left: -4px;
+	cursor: nwse-resize;
+}
+
+.remote-browser-resize-handle.is-south-east {
+	right: -4px;
+	bottom: -4px;
+	cursor: nwse-resize;
+}
+
+.remote-browser-resize-handle.is-south-west {
+	bottom: -4px;
+	left: -4px;
+	cursor: nesw-resize;
+}
+
+@container (max-width: 700px) {
+	.remote-browser-button-label {
+		display: none;
+	}
+
+	.remote-browser-action-button {
+		width: 30px;
+		height: 30px;
+		padding: 0;
+	}
+
+	.remote-browser-status {
+		display: block;
+		flex: none;
+		width: 8px;
+		height: 8px;
+		background: currentColor;
+		border-radius: 50%;
+		box-shadow: 0 0 7px currentColor;
+	}
+
+	.remote-browser-status > span {
+		display: none;
+	}
+}
+
+@container (max-width: 410px) {
+	.remote-browser-toolbar {
+		gap: var(--space-xs);
+		padding-left: var(--space-sm);
+	}
+
+	.remote-browser-toolbar-heading h2 {
+		display: none;
+	}
+
+	.remote-browser-zoom button:nth-child(2) {
+		min-width: 44px;
+	}
+}
+
+@media (max-width: 520px) {
+	.remote-browser-panel {
+		min-width: 280px;
+	}
+}

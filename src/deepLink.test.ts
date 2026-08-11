@@ -1,6 +1,8 @@
 import { describe, expect, test } from 'bun:test';
 import {
 	parseAvailableBrowserModes,
+	parseBrowserViewUrl,
+	readRequestedBrowserMode,
 	readStoredBrowserMode,
 	shouldAutoStartDeepLink,
 	shouldUseEmbeddedLayout,
@@ -37,6 +39,10 @@ describe('embedded layout query parameter', () => {
 });
 
 describe('browser-mode preference hydration', () => {
+	test('reads a valid browser mode from a userscript deep link', () => {
+		expect(readRequestedBrowserMode('?browserMode=xvfb')).toBe('xvfb');
+		expect(readRequestedBrowserMode('?browserMode=invalid')).toBeNull();
+	});
 	test('reads stored Xvfb through the same helper used by the UI', () => {
 		const storage = { getItem: () => 'xvfb' };
 		expect(readStoredBrowserMode(storage, 'browser-mode')).toBe('xvfb');
@@ -63,5 +69,22 @@ describe('browser-mode capabilities', () => {
 			'headless',
 			'headed',
 		]);
+	});
+});
+
+describe('browser-view capability', () => {
+	test('accepts an HTTP browser viewer URL', () => {
+		expect(
+			parseBrowserViewUrl({
+				browserViewUrl: 'http://192.168.178.57:6080/vnc.html?autoconnect=true',
+			}),
+		).toBe('http://192.168.178.57:6080/vnc.html?autoconnect=true');
+	});
+
+	test('rejects invalid and executable URLs', () => {
+		expect(
+			parseBrowserViewUrl({ browserViewUrl: 'javascript:alert(1)' }),
+		).toBeNull();
+		expect(parseBrowserViewUrl({ browserViewUrl: 'not a URL' })).toBeNull();
 	});
 });

@@ -438,6 +438,7 @@
 	font-weight: 500;
 	cursor: pointer;
 	transition: all var(--transition-fast);
+	text-decoration: none;
 }
 
 .btn-secondary:hover {

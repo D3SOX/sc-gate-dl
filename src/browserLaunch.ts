@@ -38,6 +38,14 @@ export const DEFAULT_BROWSER_ARGS = [
 	'--window-size=1920,1080',
 ];
 
+export function getGpuWorkaroundArgs(
+	env: Record<string, string | undefined> = process.env,
+): string[] {
+	return env.SC_GATE_DL_DISABLE_GPU === 'true'
+		? ['--disable-gpu', '--disable-dev-shm-usage']
+		: [];
+}
+
 export function browserModeToLaunchOptions(
 	browserMode: BrowserMode,
 ): Pick<AppBrowserLaunchOptions, 'headless' | 'xvfb'> {
@@ -220,6 +228,7 @@ export async function launchAppBrowser(
 
 	const args = [
 		...DEFAULT_BROWSER_ARGS,
+		...getGpuWorkaroundArgs(),
 		...(options.args ?? []),
 		// Plasma Wayland otherwise lets Chromium bypass DISPLAY and open visibly.
 		...(useXvfb ? ['--ozone-platform=x11'] : []),

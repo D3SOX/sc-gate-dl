@@ -3,6 +3,7 @@ import type { Browser, Page } from 'puppeteer';
 import { launchConfiguredBrowser } from './browserLaunch';
 import type { ProgressCallback } from './hypeddit';
 import Selectors from './selectors';
+import { waitForSoundcloudLogin } from './soundcloudLogin';
 import type { HypedditConfig } from './types';
 import { loadCookies, timeout } from './utils';
 
@@ -452,7 +453,7 @@ export class DownloadgaterDownloader {
 		// Nico Chromium flow: wait for authorize → click Allow → wait for unlock.
 		// Never treat "still on downloadgater Connecting…" as done, and never click
 		// email "Continue".
-		const deadline = Date.now() + 120_000;
+		let deadline = Date.now() + 120_000;
 		while (Date.now() < deadline) {
 			const oauthPage = await this.findSoundcloudOauthPage(page, pagesBefore);
 			const active =
@@ -476,6 +477,7 @@ export class DownloadgaterDownloader {
 					// Authorize shell can render before #submit_approval is attached.
 					await timeout(400);
 				} else {
+					deadline = Math.max(deadline, Date.now() + 120_000);
 					await timeout(1_000);
 				}
 				continue;
@@ -484,7 +486,10 @@ export class DownloadgaterDownloader {
 			// Gate tab may still be downloadgater while authorize is another target.
 			const approvalTab = await this.findPageWithApprovalButton();
 			if (approvalTab) {
-				await this.clickSoundcloudOauthAllow(approvalTab);
+				const allowed = await this.clickSoundcloudOauthAllow(approvalTab);
+				if (allowed) {
+					deadline = Math.max(deadline, Date.now() + 120_000);
+				}
 				await timeout(1_000);
 				continue;
 			}
@@ -643,9 +648,17 @@ export class DownloadgaterDownloader {
 		}
 
 		if (needsLogin) {
-			throw new Error(
-				'SoundCloud is not logged in. Run Initialize Logins (or CLI initializeLogins) first.',
-			);
+			await waitForSoundcloudLogin(oauthPage, {
+				interactive: this.config.browserMode === 'headed',
+				onWaiting: () =>
+					this.emitProgress(
+						'handling_gates',
+						'Log in to SoundCloud in the browser to continue...',
+						50,
+						{ currentGate: 'soundcloud', browserActive: true },
+					),
+			});
+			return this.clickSoundcloudOauthAllow(oauthPage);
 		}
 
 		return false;

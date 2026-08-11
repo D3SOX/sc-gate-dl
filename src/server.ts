@@ -4,9 +4,14 @@ import { basename, extname, join } from 'node:path';
 import type { SoundcloudTrack } from 'soundcloud.ts';
 import { AudioProcessor } from './audioProcessor';
 import { isXvfbSupported } from './browserLaunch';
+import { attachmentContentDisposition } from './contentDisposition';
 import { DirectDownloader } from './directDownload';
 import { DownloadgaterDownloader } from './downloadgater';
 import { renameDownloadFileExclusive } from './downloadRename';
+import {
+	deleteAfterDownloadEnabled,
+	streamWithSuccessfulDownloadCleanup,
+} from './downloadRetention';
 import { DroploudDownloader } from './droploud';
 import { GaterushDownloader } from './gaterush';
 import { HypedditDownloader } from './hypeddit';
@@ -14,6 +19,7 @@ import { HypedditHttpDownloader } from './hypedditHttp';
 import { JobQueue } from './jobQueue';
 import { jobStore } from './jobStore';
 import { PumpyoursoundDownloader } from './pumpyoursound';
+import { isAllowedCorsOrigin } from './serverCors';
 import { SoundcloudClient } from './soundcloud';
 import { isSoundcloudDownloadEnabled } from './soundcloudDownload';
 import { StillhypeDownloader } from './stillhype';
@@ -62,6 +68,10 @@ if (SC_COMMENT.trim().length < 2) {
 }
 const HYPEDDIT_NAME = getOptionalEnv('HYPEDDIT_NAME');
 const HYPEDDIT_EMAIL = getOptionalEnv('HYPEDDIT_EMAIL');
+const BROWSER_VIEW_URL = getOptionalEnv('BROWSER_VIEW_URL');
+const DELETE_AFTER_DOWNLOAD = deleteAfterDownloadEnabled(
+	process.env.SC_GATE_DL_DELETE_AFTER_DOWNLOAD,
+);
 
 const soundcloudClient = new SoundcloudClient();
 const audioProcessor = new AudioProcessor(ffmpegBin, ffprobeBin);
@@ -361,6 +371,7 @@ async function runDownloadProcess(jobId: string): Promise<void> {
 				'handling_gates',
 				'Processing Droploud gates...',
 				25,
+				{ browserActive: job.browserMode === 'headed' },
 			);
 			downloadFilename =
 				await droploudDownloader.downloadAudio(downloadSourceUrl);
@@ -384,6 +395,7 @@ async function runDownloadProcess(jobId: string): Promise<void> {
 				'handling_gates',
 				'Processing GateRush gates...',
 				25,
+				{ browserActive: job.browserMode === 'headed' },
 			);
 			downloadFilename =
 				await gaterushDownloader.downloadAudio(downloadSourceUrl);
@@ -407,6 +419,7 @@ async function runDownloadProcess(jobId: string): Promise<void> {
 				'handling_gates',
 				'Processing DownloadGater gates...',
 				25,
+				{ browserActive: job.browserMode === 'headed' },
 			);
 			downloadFilename =
 				await downloadgaterDownloader.downloadAudio(downloadSourceUrl);
@@ -430,6 +443,7 @@ async function runDownloadProcess(jobId: string): Promise<void> {
 				'handling_gates',
 				'Processing StillHype gates...',
 				25,
+				{ browserActive: job.browserMode === 'headed' },
 			);
 			downloadFilename =
 				await stillhypeDownloader.downloadAudio(downloadSourceUrl);
@@ -453,6 +467,7 @@ async function runDownloadProcess(jobId: string): Promise<void> {
 				'handling_gates',
 				'Processing PumpYourSound gates...',
 				25,
+				{ browserActive: job.browserMode === 'headed' },
 			);
 			downloadFilename =
 				await pumpyoursoundDownloader.downloadAudio(downloadSourceUrl);
@@ -511,6 +526,7 @@ async function runDownloadProcess(jobId: string): Promise<void> {
 					'handling_gates',
 					'Processing Hypeddit gates...',
 					25,
+					{ browserActive: job.browserMode === 'headed' },
 				);
 
 				downloadFilename =
@@ -606,16 +622,6 @@ async function runDownloadProcess(jobId: string): Promise<void> {
 	}
 }
 
-const ALLOWED_ORIGINS = new Set([
-	'https://soundcloud.com',
-	'https://www.soundcloud.com',
-	'https://m.soundcloud.com',
-	'http://localhost:4321',
-	'http://127.0.0.1:4321',
-	'http://localhost:3000',
-	'http://127.0.0.1:3000',
-]);
-
 const requestAls = new AsyncLocalStorage<Request>();
 
 function corsHeaders(): Record<string, string> {
@@ -629,7 +635,7 @@ function corsHeaders(): Record<string, string> {
 		'Access-Control-Allow-Private-Network': 'true',
 		Vary: 'Origin',
 	};
-	if (origin && ALLOWED_ORIGINS.has(origin)) {
+	if (origin && req && isAllowedCorsOrigin(req.url, origin)) {
 		headers['Access-Control-Allow-Origin'] = origin;
 	}
 	return headers;
@@ -709,6 +715,7 @@ const server = Bun.serve({
 		'/api/capabilities': () =>
 			jsonResponse({
 				browserModes: availableBrowserModes,
+				browserViewUrl: BROWSER_VIEW_URL ?? null,
 			}),
 
 		'/api/soundcloud/cleanup': {
@@ -1107,12 +1114,14 @@ const server = Bun.serve({
 					if (stage === 'ready' || stage === 'cancelled') {
 						jobStore.cancel(jobId);
 						await closeJobDownloader(jobId);
+						jobQueue.releaseActive(jobId);
 						return jsonResponse({ success: true, message: 'Cancelled' });
 					}
 
 					jobStore.cancel(jobId, 'Cancelling download…');
 					// Close CloakBrowser / job profile so Chromium exits cleanly
 					await closeJobDownloader(jobId);
+					jobQueue.releaseActive(jobId);
 					jobStore.cancel(jobId, 'Download cancelled');
 
 					return jsonResponse({ success: true, message: 'Download cancelled' });
@@ -1499,12 +1508,30 @@ const server = Bun.serve({
 
 				const filePath = join('./downloads', filename);
 				const file = Bun.file(filePath);
+				const body = DELETE_AFTER_DOWNLOAD
+					? streamWithSuccessfulDownloadCleanup(file.stream(), async () => {
+							await rm(filePath, { force: true });
+							const current = jobStore.get(jobId);
+							if (
+								current?.outputFilename === filename ||
+								current?.downloadFilename === filename
+							) {
+								jobStore.update(jobId, {
+									outputFilename: null,
+									downloadFilename: null,
+								});
+							}
+							console.log(
+								`Deleted downloaded file after transfer: ${filename}`,
+							);
+						})
+					: file;
 
-				return new Response(file, {
+				return new Response(body, {
 					headers: {
 						...corsHeaders(),
 						'Content-Type': file.type || 'application/octet-stream',
-						'Content-Disposition': `attachment; filename="${filename}"`,
+						'Content-Disposition': attachmentContentDisposition(filename),
 					},
 				});
 			},

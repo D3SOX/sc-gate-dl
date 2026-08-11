@@ -3,6 +3,7 @@ import { browserModeToLaunchOptions, launchAppBrowser } from './browserLaunch';
 import { DirectDownloader } from './directDownload';
 import type { ProgressCallback } from './hypeddit';
 import Selectors from './selectors';
+import { waitForSoundcloudLogin } from './soundcloudLogin';
 import type { HypedditConfig } from './types';
 import { loadCookies, timeout, trimExtractedUrl } from './utils';
 
@@ -309,7 +310,7 @@ export class PumpyoursoundDownloader {
 		gatePage: Page,
 		expect: 'soundcloud' | 'comment',
 	) {
-		const deadline = Date.now() + 180_000;
+		let deadline = Date.now() + 180_000;
 		let lastLog = 0;
 		let lastAllowAt = 0;
 
@@ -364,9 +365,17 @@ export class PumpyoursoundDownloader {
 					})
 					.catch(() => false);
 				if (needsLogin) {
-					throw new Error(
-						'SoundCloud is not logged in for PumpYourSound OAuth. Run Initialize Logins (or CLI initializeLogins) first.',
-					);
+					await waitForSoundcloudLogin(candidate, {
+						interactive: this.config.browserMode === 'headed',
+						onWaiting: () =>
+							this.emitProgress(
+								'handling_gates',
+								'Log in to SoundCloud in the browser to continue...',
+								50,
+								{ currentGate: 'soundcloud', browserActive: true },
+							),
+					});
+					deadline = Date.now() + 180_000;
 				}
 			}
 

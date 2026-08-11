@@ -6,6 +6,7 @@ import { launchConfiguredBrowser } from './browserLaunch';
 import type { ProgressCallback } from './hypeddit';
 import { safeFetch } from './safeOutboundUrl';
 import Selectors from './selectors';
+import { waitForSoundcloudLogin } from './soundcloudLogin';
 import type { HypedditConfig } from './types';
 import { loadCookies, sanitizeFilenamePart, timeout } from './utils';
 
@@ -621,7 +622,7 @@ export class StillhypeDownloader {
 
 	/** Allow on authorize, then wait until we're back on stillhype.io/g/. */
 	private async completeSoundcloudOauth(startPage: Page) {
-		const deadline = Date.now() + 120_000;
+		let deadline = Date.now() + 120_000;
 		let lastAllowAt = 0;
 		let lastLog = 0;
 		let sawAuthorize = false;
@@ -641,6 +642,7 @@ export class StillhypeDownloader {
 				if (lastAllowAt === 0 || canRetry) {
 					const allowed = await this.clickSoundcloudOauthAllow(oauthPage);
 					if (allowed) {
+						deadline = Math.max(deadline, Date.now() + 120_000);
 						allowClicks += 1;
 						lastAllowAt = Date.now();
 						console.log(`StillHype: SoundCloud Allow clicked (${allowClicks})`);
@@ -774,9 +776,17 @@ export class StillhypeDownloader {
 			.catch(() => null);
 
 		if (ready === 'login') {
-			throw new Error(
-				'SoundCloud is not logged in. Run Initialize Logins (or CLI initializeLogins) first.',
-			);
+			await waitForSoundcloudLogin(oauthPage, {
+				interactive: this.config.browserMode === 'headed',
+				onWaiting: () =>
+					this.emitProgress(
+						'handling_gates',
+						'Log in to SoundCloud in the browser to continue...',
+						50,
+						{ currentGate: 'soundcloud', browserActive: true },
+					),
+			});
+			return this.clickSoundcloudOauthAllow(oauthPage);
 		}
 
 		if (ready !== 'submit' && ready !== 'allow') {
