@@ -393,6 +393,9 @@ any saved password immediately. Closing and reopening the panel keeps the
 established VNC connection. Use the header controls to zoom, disconnect, or
 maximize/restore the viewer. Double-clicking the header also toggles maximized
 mode, while dragging a maximized header restores the floating window.
+On touchscreens, drag with one finger to move the remote pointer, tap to
+left-click, hold without moving to right-click, and drag with two fingers to
+pan the local view while zoomed in.
 
 VNC authentication does not encrypt the connection. Keep port `6080` on a
 trusted LAN, or put the Web UI, API, and noVNC behind an authenticated HTTPS

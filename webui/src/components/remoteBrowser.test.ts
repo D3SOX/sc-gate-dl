@@ -9,6 +9,10 @@ import {
 	shouldBlockRemoteMouseEvent,
 } from './remoteBrowser';
 
+const panelSource = await Bun.file(
+	new URL('./RemoteBrowserPanel.tsx', import.meta.url),
+).text();
+
 describe('browserViewWebSocketUrl', () => {
 	test('converts a noVNC page URL to its WebSocket endpoint', () => {
 		expect(
@@ -44,11 +48,30 @@ describe('browserRememberStorageKey', () => {
 });
 
 describe('remote pointer release', () => {
-	test('lets the internal release reach noVNC during local touch zoom', () => {
+	test('lets the internal release reach noVNC during local viewport gestures', () => {
 		const release = markInternalRemotePointerRelease(new Event('mouseup'));
 		expect(shouldBlockRemoteMouseEvent(release, true, true)).toBeFalse();
 		expect(
 			shouldBlockRemoteMouseEvent(new Event('mouseup'), true, true),
 		).toBeTrue();
+	});
+});
+
+describe('mobile remote controls', () => {
+	test('owns touch events before noVNC and maps the requested gestures', () => {
+		expect(panelSource).toContain("screen.addEventListener('touchstart'");
+		expect(panelSource).toContain("dispatchRemoteMouse('mousemove'");
+		expect(panelSource).toContain(
+			'clickRemote(session.lastX, session.lastY, 2)',
+		);
+		expect(panelSource).toContain(
+			'screen.scrollLeft -= nextCenter.x - panCenter.x',
+		);
+	});
+
+	test('does not reuse the touch pointer while a local viewport gesture runs', () => {
+		expect(panelSource).toContain("event.pointerType === 'touch'");
+		expect(panelSource).toContain('viewportInteractionRef.current ||');
+		expect(panelSource).not.toContain('beginViewportZoom(event, true)');
 	});
 });

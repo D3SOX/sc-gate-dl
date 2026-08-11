@@ -46,8 +46,8 @@ const MAX_ZOOM = 2;
 const ZOOM_STEP = 0.25;
 const FINE_ZOOM_STEP = 0.05;
 const ZOOM_DRAG_PER_PIXEL = FINE_ZOOM_STEP / 20;
-const TOUCH_ZOOM_HOLD_MS = 450;
-const TOUCH_HOLD_MOVE_TOLERANCE = 8;
+const TOUCH_LONG_PRESS_MS = 550;
+const TOUCH_MOVE_TOLERANCE = 10;
 
 type ZoomAnchor = {
 	x: number;
@@ -623,6 +623,222 @@ export function RemoteBrowserPanel({
 		};
 	}, [updateZoom]);
 
+	useEffect(() => {
+		const screen = screenContainerRef.current;
+		if (!screen) return;
+
+		type TouchSession = {
+			identifier: number;
+			startX: number;
+			startY: number;
+			lastX: number;
+			lastY: number;
+			moved: boolean;
+			longPressed: boolean;
+			multiple: boolean;
+			holdTimer: number;
+		};
+
+		let session: TouchSession | null = null;
+		let panCenter: { x: number; y: number } | null = null;
+
+		const touchByIdentifier = (touches: TouchList, identifier: number) => {
+			for (let index = 0; index < touches.length; index += 1) {
+				const touch = touches.item(index);
+				if (touch?.identifier === identifier) return touch;
+			}
+			return null;
+		};
+
+		const touchCenter = (touches: TouchList) => {
+			if (touches.length < 2) return null;
+			const first = touches.item(0);
+			const second = touches.item(1);
+			if (!first || !second) return null;
+			return {
+				x: (first.clientX + second.clientX) / 2,
+				y: (first.clientY + second.clientY) / 2,
+			};
+		};
+
+		const clearHoldTimer = () => {
+			if (!session?.holdTimer) return;
+			window.clearTimeout(session.holdTimer);
+			session.holdTimer = 0;
+		};
+
+		const dispatchRemoteMouse = (
+			type: 'mousedown' | 'mousemove' | 'mouseup',
+			clientX: number,
+			clientY: number,
+			button = 0,
+			buttons = 0,
+		) => {
+			const canvas = screenRef.current?.querySelector('canvas');
+			if (!canvas) return;
+			remotePointerPositionRef.current = { x: clientX, y: clientY };
+			canvas.dispatchEvent(
+				new MouseEvent(type, {
+					bubbles: true,
+					cancelable: true,
+					view: window,
+					button,
+					buttons,
+					clientX,
+					clientY,
+				}),
+			);
+		};
+
+		const clickRemote = (clientX: number, clientY: number, button: 0 | 2) => {
+			const buttons = button === 2 ? 2 : 1;
+			dispatchRemoteMouse('mousemove', clientX, clientY);
+			dispatchRemoteMouse('mousedown', clientX, clientY, button, buttons);
+			dispatchRemoteMouse('mouseup', clientX, clientY, button);
+		};
+
+		const finishPan = () => {
+			panCenter = null;
+			if (viewportInteractionRef.current === 'pan') {
+				viewportInteractionRef.current = null;
+			}
+			screen.classList.remove('is-panning');
+		};
+
+		const handleTouchStart = (event: TouchEvent) => {
+			event.preventDefault();
+			event.stopImmediatePropagation();
+			suppressRemoteClickRef.current = false;
+
+			if (event.touches.length >= 2) {
+				if (session) session.multiple = true;
+				clearHoldTimer();
+				panCenter = touchCenter(event.touches);
+				if (zoomRef.current > MIN_ZOOM) {
+					viewportInteractionRef.current = 'pan';
+					screen.classList.add('is-panning');
+				}
+				return;
+			}
+
+			const touch = event.touches.item(0);
+			if (!touch) return;
+			session = {
+				identifier: touch.identifier,
+				startX: touch.clientX,
+				startY: touch.clientY,
+				lastX: touch.clientX,
+				lastY: touch.clientY,
+				moved: false,
+				longPressed: false,
+				multiple: false,
+				holdTimer: 0,
+			};
+			session.holdTimer = window.setTimeout(() => {
+				if (!session || session.moved || session.multiple) return;
+				session.longPressed = true;
+				clickRemote(session.lastX, session.lastY, 2);
+			}, TOUCH_LONG_PRESS_MS);
+		};
+
+		const handleTouchMove = (event: TouchEvent) => {
+			event.preventDefault();
+			event.stopImmediatePropagation();
+
+			if (event.touches.length >= 2) {
+				if (session) session.multiple = true;
+				clearHoldTimer();
+				const nextCenter = touchCenter(event.touches);
+				if (zoomRef.current > MIN_ZOOM && panCenter && nextCenter) {
+					screen.scrollLeft -= nextCenter.x - panCenter.x;
+					screen.scrollTop -= nextCenter.y - panCenter.y;
+				}
+				panCenter = nextCenter;
+				return;
+			}
+
+			if (!session || session.multiple) return;
+			const touch = touchByIdentifier(event.touches, session.identifier);
+			if (!touch) return;
+			session.lastX = touch.clientX;
+			session.lastY = touch.clientY;
+			if (
+				Math.hypot(
+					touch.clientX - session.startX,
+					touch.clientY - session.startY,
+				) > TOUCH_MOVE_TOLERANCE
+			) {
+				session.moved = true;
+				clearHoldTimer();
+			}
+			if (session.moved) {
+				dispatchRemoteMouse('mousemove', touch.clientX, touch.clientY);
+			}
+		};
+
+		const handleTouchEnd = (event: TouchEvent) => {
+			event.preventDefault();
+			event.stopImmediatePropagation();
+			if (event.touches.length > 0) {
+				if (event.touches.length < 2) finishPan();
+				return;
+			}
+
+			clearHoldTimer();
+			finishPan();
+			if (
+				session &&
+				!session.moved &&
+				!session.longPressed &&
+				!session.multiple
+			) {
+				const touch = touchByIdentifier(
+					event.changedTouches,
+					session.identifier,
+				);
+				clickRemote(
+					touch?.clientX ?? session.lastX,
+					touch?.clientY ?? session.lastY,
+					0,
+				);
+			}
+			session = null;
+		};
+
+		const handleTouchCancel = (event: TouchEvent) => {
+			event.preventDefault();
+			event.stopImmediatePropagation();
+			clearHoldTimer();
+			finishPan();
+			session = null;
+		};
+
+		screen.addEventListener('touchstart', handleTouchStart, {
+			capture: true,
+			passive: false,
+		});
+		screen.addEventListener('touchmove', handleTouchMove, {
+			capture: true,
+			passive: false,
+		});
+		screen.addEventListener('touchend', handleTouchEnd, {
+			capture: true,
+			passive: false,
+		});
+		screen.addEventListener('touchcancel', handleTouchCancel, {
+			capture: true,
+			passive: false,
+		});
+		return () => {
+			clearHoldTimer();
+			finishPan();
+			screen.removeEventListener('touchstart', handleTouchStart, true);
+			screen.removeEventListener('touchmove', handleTouchMove, true);
+			screen.removeEventListener('touchend', handleTouchEnd, true);
+			screen.removeEventListener('touchcancel', handleTouchCancel, true);
+		};
+	}, []);
+
 	const resetBrowserView = () => {
 		const canvas = screenRef.current?.querySelector('canvas');
 		if (canvas?.width && canvas.height) {
@@ -678,10 +894,7 @@ export function RemoteBrowserPanel({
 		window.addEventListener('pointercancel', handleEnd);
 	};
 
-	const beginViewportZoom = (
-		event: ReactPointerEvent<HTMLDivElement>,
-		delayed = false,
-	) => {
+	const beginViewportZoom = (event: ReactPointerEvent<HTMLDivElement>) => {
 		if (event.button !== 0 || !event.isPrimary) return;
 		const screen = screenContainerRef.current;
 		if (!screen) return;
@@ -693,37 +906,13 @@ export function RemoteBrowserPanel({
 			x: startX - bounds.left - screen.clientLeft,
 			y: startY - bounds.top - screen.clientTop,
 		};
-		let zooming = !delayed;
-		let holdTimer = 0;
-
-		const activate = () => {
-			zooming = true;
-			viewportInteractionRef.current = 'zoom';
-			suppressRemoteClickRef.current = true;
-			screen.classList.add('is-zooming');
-			if (delayed) {
-				window.dispatchEvent(new Event(REMOTE_POINTER_RELEASE_EVENT));
-			}
-		};
-
-		if (delayed) {
-			holdTimer = window.setTimeout(activate, TOUCH_ZOOM_HOLD_MS);
-		} else {
-			event.preventDefault();
-			event.stopPropagation();
-			activate();
-		}
+		event.preventDefault();
+		event.stopPropagation();
+		viewportInteractionRef.current = 'zoom';
+		suppressRemoteClickRef.current = true;
+		screen.classList.add('is-zooming');
 
 		const handleMove = (moveEvent: PointerEvent) => {
-			if (!zooming) {
-				if (
-					Math.hypot(moveEvent.clientX - startX, moveEvent.clientY - startY) >
-					TOUCH_HOLD_MOVE_TOLERANCE
-				) {
-					window.clearTimeout(holdTimer);
-				}
-				return;
-			}
 			moveEvent.preventDefault();
 			moveEvent.stopPropagation();
 			const nextZoom =
@@ -734,7 +923,6 @@ export function RemoteBrowserPanel({
 			updateZoom(nextZoom, anchor);
 		};
 		const handleEnd = () => {
-			window.clearTimeout(holdTimer);
 			if (viewportInteractionRef.current === 'zoom') {
 				viewportInteractionRef.current = null;
 			}
@@ -757,10 +945,6 @@ export function RemoteBrowserPanel({
 		}
 		if (event.altKey) {
 			beginViewportZoom(event);
-			return;
-		}
-		if (event.pointerType === 'touch') {
-			beginViewportZoom(event, true);
 		}
 	};
 
@@ -992,15 +1176,29 @@ export function RemoteBrowserPanel({
 				<div
 					className={`remote-browser-screen${shiftHeld ? ' is-shift-held' : ''}${altHeld ? ' is-alt-held' : ''}`}
 					ref={screenContainerRef}
-					title="Shift-drag to pan. Alt-scroll or Alt-drag vertically to zoom. Long-press and drag vertically on touch."
+					title="Shift-drag to pan. Alt-scroll or Alt-drag vertically to zoom. On touch: drag the pointer, tap to click, hold to right-click, or use two fingers to pan while zoomed."
 					onPointerDownCapture={(event) => {
-						remotePointerPositionRef.current = {
-							x: event.clientX,
-							y: event.clientY,
-						};
 						beginViewportInteraction(event);
+						if (
+							!event.shiftKey &&
+							!event.altKey &&
+							event.pointerType !== 'touch'
+						) {
+							remotePointerPositionRef.current = {
+								x: event.clientX,
+								y: event.clientY,
+							};
+						}
 					}}
 					onPointerMoveCapture={(event) => {
+						if (
+							viewportInteractionRef.current ||
+							event.shiftKey ||
+							event.altKey ||
+							event.pointerType === 'touch'
+						) {
+							return;
+						}
 						remotePointerPositionRef.current = {
 							x: event.clientX,
 							y: event.clientY,
