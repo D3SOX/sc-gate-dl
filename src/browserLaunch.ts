@@ -41,9 +41,14 @@ export const DEFAULT_BROWSER_ARGS = [
 export function getGpuWorkaroundArgs(
 	env: Record<string, string | undefined> = process.env,
 ): string[] {
-	return env.SC_GATE_DL_DISABLE_GPU === 'true'
-		? ['--disable-gpu', '--disable-dev-shm-usage']
-		: [];
+	const enabled = (value: string | undefined) =>
+		value?.trim().toLowerCase() === 'true' || value?.trim() === '1';
+	const args: string[] = [];
+	if (enabled(env.SC_GATE_DL_DISABLE_GPU)) args.push('--disable-gpu');
+	if (enabled(env.SC_GATE_DL_DISABLE_DEV_SHM)) {
+		args.push('--disable-dev-shm-usage');
+	}
+	return args;
 }
 
 export function browserModeToLaunchOptions(

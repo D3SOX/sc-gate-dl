@@ -622,6 +622,7 @@ export class StillhypeDownloader {
 
 	/** Allow on authorize, then wait until we're back on stillhype.io/g/. */
 	private async completeSoundcloudOauth(startPage: Page) {
+		const hardDeadline = Date.now() + 12 * 60_000;
 		let deadline = Date.now() + 120_000;
 		let lastAllowAt = 0;
 		let lastLog = 0;
@@ -642,7 +643,10 @@ export class StillhypeDownloader {
 				if (lastAllowAt === 0 || canRetry) {
 					const allowed = await this.clickSoundcloudOauthAllow(oauthPage);
 					if (allowed) {
-						deadline = Math.max(deadline, Date.now() + 120_000);
+						deadline = Math.min(
+							hardDeadline,
+							Math.max(deadline, Date.now() + 120_000),
+						);
 						allowClicks += 1;
 						lastAllowAt = Date.now();
 						console.log(`StillHype: SoundCloud Allow clicked (${allowClicks})`);

@@ -132,4 +132,31 @@ describe('JobQueue', () => {
 		expect(started).toEqual(['retry']);
 		retry.resolve();
 	});
+
+	test('ignores a stale task error after retrying the same job ID', async () => {
+		let rejectStale = (_error: Error) => {};
+		const stale = new Promise<void>((_resolve, reject) => {
+			rejectStale = reject;
+		});
+		const retry = deferred();
+		const errors: Array<{ id: string; error: unknown }> = [];
+		const queue = new JobQueue({
+			onQueued: () => {},
+			onTaskError: (id, error) => errors.push({ id, error }),
+		});
+
+		queue.enqueue('same-id', () => stale);
+		expect(queue.releaseActive('same-id')).toBeTrue();
+		queue.enqueue('same-id', () => retry.promise);
+
+		rejectStale(new Error('stale failure'));
+		await Bun.sleep(0);
+		expect(errors).toEqual([]);
+		expect(queue.enqueue('next', async () => {})).toEqual({
+			queued: true,
+			position: 1,
+		});
+
+		retry.resolve();
+	});
 });

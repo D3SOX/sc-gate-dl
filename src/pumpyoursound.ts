@@ -22,6 +22,7 @@ const SC_AUTHORIZE_RE = /secure\.soundcloud\.com\/authorize/i;
  */
 export class PumpyoursoundDownloader {
 	private browser!: Browser;
+	private directDownloader: DirectDownloader | null = null;
 	private downloadFilename: string | null = null;
 	private config: HypedditConfig;
 	private progressCallback: ProgressCallback | null = null;
@@ -120,6 +121,7 @@ export class PumpyoursoundDownloader {
 			);
 
 			const direct = new DirectDownloader();
+			this.directDownloader = direct;
 			if (this.progressCallback) {
 				// File bytes come from HTTP, but this job already used the browser and
 				// SoundCloud OAuth — keep browserless false so the Web UI still offers
@@ -139,6 +141,7 @@ export class PumpyoursoundDownloader {
 	}
 
 	async close() {
+		await this.directDownloader?.close();
 		await this.browser?.close();
 	}
 

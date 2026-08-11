@@ -20,6 +20,7 @@ export type ResizeEdges = {
 const MIN_WIDTH = 320;
 const MIN_HEIGHT = 240;
 const VIEWPORT_GAP = 12;
+const LAUNCHER_STACK_HEIGHT = 68;
 export const DEFAULT_REMOTE_ASPECT_RATIO = 16 / 9;
 export const DEFAULT_PANEL_CHROME_HEIGHT = 49;
 
@@ -34,7 +35,10 @@ export function defaultPanelGeometry(
 ): PanelGeometry {
 	const aspectRatio = remoteWidth / remoteHeight;
 	const maximumWidth = Math.max(0, viewport.width - VIEWPORT_GAP * 2);
-	const maximumHeight = Math.max(0, viewport.height - 68 - VIEWPORT_GAP);
+	const maximumHeight = Math.max(
+		0,
+		viewport.height - LAUNCHER_STACK_HEIGHT - VIEWPORT_GAP,
+	);
 	const width = Math.min(
 		remoteWidth,
 		maximumWidth,
@@ -43,7 +47,7 @@ export function defaultPanelGeometry(
 	const height = width / aspectRatio + chromeHeight;
 	return {
 		x: Math.max(VIEWPORT_GAP, viewport.width - width - VIEWPORT_GAP),
-		y: 68,
+		y: LAUNCHER_STACK_HEIGHT,
 		width,
 		height,
 	};

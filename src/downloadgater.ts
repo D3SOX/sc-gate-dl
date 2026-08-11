@@ -93,7 +93,7 @@ export class DownloadgaterDownloader {
 			await this.clickFreeDownload(page);
 
 			let soundcloudAttempted = false;
-			const deadline = Date.now() + 180_000;
+			let deadline = Date.now() + 180_000;
 			while (Date.now() < deadline) {
 				if (await this.hasDownloadButton(page)) break;
 
@@ -135,6 +135,7 @@ export class DownloadgaterDownloader {
 						{ currentGate: 'sc' },
 					);
 					await this.handleSoundcloudConnect(page);
+					deadline = Math.max(deadline, Date.now() + 180_000);
 					continue;
 				}
 
@@ -453,6 +454,7 @@ export class DownloadgaterDownloader {
 		// Nico Chromium flow: wait for authorize → click Allow → wait for unlock.
 		// Never treat "still on downloadgater Connecting…" as done, and never click
 		// email "Continue".
+		const hardDeadline = Date.now() + 12 * 60_000;
 		let deadline = Date.now() + 120_000;
 		while (Date.now() < deadline) {
 			const oauthPage = await this.findSoundcloudOauthPage(page, pagesBefore);
@@ -477,7 +479,10 @@ export class DownloadgaterDownloader {
 					// Authorize shell can render before #submit_approval is attached.
 					await timeout(400);
 				} else {
-					deadline = Math.max(deadline, Date.now() + 120_000);
+					deadline = Math.min(
+						hardDeadline,
+						Math.max(deadline, Date.now() + 120_000),
+					);
 					await timeout(1_000);
 				}
 				continue;
@@ -488,7 +493,10 @@ export class DownloadgaterDownloader {
 			if (approvalTab) {
 				const allowed = await this.clickSoundcloudOauthAllow(approvalTab);
 				if (allowed) {
-					deadline = Math.max(deadline, Date.now() + 120_000);
+					deadline = Math.min(
+						hardDeadline,
+						Math.max(deadline, Date.now() + 120_000),
+					);
 				}
 				await timeout(1_000);
 				continue;

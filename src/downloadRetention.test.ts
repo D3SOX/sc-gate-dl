@@ -39,4 +39,39 @@ describe('successful download cleanup stream', () => {
 		await reader.cancel();
 		expect(cleanups).toBe(0);
 	});
+
+	test('keeps the file when the request aborts after the final chunk', async () => {
+		let finishSource = () => {};
+		let pulls = 0;
+		const source = new ReadableStream<Uint8Array>({
+			pull(controller) {
+				pulls += 1;
+				if (pulls === 1) {
+					controller.enqueue(new Uint8Array([1]));
+					return;
+				}
+				return new Promise<void>((resolve) => {
+					finishSource = () => {
+						controller.close();
+						resolve();
+					};
+				});
+			},
+		});
+		const abortController = new AbortController();
+		let cleanups = 0;
+		const reader = streamWithSuccessfulDownloadCleanup(
+			source,
+			async () => {
+				cleanups += 1;
+			},
+			abortController.signal,
+		).getReader();
+
+		expect((await reader.read()).done).toBeFalse();
+		abortController.abort();
+		finishSource();
+		expect((await reader.read()).done).toBeTrue();
+		expect(cleanups).toBe(0);
+	});
 });

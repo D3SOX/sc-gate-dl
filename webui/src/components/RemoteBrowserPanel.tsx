@@ -12,6 +12,7 @@ import {
 	browserPasswordStorageKey,
 	browserRememberStorageKey,
 	browserViewWebSocketUrl,
+	REMOTE_POINTER_RELEASE_EVENT,
 } from './remoteBrowser';
 import {
 	clampPanelGeometry,
@@ -74,6 +75,7 @@ export function RemoteBrowserPanel({
 	const aspectRatioRef = useRef(DEFAULT_REMOTE_ASPECT_RATIO);
 	const remoteSizeRef = useRef({ width: 1280, height: 720 });
 	const chromeHeightRef = useRef(DEFAULT_PANEL_CHROME_HEIGHT);
+	const [chromeHeight, setChromeHeight] = useState(DEFAULT_PANEL_CHROME_HEIGHT);
 	const hasStoredGeometryRef = useRef(false);
 	const geometryRef = useRef(initialGeometry);
 	const restoredGeometryRef = useRef(initialGeometry);
@@ -177,6 +179,7 @@ export function RemoteBrowserPanel({
 				entry.borderBoxSize[0]?.blockSize ?? entry.contentRect.height;
 			if (!chromeHeight || chromeHeight === chromeHeightRef.current) return;
 			chromeHeightRef.current = chromeHeight;
+			setChromeHeight(chromeHeight);
 			if (maximizedRef.current) return;
 			const adjusted = clampPanelGeometry(
 				geometryRef.current,
@@ -343,6 +346,7 @@ export function RemoteBrowserPanel({
 					}
 				});
 				rfb.addEventListener('securityfailure', () => {
+					if (generation !== connectionGenerationRef.current) return;
 					authenticationFailed = true;
 					try {
 						localStorage.removeItem(browserPasswordStorageKey(viewUrl));
@@ -393,7 +397,7 @@ export function RemoteBrowserPanel({
 			const canvas = screenRef.current?.querySelector('canvas');
 			const pointer = remotePointerPositionRef.current;
 			if (!canvas || !pointer) return;
-			window.dispatchEvent(
+			canvas.dispatchEvent(
 				new MouseEvent('mouseup', {
 					bubbles: true,
 					cancelable: true,
@@ -405,14 +409,11 @@ export function RemoteBrowserPanel({
 				}),
 			);
 		};
-		window.addEventListener(
-			'sc-gate-dl-release-remote-pointer',
-			releaseRemotePointer,
-		);
+		window.addEventListener(REMOTE_POINTER_RELEASE_EVENT, releaseRemotePointer);
 		window.addEventListener('blur', releaseRemotePointer);
 		return () => {
 			window.removeEventListener(
-				'sc-gate-dl-release-remote-pointer',
+				REMOTE_POINTER_RELEASE_EVENT,
 				releaseRemotePointer,
 			);
 			window.removeEventListener('blur', releaseRemotePointer);
@@ -691,7 +692,7 @@ export function RemoteBrowserPanel({
 			suppressRemoteClickRef.current = true;
 			screen.classList.add('is-zooming');
 			if (delayed) {
-				window.dispatchEvent(new Event('sc-gate-dl-release-remote-pointer'));
+				window.dispatchEvent(new Event(REMOTE_POINTER_RELEASE_EVENT));
 			}
 		};
 
@@ -767,7 +768,7 @@ export function RemoteBrowserPanel({
 		height: geometry.height,
 		'--remote-browser-origin-x': `${launcherCenter.x - geometry.x}px`,
 		'--remote-browser-origin-y': `${launcherCenter.y - geometry.y}px`,
-		'--remote-browser-toolbar-height': `${chromeHeightRef.current}px`,
+		'--remote-browser-toolbar-height': `${chromeHeight}px`,
 	} as CSSProperties;
 
 	const resizeHandles: Array<{ className: string; edges: ResizeEdges }> = [

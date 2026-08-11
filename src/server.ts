@@ -1121,6 +1121,7 @@ const server = Bun.serve({
 					jobStore.cancel(jobId, 'Cancelling download…');
 					// Close CloakBrowser / job profile so Chromium exits cleanly
 					await closeJobDownloader(jobId);
+					await jobQueue.waitForCompletion(jobId);
 					jobQueue.releaseActive(jobId);
 					jobStore.cancel(jobId, 'Download cancelled');
 
@@ -1509,22 +1510,26 @@ const server = Bun.serve({
 				const filePath = join('./downloads', filename);
 				const file = Bun.file(filePath);
 				const body = DELETE_AFTER_DOWNLOAD
-					? streamWithSuccessfulDownloadCleanup(file.stream(), async () => {
-							await rm(filePath, { force: true });
-							const current = jobStore.get(jobId);
-							if (
-								current?.outputFilename === filename ||
-								current?.downloadFilename === filename
-							) {
-								jobStore.update(jobId, {
-									outputFilename: null,
-									downloadFilename: null,
-								});
-							}
-							console.log(
-								`Deleted downloaded file after transfer: ${filename}`,
-							);
-						})
+					? streamWithSuccessfulDownloadCleanup(
+							file.stream(),
+							async () => {
+								await rm(filePath, { force: true });
+								const current = jobStore.get(jobId);
+								if (
+									current?.outputFilename === filename ||
+									current?.downloadFilename === filename
+								) {
+									jobStore.update(jobId, {
+										outputFilename: null,
+										downloadFilename: null,
+									});
+								}
+								console.log(
+									`Deleted downloaded file after transfer: ${filename}`,
+								);
+							},
+							req.signal,
+						)
 					: file;
 
 				return new Response(body, {

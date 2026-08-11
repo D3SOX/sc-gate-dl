@@ -1569,7 +1569,7 @@
 	align-items: flex-start;
 	justify-content: flex-end;
 	padding: 72px 16px 16px;
-	pointer-events: none;
+	pointer-events: auto;
 }
 :is(#sc-gate-dl-format-dialog, #sc-gate-dl-browser-mode-dialog) .sc-gate-dl-format-card {
 	pointer-events: auto;

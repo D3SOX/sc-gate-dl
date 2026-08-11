@@ -12,6 +12,7 @@ import {
 	shouldUseEmbeddedLayout,
 } from './deepLink';
 import { RemoteBrowserPanel } from './RemoteBrowserPanel';
+import { REMOTE_POINTER_RELEASE_EVENT } from './remoteBrowser';
 
 type Step = 'url' | 'gate' | 'download' | 'metadata' | 'complete';
 type OutputFormat = 'original' | 'mp3-320' | 'flac';
@@ -401,6 +402,7 @@ export default function App() {
 	const artworkInputRef = useRef<HTMLInputElement>(null);
 	const cleanupToastShownRef = useRef(false);
 	const browserViewAutoClosedRef = useRef(false);
+	const browserViewAutoOpenedRef = useRef(false);
 	const autoStartedFromQueryRef = useRef(false);
 	const eventSourceRef = useRef<EventSource | null>(null);
 	const cancelRequestedRef = useRef(false);
@@ -507,6 +509,7 @@ export default function App() {
 			setLastAttemptedBrowserMode(effectiveBrowserMode);
 			cancelRequestedRef.current = false;
 			browserViewAutoClosedRef.current = false;
+			browserViewAutoOpenedRef.current = false;
 			setStep('gate');
 			setJob((prev) => ({
 				...prev,
@@ -547,12 +550,14 @@ export default function App() {
 					setJob((prev) => ({ ...prev, progress }));
 					if (
 						progress.stage !== 'downloading' &&
+						!browserViewAutoOpenedRef.current &&
 						shouldActivateBrowserView(
 							effectiveBrowserMode,
 							progress,
 							browserViewUrl,
 						)
 					) {
+						browserViewAutoOpenedRef.current = true;
 						setBrowserViewActive(true);
 						setBrowserViewOpen(true);
 					}
@@ -723,7 +728,7 @@ export default function App() {
 			if (data.type === 'cancel') {
 				void cancelDownload();
 			} else if (data.type === 'release-remote-pointer') {
-				window.dispatchEvent(new Event('sc-gate-dl-release-remote-pointer'));
+				window.dispatchEvent(new Event(REMOTE_POINTER_RELEASE_EVENT));
 			}
 		};
 		window.addEventListener('message', onMessage);

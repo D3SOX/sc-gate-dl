@@ -1,4 +1,5 @@
 const PASSWORD_KEY_PREFIX = 'sc-gate-dl-vnc-password:';
+export const REMOTE_POINTER_RELEASE_EVENT = 'sc-gate-dl-release-remote-pointer';
 
 export function browserViewWebSocketUrl(browserViewUrl: string): string {
 	const url = new URL(browserViewUrl);

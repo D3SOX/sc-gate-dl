@@ -75,9 +75,16 @@ Install the [EditThisCookie2](https://addons.mozilla.org/en-US/firefox/addon/etc
 **For Chromium-based browsers (Chrome, Edge, Brave, Helium, etc.):**
 Install the [EditThisCookie (fork)](https://chromewebstore.google.com/detail/editthiscookie-fork/ihfmcbadakjehneaijebhpogkegajgnk) extension
 
-#### SoundCloud Cookies (Required)
+#### SoundCloud Cookies
 
 Used for SoundCloud API/session automation and for **yt-dlp** when downloading a SoundCloud track directly (so downloadable tracks can fetch the original upload, not only the 128k stream).
+
+You can omit `soundcloud-cookies.json` and use **Initialize Logins** in the Web
+UI instead. Sign in through the visible or remote browser; after SoundCloud's
+Library page opens, sc-gate-dl saves the browser cookies to
+`soundcloud-cookies.json` with owner-only permissions. A blank file and `[]` are
+also treated as an empty cookie set. The exported cookies are reused by browser
+gate jobs and yt-dlp.
 
 **Steps:**
 
@@ -166,9 +173,10 @@ failed transfers retain the file so the download can be retried.
 For a remotely hosted headed browser, set `BROWSER_VIEW_URL` to an HTTP(S)
 viewer such as noVNC. The Web UI then shows a **View Browser** button next to
 **Initialize Logins**. Virtual displays without GPU device access can set
-`SC_GATE_DL_DISABLE_GPU=true` to add Chromium's software-rendering flags.
+`SC_GATE_DL_DISABLE_GPU=true`. Containers with a constrained `/dev/shm` can
+separately set `SC_GATE_DL_DISABLE_DEV_SHM=true`.
 
-#### Remote headed browser with noVNC
+#### Remotely hosted headed browser with noVNC
 
 This setup lets a headless server open Chromium in headed mode while you view
 and control it inside the sc-gate-dl Web UI. It is useful for **Initialize
@@ -177,7 +185,7 @@ Logins**, OAuth consent, and captchas.
 Install a virtual X server and VNC server. On Arch Linux / Arch Linux ARM:
 
 ```bash
-pkexec pacman -S --needed xorg-server-xvfb x11vnc
+pkexec pacman -S --needed xorg-server-xvfb xorg-xauth x11vnc
 ```
 
 Install [noVNC](https://github.com/novnc/noVNC) from your distribution, or use
@@ -194,12 +202,16 @@ x11vnc -storepasswd
 Start these processes with your service manager or in separate terminals:
 
 ```bash
-Xvfb :99 -screen 0 1920x1080x24 -nolisten tcp -ac
-x11vnc -display :99 -forever -shared -localhost -usepw -rfbport 5900 \
+sh -c 'umask 077; touch "$HOME/.Xauthority-sc-gate-dl"; chmod 600 "$HOME/.Xauthority-sc-gate-dl"; xauth -f "$HOME/.Xauthority-sc-gate-dl" add :99 . "$(mcookie)"'
+Xvfb :99 -screen 0 1920x1080x24 -nolisten tcp \
+  -auth "$HOME/.Xauthority-sc-gate-dl"
+x11vnc -display :99 -auth "$HOME/.Xauthority-sc-gate-dl" \
+  -forever -shared -localhost -usepw -rfbport 5900 \
   -noxdamage -repeat
 ~/.local/share/sc-gate-dl/noVNC/utils/novnc_proxy \
   --listen 6080 --vnc localhost:5900
-env DISPLAY=:99 XDG_SESSION_TYPE=x11 OZONE_PLATFORM=x11 \
+env DISPLAY=:99 XAUTHORITY="$HOME/.Xauthority-sc-gate-dl" \
+  XDG_SESSION_TYPE=x11 OZONE_PLATFORM=x11 \
   SC_GATE_DL_DISABLE_GPU=true \
   BROWSER_VIEW_URL=http://SERVER_ADDRESS:6080/vnc.html \
   bun webui

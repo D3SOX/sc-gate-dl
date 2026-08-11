@@ -100,9 +100,11 @@ describe('buildXvfbBrowserEnv', () => {
 });
 
 describe('getGpuWorkaroundArgs', () => {
-	test('disables GPU access only when explicitly requested', () => {
-		expect(getGpuWorkaroundArgs({ SC_GATE_DL_DISABLE_GPU: 'true' })).toEqual([
+	test('enables GPU and shared-memory workarounds independently', () => {
+		expect(getGpuWorkaroundArgs({ SC_GATE_DL_DISABLE_GPU: ' TRUE ' })).toEqual([
 			'--disable-gpu',
+		]);
+		expect(getGpuWorkaroundArgs({ SC_GATE_DL_DISABLE_DEV_SHM: '1' })).toEqual([
 			'--disable-dev-shm-usage',
 		]);
 		expect(getGpuWorkaroundArgs({})).toEqual([]);

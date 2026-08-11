@@ -86,7 +86,11 @@ export class JobQueue {
 		}
 
 		this.activeCompletion = task
-			.catch((error) => this.hooks.onTaskError(job.id, error))
+			.catch((error) => {
+				if (this.activeRun === job) {
+					this.hooks.onTaskError(job.id, error);
+				}
+			})
 			.finally(() => {
 				if (this.activeRun !== job) return;
 				this.activeJobId = null;

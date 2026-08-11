@@ -4,7 +4,7 @@ import { browserModeToLaunchOptions, launchAppBrowser } from './browserLaunch';
 import Selectors from './selectors';
 import { waitForSoundcloudLogin } from './soundcloudLogin';
 import type { HypedditConfig, JobProgress, JobStage } from './types';
-import { loadCookies, REPO_URL, timeout } from './utils';
+import { loadCookies, REPO_URL, timeout, writeBrowserCookies } from './utils';
 
 export type ProgressCallback = (
 	stage: JobStage,
@@ -199,7 +199,7 @@ export class HypedditDownloader {
 		try {
 			await soundCloudPage.waitForSelector(
 				Selectors.SOUNDCLOUD_CAPTCHA_CONTAINER,
-				{ timeout: 30_000 },
+				{ timeout: 5_000 },
 			);
 			captchaFrameFound = true;
 		} catch {
@@ -211,7 +211,7 @@ export class HypedditDownloader {
 		}
 
 		await soundCloudPage.waitForSelector(Selectors.SOUNDCLOUD_LIBRARY_LINK, {
-			timeout: 30_000,
+			timeout: 10 * 60_000,
 		});
 		await Promise.all([
 			soundCloudPage.click(Selectors.SOUNDCLOUD_LIBRARY_LINK),
@@ -221,6 +221,15 @@ export class HypedditDownloader {
 		await soundCloudPage.waitForFunction(() =>
 			window.location.href.includes('/you/library'),
 		);
+		const soundCloudCookies = await this.browser
+			.defaultBrowserContext()
+			.cookies()
+			.then((cookies) =>
+				cookies.filter((cookie) =>
+					/(^|\.)soundcloud\.com$/i.test(cookie.domain.replace(/^\./, '')),
+				),
+			);
+		await writeBrowserCookies(soundCloudCookies);
 		await soundCloudPage.close();
 
 		if (this.spotifyCookiesExists) {
