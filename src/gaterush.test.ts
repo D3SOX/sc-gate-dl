@@ -13,13 +13,16 @@ describe('GaterushDownloader cancellation', () => {
 		});
 		const settled = pending.catch((error: unknown) => error);
 		let browserClosed = false;
+		const events: string[] = [];
 
 		Object.assign(downloader, {
 			cancelPendingDownloadWait: () => {
+				events.push('cancel');
 				rejectPending(new Error('Download was canceled'));
 			},
 			browser: {
 				close: async () => {
+					events.push('close');
 					browserClosed = true;
 				},
 			},
@@ -27,6 +30,7 @@ describe('GaterushDownloader cancellation', () => {
 
 		await downloader.close();
 
+		expect(events).toEqual(['cancel', 'close']);
 		expect(browserClosed).toBeTrue();
 		expect(await settled).toEqual(new Error('Download was canceled'));
 	});
