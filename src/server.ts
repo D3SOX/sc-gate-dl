@@ -6,6 +6,7 @@ import { AudioProcessor } from './audioProcessor';
 import { isXvfbSupported } from './browserLaunch';
 import { attachmentContentDisposition } from './contentDisposition';
 import { DirectDownloader } from './directDownload';
+import { cleanupCancelledDownloadArtifacts } from './downloadCleanup';
 import { DownloadgaterDownloader } from './downloadgater';
 import { renameDownloadFileExclusive } from './downloadRename';
 import {
@@ -111,6 +112,8 @@ const activeDownloaders = new Map<string, AnyDownloader>();
 const jobProfileDirs = new Map<string, string>();
 /** In-flight close+profile cleanup so SIGINT cannot delete a profile mid-close. */
 const closingJobs = new Map<string, Promise<void>>();
+/** Share cleanup between a timed-out endpoint and eventual task completion. */
+const cancelledDownloadCleanups = new Map<string, Promise<void>>();
 
 const jobQueue = new JobQueue({
 	onQueued: (jobId, position) => {
@@ -201,6 +204,34 @@ async function closeAllDownloaders(): Promise<void> {
 		...closingJobs.keys(),
 	]);
 	await Promise.all([...ids].map((id) => closeJobDownloader(id)));
+}
+
+async function cleanupCancelledJobDownloads(
+	jobId: string,
+	sweepIncomplete = true,
+): Promise<void> {
+	const existing = cancelledDownloadCleanups.get(jobId);
+	if (existing) return existing;
+	const cleanup = (async () => {
+		const job = jobStore.get(jobId);
+		const removed = await cleanupCancelledDownloadArtifacts({
+			filenames: [job?.downloadFilename, job?.outputFilename],
+			sweepIncomplete,
+		});
+		if (removed.length > 0) {
+			console.log(
+				`Removed cancelled download artifacts: ${removed.join(', ')}`,
+			);
+		}
+		if (job?.downloadFilename || job?.outputFilename) {
+			jobStore.update(jobId, {
+				downloadFilename: null,
+				outputFilename: null,
+			});
+		}
+	})();
+	cancelledDownloadCleanups.set(jobId, cleanup);
+	return cleanup;
 }
 
 function serializeTrack(track: SoundcloudTrack): Job['track'] {
@@ -642,6 +673,9 @@ async function runDownloadProcess(jobId: string): Promise<void> {
 		jobStore.setError(jobId, message);
 	} finally {
 		await closeJobDownloader(jobId);
+		if (jobStore.isCancelled(jobId)) {
+			await cleanupCancelledJobDownloads(jobId);
+		}
 	}
 }
 
@@ -1055,6 +1089,7 @@ const server = Bun.serve({
 					}
 
 					jobStore.clearCancelled(jobId);
+					cancelledDownloadCleanups.delete(jobId);
 
 					try {
 						const body = (await req.json()) as Record<string, unknown>;
@@ -1137,14 +1172,28 @@ const server = Bun.serve({
 					if (stage === 'ready' || stage === 'cancelled') {
 						jobStore.cancel(jobId);
 						await closeJobDownloader(jobId);
+						await cleanupCancelledJobDownloads(jobId, false);
 						jobQueue.releaseActive(jobId);
 						return jsonResponse({ success: true, message: 'Cancelled' });
 					}
 
 					jobStore.requestCancellation(jobId);
-					// Close CloakBrowser / job profile so Chromium exits cleanly
-					await closeJobDownloader(jobId);
-					await jobQueue.waitForCompletion(jobId);
+					const teardownCompleted = await Promise.race([
+						(async () => {
+							// Close the provider and wait for its task to finish before the
+							// serialized queue advances.
+							await closeJobDownloader(jobId);
+							await jobQueue.waitForCompletion(jobId);
+							return true;
+						})(),
+						Bun.sleep(10_000).then(() => false),
+					]);
+					if (!teardownCompleted) {
+						console.warn(
+							`Cancellation teardown timed out for ${jobId}; releasing its queue slot`,
+						);
+						await cleanupCancelledJobDownloads(jobId);
+					}
 					jobQueue.releaseActive(jobId);
 					jobStore.cancel(jobId, 'Download cancelled');
 

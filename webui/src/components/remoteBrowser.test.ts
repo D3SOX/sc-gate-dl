@@ -63,9 +63,11 @@ describe('mobile remote controls', () => {
 
 	function setup(zoom = 2) {
 		const pointerMoves: Array<[number, number]> = [];
-		const clicks: Array<[number, number, 0 | 2]> = [];
+		const clicks: Array<0 | 2> = [];
 		const pans: Array<[number, number]> = [];
 		const panning: boolean[] = [];
+		const zooms: Array<[number, number, number]> = [];
+		const zooming: boolean[] = [];
 		let longPress: (() => void) | null = null;
 		const controls = createMobileRemoteControls({
 			getZoom: () => zoom,
@@ -77,10 +79,12 @@ describe('mobile remote controls', () => {
 					longPress = null;
 				};
 			},
-			movePointer: (x, y) => pointerMoves.push([x, y]),
-			click: (x, y, button) => clicks.push([x, y, button]),
+			movePointerBy: (x, y) => pointerMoves.push([x, y]),
+			click: (button) => clicks.push(button),
 			panBy: (x, y) => pans.push([x, y]),
 			setPanning: (active) => panning.push(active),
+			zoomBy: (deltaY, x, y) => zooms.push([deltaY, x, y]),
+			setZooming: (active) => zooming.push(active),
 		});
 		return {
 			controls,
@@ -88,31 +92,60 @@ describe('mobile remote controls', () => {
 			clicks,
 			pans,
 			panning,
+			zooms,
+			zooming,
 			fireLongPress: () => longPress?.(),
 		};
 	}
 
-	test('moves the pointer with one finger without clicking after a drag', () => {
+	test('moves the pointer relatively with one finger without clicking', () => {
 		const { controls, pointerMoves, clicks } = setup();
 		controls.start([touch(1, 20, 30)]);
+		controls.move([touch(1, 25, 35)]);
 		controls.move([touch(1, 42, 55)]);
-		controls.end([], [touch(1, 42, 55)]);
+		controls.move([touch(1, 47, 61)]);
+		controls.end([], [touch(1, 47, 61)]);
 
-		expect(pointerMoves).toEqual([[42, 55]]);
+		expect(pointerMoves).toEqual([
+			[22, 25],
+			[5, 6],
+		]);
 		expect(clicks).toEqual([]);
 	});
 
-	test('maps a tap to left-click and a stationary hold to right-click', () => {
+	test('clicks at the current pointer position without moving on tap or hold', () => {
 		const tap = setup();
 		tap.controls.start([touch(1, 20, 30)]);
 		tap.controls.end([], [touch(1, 20, 30)]);
-		expect(tap.clicks).toEqual([[20, 30, 0]]);
+		expect(tap.pointerMoves).toEqual([]);
+		expect(tap.clicks).toEqual([0]);
 
 		const hold = setup();
 		hold.controls.start([touch(1, 40, 50)]);
 		hold.fireLongPress();
+		expect(hold.clicks).toEqual([]);
 		hold.controls.end([], [touch(1, 40, 50)]);
-		expect(hold.clicks).toEqual([[40, 50, 2]]);
+		expect(hold.pointerMoves).toEqual([]);
+		expect(hold.clicks).toEqual([2]);
+	});
+
+	test('zooms vertically after holding without moving the pointer', () => {
+		const { controls, fireLongPress, pointerMoves, clicks, zooms, zooming } =
+			setup();
+		controls.start([touch(1, 40, 50)]);
+		fireLongPress();
+		controls.move([touch(1, 40, 45)]);
+		controls.move([touch(1, 40, 30)]);
+		controls.move([touch(1, 40, 20)]);
+		controls.end([], [touch(1, 40, 20)]);
+
+		expect(zooms).toEqual([
+			[20, 40, 50],
+			[10, 40, 50],
+		]);
+		expect(zooming).toEqual([true, false]);
+		expect(pointerMoves).toEqual([]);
+		expect(clicks).toEqual([]);
 	});
 
 	test('pans with two fingers and resumes pointer movement with the remainder', () => {
@@ -128,7 +161,7 @@ describe('mobile remote controls', () => {
 
 		expect(pans).toEqual([[10, 15]]);
 		expect(panning).toContain(true);
-		expect(pointerMoves).toEqual([[36, 53]]);
+		expect(pointerMoves).toEqual([[6, 8]]);
 		expect(clicks).toEqual([]);
 	});
 });

@@ -12,6 +12,7 @@ export class DownloadgaterDownloader {
 	private downloadFilename: string | null = null;
 	private config: HypedditConfig;
 	private progressCallback: ProgressCallback | null = null;
+	private cancelPendingDownloadWait: (() => void) | null = null;
 
 	constructor(config: HypedditConfig) {
 		this.config = config;
@@ -167,6 +168,8 @@ export class DownloadgaterDownloader {
 	}
 
 	async close() {
+		this.cancelPendingDownloadWait?.();
+		this.cancelPendingDownloadWait = null;
 		await this.browser?.close();
 	}
 
@@ -693,6 +696,10 @@ export class DownloadgaterDownloader {
 			downloadCompleteResolve = resolve;
 			downloadCompleteReject = reject;
 		});
+		const cancelPendingDownloadWait = () => {
+			downloadCompleteReject(new Error('Download was canceled'));
+		};
+		this.cancelPendingDownloadWait = cancelPendingDownloadWait;
 		const downloadTimer = setTimeout(
 			() =>
 				downloadCompleteReject(
@@ -780,6 +787,9 @@ export class DownloadgaterDownloader {
 			await clickDownload();
 			await downloadCompletePromise;
 		} finally {
+			if (this.cancelPendingDownloadWait === cancelPendingDownloadWait) {
+				this.cancelPendingDownloadWait = null;
+			}
 			clearTimeout(downloadTimer);
 			clearTimeout(retryTimer);
 			pBar.stop();

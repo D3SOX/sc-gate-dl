@@ -9,10 +9,12 @@ type MobileRemoteControlOptions = {
 	moveTolerance: number;
 	longPressMs: number;
 	schedule: (callback: () => void, delay: number) => () => void;
-	movePointer: (clientX: number, clientY: number) => void;
-	click: (clientX: number, clientY: number, button: 0 | 2) => void;
+	movePointerBy: (deltaX: number, deltaY: number) => void;
+	click: (button: 0 | 2) => void;
 	panBy: (deltaX: number, deltaY: number) => void;
 	setPanning: (active: boolean) => void;
+	zoomBy: (deltaY: number, anchorX: number, anchorY: number) => void;
+	setZooming: (active: boolean) => void;
 };
 
 type TouchSession = {
@@ -23,6 +25,7 @@ type TouchSession = {
 	lastY: number;
 	moved: boolean;
 	longPressed: boolean;
+	zooming: boolean;
 	multiple: boolean;
 	cancelHold: (() => void) | null;
 };
@@ -40,10 +43,12 @@ export function createMobileRemoteControls({
 	moveTolerance,
 	longPressMs,
 	schedule,
-	movePointer,
+	movePointerBy,
 	click,
 	panBy,
 	setPanning,
+	zoomBy,
+	setZooming,
 }: MobileRemoteControlOptions) {
 	let session: TouchSession | null = null;
 	let panCenter: { x: number; y: number } | null = null;
@@ -58,6 +63,12 @@ export function createMobileRemoteControls({
 		setPanning(false);
 	};
 
+	const finishZoom = () => {
+		if (!session?.zooming) return;
+		session.zooming = false;
+		setZooming(false);
+	};
+
 	const startSingleTouch = (touch: MobileTouch, moved = false) => {
 		session = {
 			identifier: touch.identifier,
@@ -67,6 +78,7 @@ export function createMobileRemoteControls({
 			lastY: touch.clientY,
 			moved,
 			longPressed: false,
+			zooming: false,
 			multiple: false,
 			cancelHold: null,
 		};
@@ -74,7 +86,6 @@ export function createMobileRemoteControls({
 		session.cancelHold = schedule(() => {
 			if (!session || session.moved || session.multiple) return;
 			session.longPressed = true;
-			click(session.lastX, session.lastY, 2);
 		}, longPressMs);
 	};
 
@@ -107,23 +118,45 @@ export function createMobileRemoteControls({
 				(candidate) => candidate.identifier === session?.identifier,
 			);
 			if (!touch) return;
+			const previousX = session.lastX;
+			const previousY = session.lastY;
 			session.lastX = touch.clientX;
 			session.lastY = touch.clientY;
+			let startedMoving = false;
 			if (
+				!session.moved &&
 				Math.hypot(
 					touch.clientX - session.startX,
 					touch.clientY - session.startY,
 				) > moveTolerance
 			) {
 				session.moved = true;
-				cancelHold();
+				startedMoving = true;
+				if (session.longPressed) {
+					session.zooming = true;
+					setZooming(true);
+				} else {
+					cancelHold();
+				}
 			}
-			if (session.moved) movePointer(touch.clientX, touch.clientY);
+			if (!session.moved) return;
+			if (session.zooming) {
+				zoomBy(
+					(startedMoving ? session.startY : previousY) - touch.clientY,
+					session.startX,
+					session.startY,
+				);
+				return;
+			}
+			movePointerBy(
+				touch.clientX - (startedMoving ? session.startX : previousX),
+				touch.clientY - (startedMoving ? session.startY : previousY),
+			);
 		},
 
 		end(
 			touches: readonly MobileTouch[],
-			changedTouches: readonly MobileTouch[],
+			_changedTouches: readonly MobileTouch[],
 		) {
 			if (touches.length > 0) {
 				if (touches.length < 2) {
@@ -137,20 +170,9 @@ export function createMobileRemoteControls({
 
 			cancelHold();
 			finishPan();
-			if (
-				session &&
-				!session.moved &&
-				!session.longPressed &&
-				!session.multiple
-			) {
-				const touch = changedTouches.find(
-					(candidate) => candidate.identifier === session?.identifier,
-				);
-				click(
-					touch?.clientX ?? session.lastX,
-					touch?.clientY ?? session.lastY,
-					0,
-				);
+			finishZoom();
+			if (session && !session.moved && !session.multiple) {
+				click(session.longPressed ? 2 : 0);
 			}
 			session = null;
 		},
@@ -158,6 +180,7 @@ export function createMobileRemoteControls({
 		cancel() {
 			cancelHold();
 			finishPan();
+			finishZoom();
 			session = null;
 		},
 	};

@@ -65,6 +65,7 @@ export class MypresskitDownloader {
 	private browser!: Browser;
 	private config: HypedditConfig;
 	private progressCallback: ProgressCallback | null = null;
+	private readonly downloadAbortController = new AbortController();
 
 	constructor(config: HypedditConfig) {
 		this.config = config;
@@ -223,6 +224,7 @@ export class MypresskitDownloader {
 	}
 
 	async close() {
+		this.downloadAbortController.abort();
 		await this.browser?.close();
 	}
 
@@ -623,7 +625,10 @@ export class MypresskitDownloader {
 				'User-Agent': USER_AGENT,
 				Accept: '*/*',
 			},
-			signal: AbortSignal.timeout(120_000),
+			signal: AbortSignal.any([
+				this.downloadAbortController.signal,
+				AbortSignal.timeout(120_000),
+			]),
 		});
 
 		if (!response.ok || !response.body) {

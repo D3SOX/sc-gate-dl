@@ -26,6 +26,7 @@ export class HypedditDownloader {
 	private config: HypedditConfig;
 	private spotifyCookiesExists = false;
 	private progressCallback: ProgressCallback | null = null;
+	private cancelPendingDownloadWait: (() => void) | null = null;
 	private readonly gateDefinitions: GateDefinition[] = [
 		{
 			name: 'email',
@@ -351,6 +352,8 @@ export class HypedditDownloader {
 	}
 
 	async close() {
+		this.cancelPendingDownloadWait?.();
+		this.cancelPendingDownloadWait = null;
 		await this.browser?.close();
 	}
 
@@ -682,9 +685,22 @@ export class HypedditDownloader {
 		// track download state
 		let downloadGuid: string | null = null;
 		let downloadCompleteResolve: (value: string) => void;
-		const downloadCompletePromise = new Promise<string>((resolve) => {
+		let downloadCompleteReject: (reason: Error) => void;
+		const downloadCompletePromise = new Promise<string>((resolve, reject) => {
 			downloadCompleteResolve = resolve;
+			downloadCompleteReject = reject;
 		});
+		const cancelPendingDownloadWait = () => {
+			downloadCompleteReject(new Error('Download was canceled'));
+		};
+		this.cancelPendingDownloadWait = cancelPendingDownloadWait;
+		const downloadTimer = setTimeout(
+			() =>
+				downloadCompleteReject(
+					new Error('Hypeddit download did not complete in time'),
+				),
+			10 * 60_000,
+		);
 
 		// create progress bar (for CLI)
 		const pBar = new SingleBar(
@@ -746,13 +762,13 @@ export class HypedditDownloader {
 					);
 				} else if (event.state === 'canceled') {
 					pBar.stop();
-					throw new Error('Download was canceled');
+					downloadCompleteReject(new Error('Download was canceled'));
 				}
 			}
 		});
 
 		console.log('Waiting for download start event...');
-		setTimeout(async () => {
+		const retryTimer = setTimeout(async () => {
 			if (!downloadGuid) {
 				// click button again when download has not started after 10 seconds
 				console.log(
@@ -762,16 +778,23 @@ export class HypedditDownloader {
 			}
 		}, 10_000);
 
-		// click the download button and wait for download to complete
-		await Promise.all([
-			page.click(Selectors.DW_DOWNLOAD_BUTTON),
-			downloadCompletePromise,
-		]);
+		try {
+			// click the download button and wait for download to complete
+			await Promise.all([
+				page.click(Selectors.DW_DOWNLOAD_BUTTON),
+				downloadCompletePromise,
+			]);
 
-		console.log('Download complete, detaching CDP session...');
-
-		// clean up CDP session
-		await client.detach();
+			console.log('Download complete, detaching CDP session...');
+		} finally {
+			if (this.cancelPendingDownloadWait === cancelPendingDownloadWait) {
+				this.cancelPendingDownloadWait = null;
+			}
+			clearTimeout(downloadTimer);
+			clearTimeout(retryTimer);
+			pBar.stop();
+			await client.detach().catch(() => {});
+		}
 	}
 
 	private pickPreferredGate(candidates: string[]): string {
