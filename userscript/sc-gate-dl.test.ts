@@ -6,16 +6,34 @@ type UpdateFeedPlaybackOrigin = (
 	outsidePlaybackSelection: boolean,
 ) => string | null;
 
+type StoreServiceForUrl = (href: string) => string | null;
+
 const source = await Bun.file(
 	new URL('./sc-gate-dl.user.js', import.meta.url),
 ).text();
-const start = source.indexOf('\tfunction updateFeedPlaybackOrigin(');
-const end = source.indexOf('\n\n\tlet lastRecordedPlayingUrl', start);
-if (start < 0 || end < 0) throw new Error('Playback-origin helper not found');
-const helperSource = source.slice(start, end).trim();
-const updateFeedPlaybackOrigin = Function(
-	`"use strict"; ${helperSource}; return updateFeedPlaybackOrigin;`,
-)() as UpdateFeedPlaybackOrigin;
+
+function extractHelper<T>(
+	startMarker: string,
+	endMarker: string,
+	name: string,
+): T {
+	const start = source.indexOf(startMarker);
+	const end = source.indexOf(endMarker, start);
+	if (start < 0 || end < 0) throw new Error(`${name} helper not found`);
+	const helperSource = source.slice(start, end).trim();
+	return Function(`"use strict"; ${helperSource}; return ${name};`)() as T;
+}
+
+const updateFeedPlaybackOrigin = extractHelper<UpdateFeedPlaybackOrigin>(
+	'\tfunction updateFeedPlaybackOrigin(',
+	'\n\n\tlet lastRecordedPlayingUrl',
+	'updateFeedPlaybackOrigin',
+);
+const storeServiceForUrl = extractHelper<StoreServiceForUrl>(
+	'\tfunction storeServiceForUrl(',
+	'\n\n\tfunction decorateStoreLink(',
+	'storeServiceForUrl',
+);
 
 describe('feed playback origin', () => {
 	test('clears feed provenance when another track is selected outside the feed', () => {
@@ -27,6 +45,29 @@ describe('feed playback origin', () => {
 	test('preserves feed provenance through unrelated page clicks', () => {
 		const origin = 'https://soundcloud.com/feed/track';
 		expect(updateFeedPlaybackOrigin(origin, null, false)).toBe(origin);
+	});
+});
+
+describe('store link branding', () => {
+	test('recognizes MyPressKit gate URLs', () => {
+		expect(
+			storeServiceForUrl(
+				'https://www.mypresskit.info/gate/dj-felge-rihanna-umbrella-dj-felge-x-kluge-edit',
+			),
+		).toBe('mypresskit');
+		expect(
+			storeServiceForUrl(
+				'https://mypresskit.info/gate/dj-felge-rihanna-umbrella-dj-felge-x-kluge-edit/',
+			),
+		).toBe('mypresskit');
+	});
+
+	test('rejects non-gate MyPressKit URLs', () => {
+		expect(storeServiceForUrl('https://www.mypresskit.info/')).toBeNull();
+		expect(
+			storeServiceForUrl('https://www.mypresskit.info/marketplace'),
+		).toBeNull();
+		expect(storeServiceForUrl('https://example.com/gate/foo')).toBeNull();
 	});
 });
 
