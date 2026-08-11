@@ -1,4 +1,9 @@
-import { type BrowserMode, isBrowserMode } from '../../../src/types';
+import {
+	type BrowserMode,
+	isBrowserMode,
+	isOutputFormat,
+	type OutputFormat,
+} from '../../../src/types';
 
 export function readStoredBrowserMode(
 	storage: Pick<Storage, 'getItem'>,
@@ -11,6 +16,19 @@ export function readStoredBrowserMode(
 export function readRequestedBrowserMode(search: string): BrowserMode | null {
 	const mode = new URLSearchParams(search).get('browserMode');
 	return isBrowserMode(mode) ? mode : null;
+}
+
+export function readStoredOutputFormat(
+	storage: Pick<Storage, 'getItem'>,
+	key: string,
+): OutputFormat | null {
+	const storedFormat = storage.getItem(key);
+	return isOutputFormat(storedFormat) ? storedFormat : null;
+}
+
+export function readRequestedOutputFormat(search: string): OutputFormat | null {
+	const format = new URLSearchParams(search).get('outputFormat');
+	return isOutputFormat(format) ? format : null;
 }
 
 export function shouldAutoStartDeepLink(

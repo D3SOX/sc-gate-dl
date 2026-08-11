@@ -3,7 +3,9 @@ import {
 	parseAvailableBrowserModes,
 	parseBrowserViewUrl,
 	readRequestedBrowserMode,
+	readRequestedOutputFormat,
 	readStoredBrowserMode,
+	readStoredOutputFormat,
 	shouldAutoStartDeepLink,
 	shouldUseEmbeddedLayout,
 } from '../webui/src/components/deepLink';
@@ -35,6 +37,23 @@ describe('embedded layout query parameter', () => {
 		expect(shouldUseEmbeddedLayout('?url=track&embedded=1')).toBeTrue();
 		expect(shouldUseEmbeddedLayout('?url=track')).toBeFalse();
 		expect(shouldUseEmbeddedLayout('?embedded=0')).toBeFalse();
+	});
+});
+
+describe('output-format preference hydration', () => {
+	test('reads a valid output format from a userscript deep link', () => {
+		expect(readRequestedOutputFormat('?outputFormat=flac')).toBe('flac');
+		expect(readRequestedOutputFormat('?outputFormat=invalid')).toBeNull();
+	});
+
+	test('reads stored formats through the same helper used by the UI', () => {
+		const storage = { getItem: () => 'original' };
+		expect(readStoredOutputFormat(storage, 'output-format')).toBe('original');
+	});
+
+	test('ignores invalid stored formats', () => {
+		const storage = { getItem: () => 'mp3' };
+		expect(readStoredOutputFormat(storage, 'output-format')).toBeNull();
 	});
 });
 
