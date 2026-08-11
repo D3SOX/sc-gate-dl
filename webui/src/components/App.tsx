@@ -1530,7 +1530,7 @@ export default function App() {
 								{step === 'download' && (
 									<>
 										<div className="progress-bar">
-											{job.progress?.totalBytes ? (
+											{typeof job.progress?.totalBytes === 'number' ? (
 												<div
 													className="progress-fill"
 													style={{ width: `${job.progress?.percent || 0}%` }}
@@ -1540,7 +1540,7 @@ export default function App() {
 											)}
 										</div>
 										<div className="progress-stats">
-											{job.progress?.totalBytes ? (
+											{typeof job.progress?.totalBytes === 'number' ? (
 												<span>{formatPercent(job.progress?.percent)}%</span>
 											) : null}
 											{job.progress?.downloadBytes !== undefined && (
@@ -1548,7 +1548,7 @@ export default function App() {
 													{(job.progress.downloadBytes / 1024 / 1024).toFixed(
 														1,
 													)}
-													{job.progress.totalBytes
+													{typeof job.progress.totalBytes === 'number'
 														? ` / ${(job.progress.totalBytes / 1024 / 1024).toFixed(1)}`
 														: ''}{' '}
 													MB
