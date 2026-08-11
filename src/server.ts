@@ -633,10 +633,8 @@ async function runDownloadProcess(jobId: string): Promise<void> {
 		jobStore.updateProgress(jobId, 'ready', 'Ready for metadata editing', 100);
 	} catch (error) {
 		if (jobStore.isCancelled(jobId)) {
-			// Progress already set to cancelled by the cancel endpoint (or below).
-			if (jobStore.get(jobId)?.progress.stage !== 'cancelled') {
-				jobStore.cancel(jobId);
-			}
+			// The cancel endpoint publishes the terminal state after this task has
+			// released the serial queue slot.
 			return;
 		}
 		const message =
@@ -1143,7 +1141,7 @@ const server = Bun.serve({
 						return jsonResponse({ success: true, message: 'Cancelled' });
 					}
 
-					jobStore.cancel(jobId, 'Cancelling download…');
+					jobStore.requestCancellation(jobId);
 					// Close CloakBrowser / job profile so Chromium exits cleanly
 					await closeJobDownloader(jobId);
 					await jobQueue.waitForCompletion(jobId);
