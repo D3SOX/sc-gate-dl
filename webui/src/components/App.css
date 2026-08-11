@@ -122,12 +122,20 @@
 /* Error banner */
 .error-banner {
 	display: flex;
-	align-items: center;
-	gap: var(--space-md);
+	flex-direction: column;
+	align-items: stretch;
+	gap: var(--space-sm);
 	padding: var(--space-md) var(--space-lg);
 	background: rgba(255, 50, 50, 0.1);
 	border: 1px solid rgba(255, 50, 50, 0.3);
 	border-radius: 8px;
+}
+
+.error-banner-message {
+	display: flex;
+	align-items: flex-start;
+	gap: var(--space-md);
+	font-size: 0.9rem;
 }
 
 .error-icon {
@@ -144,9 +152,11 @@
 	flex-shrink: 0;
 }
 
-.error-banner span:nth-child(2) {
-	flex: 1;
-	font-size: 0.9rem;
+.error-banner-actions {
+	display: flex;
+	flex-wrap: wrap;
+	gap: var(--space-sm);
+	padding-left: calc(24px + var(--space-md));
 }
 
 .error-banner button {
@@ -158,6 +168,7 @@
 	border-radius: 4px;
 	cursor: pointer;
 	transition: all var(--transition-fast);
+	white-space: nowrap;
 }
 
 .error-banner button:hover {

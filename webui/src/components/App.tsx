@@ -1210,32 +1210,37 @@ export default function App() {
 			{/* Error display */}
 			{job.error && (
 				<div className="error-banner">
-					<span className="error-icon">!</span>
-					<span>{job.error}</span>
-					{job.jobId && job.progress?.stage === 'error'
-						? availableBrowserModes
-								.filter(
-									(mode) => mode !== (lastAttemptedBrowserMode ?? browserMode),
-								)
-								.map((mode) => (
-									<button
-										type="button"
-										key={mode}
-										onClick={() => {
-											updateBrowserMode(mode);
-											void startDownload(job.jobId as string, mode);
-										}}
-									>
-										Retry with {BROWSER_MODE_LABELS[mode]}
-									</button>
-								))
-						: null}
-					<button
-						type="button"
-						onClick={() => setJob((prev) => ({ ...prev, error: null }))}
-					>
-						Dismiss
-					</button>
+					<div className="error-banner-message">
+						<span className="error-icon">!</span>
+						<span>{job.error}</span>
+					</div>
+					<div className="error-banner-actions">
+						{job.jobId && job.progress?.stage === 'error'
+							? availableBrowserModes
+									.filter(
+										(mode) =>
+											mode !== (lastAttemptedBrowserMode ?? browserMode),
+									)
+									.map((mode) => (
+										<button
+											type="button"
+											key={mode}
+											onClick={() => {
+												updateBrowserMode(mode);
+												void startDownload(job.jobId as string, mode);
+											}}
+										>
+											Retry with {BROWSER_MODE_LABELS[mode]}
+										</button>
+									))
+							: null}
+						<button
+							type="button"
+							onClick={() => setJob((prev) => ({ ...prev, error: null }))}
+						>
+							Dismiss
+						</button>
+					</div>
 				</div>
 			)}
 
