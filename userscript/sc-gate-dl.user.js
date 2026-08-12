@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         sc-gate-dl
 // @namespace    https://github.com/D3SOX/sc-gate-dl
-// @version      1.11.4
+// @version      1.11.5
 // @description  Add sc-gate-dl download controls and remember your position in the SoundCloud feed
 // @author       D3SOX
 // @match        https://soundcloud.com/*
@@ -1236,16 +1236,20 @@
 	function requestJobCancel(jobId) {
 		const url = `${getApiBase()}/api/job/${encodeURIComponent(jobId)}/cancel`;
 		if (gmXmlHttpRequest) {
-			// Dispatch immediately; do not wait for teardown (browser close can take seconds).
-			gmXmlHttpRequest({
-				method: 'POST',
-				url,
-				anonymous: true,
-				onload: () => {},
-				onerror: () => {},
-				ontimeout: () => {},
-				onabort: () => {},
-			});
+			try {
+				// Dispatch immediately; do not wait for teardown (browser close can take seconds).
+				gmXmlHttpRequest({
+					method: 'POST',
+					url,
+					anonymous: true,
+					onload: () => {},
+					onerror: () => {},
+					ontimeout: () => {},
+					onabort: () => {},
+				});
+			} catch {
+				// Bridge may throw synchronously; panel cleanup must still continue.
+			}
 			return Promise.resolve();
 		}
 		return fetch(url, { method: 'POST', keepalive: true }).catch(() => {});

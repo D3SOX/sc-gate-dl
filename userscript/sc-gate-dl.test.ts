@@ -194,6 +194,9 @@ describe('Web UI preferences', () => {
 		expect(source).toContain(
 			"window.addEventListener('pagehide', cancelJobOnHostUnload)",
 		);
+		expect(source).toContain(
+			"window.addEventListener('beforeunload', cancelJobOnHostUnload)",
+		);
 		expect(source).toContain('await cancellation');
 		expect(source).toContain("iframe.src = 'about:blank'");
 		const cancelIdx = source.indexOf('await cancellation');
