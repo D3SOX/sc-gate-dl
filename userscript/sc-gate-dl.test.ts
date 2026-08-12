@@ -205,3 +205,39 @@ describe('Web UI preferences', () => {
 		expect(blankIdx).toBeGreaterThan(cancelIdx);
 	});
 });
+
+describe('MUI track header inject', () => {
+	test('matches both More menu and More actions labels', () => {
+		expect(source).toContain('function isMuiTrackMoreButton(el)');
+		expect(source).toContain("label === 'More menu'");
+		expect(source).toContain("label === 'More actions'");
+		expect(source).toContain('injectMuiWithoutBuy(el)');
+	});
+
+	test('hides stuck tooltips on scroll and pointer move away', () => {
+		expect(source).toContain('function startTooltipTracking()');
+		expect(source).toContain("document.addEventListener('scroll', hideTooltip, true)");
+		expect(source).toContain(
+			"document.addEventListener('pointermove', onTooltipPointerMove, true)",
+		);
+		expect(source).toContain('pointerenter');
+		expect(source).toContain('pointerleave');
+	});
+
+	test('animates tooltips and uses MUI styling on MUI controls', () => {
+		expect(source).toContain('sc-gate-dl-tip-visible');
+		expect(source).toContain('sc-gate-dl-tip-mui');
+		expect(source).toContain('sc-gate-dl-tip-classic');
+		expect(source).toContain('background: #191919');
+		expect(source).toContain('border: 1px solid #3a3a3a');
+		expect(source).toContain('color: #f8f8f8');
+		expect(source).toContain('400 11px/1.4');
+		expect(source).toContain('scale(0.75)');
+		expect(source).toContain('TOOLTIP_ENTER_ANIM_MS_MUI');
+		expect(source).toContain('sc-gate-dl-tip-measure');
+		expect(source).not.toContain('color: #b6b6b6');
+		expect(source).toContain(
+			'// Classic feed tooltips (Buy Link, etc.) open below the control.',
+		);
+	});
+});

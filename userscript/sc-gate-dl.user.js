@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         sc-gate-dl
 // @namespace    https://github.com/D3SOX/sc-gate-dl
-// @version      1.11.5
+// @version      1.11.15
 // @description  Add sc-gate-dl download controls and remember your position in the SoundCloud feed
 // @author       D3SOX
 // @match        https://soundcloud.com/*
@@ -1456,16 +1456,120 @@
 		return Boolean(panel && !panel.hidden && panel.dataset.jobId);
 	}
 
-	function hideTooltip() {
+	/** @type {Element | null} */
+	let tooltipAnchor = null;
+	let tooltipShowTimer = 0;
+	let tooltipHideTimer = 0;
+	let tooltipTracking = false;
+	const TOOLTIP_ENTER_MS_CLASSIC = 60;
+	const TOOLTIP_ENTER_MS_MUI = 100;
+	const TOOLTIP_EXIT_MS_CLASSIC = 150;
+	/** Faster Grow (still scale + fade; was 200ms). */
+	const TOOLTIP_EXIT_MS_MUI = 100;
+	const TOOLTIP_ENTER_ANIM_MS_MUI = 100;
+
+	function tooltipVariantFor(anchor) {
+		if (
+			anchor instanceof Element &&
+			(anchor.getAttribute(WRAP_ATTR) === 'mui' ||
+				anchor.closest?.(`[${WRAP_ATTR}="mui"]`))
+		) {
+			return 'mui';
+		}
+		return 'classic';
+	}
+
+	function isTooltipAnchorActive(anchor) {
+		if (!(anchor instanceof Element) || !anchor.isConnected) return false;
+		if (anchor.matches(':hover')) return true;
+		const active = document.activeElement;
+		return active instanceof Element && anchor.contains(active);
+	}
+
+	function onTooltipPointerMove() {
+		if (tooltipAnchor && !isTooltipAnchorActive(tooltipAnchor)) {
+			hideTooltip();
+		}
+	}
+
+	function onTooltipPointerDown(e) {
+		if (
+			tooltipAnchor &&
+			e.target instanceof Node &&
+			!tooltipAnchor.contains(e.target)
+		) {
+			hideTooltip();
+		}
+	}
+
+	function stopTooltipTracking() {
+		if (!tooltipTracking) return;
+		tooltipTracking = false;
+		document.removeEventListener('scroll', hideTooltip, true);
+		document.removeEventListener('pointermove', onTooltipPointerMove, true);
+		document.removeEventListener('pointerdown', onTooltipPointerDown, true);
+		window.removeEventListener('blur', hideTooltip);
+	}
+
+	function startTooltipTracking() {
+		if (tooltipTracking) return;
+		tooltipTracking = true;
+		// Scroll/move can leave the cursor off the control without pointerleave.
+		document.addEventListener('scroll', hideTooltip, true);
+		document.addEventListener('pointermove', onTooltipPointerMove, true);
+		document.addEventListener('pointerdown', onTooltipPointerDown, true);
+		window.addEventListener('blur', hideTooltip);
+	}
+
+	function removeTooltipEl() {
+		window.clearTimeout(tooltipHideTimer);
+		tooltipHideTimer = 0;
 		document.getElementById(TOOLTIP_ID)?.remove();
 	}
 
+	function hideTooltip() {
+		window.clearTimeout(tooltipShowTimer);
+		tooltipShowTimer = 0;
+		tooltipAnchor = null;
+		stopTooltipTracking();
+		const tip = document.getElementById(TOOLTIP_ID);
+		if (!tip) {
+			window.clearTimeout(tooltipHideTimer);
+			tooltipHideTimer = 0;
+			return;
+		}
+		if (tip.classList.contains('sc-gate-dl-tip-hiding')) return;
+		const exitMs =
+			tip.dataset.variant === 'mui'
+				? TOOLTIP_EXIT_MS_MUI
+				: TOOLTIP_EXIT_MS_CLASSIC;
+		tip.classList.remove('sc-gate-dl-tip-visible');
+		tip.classList.add('sc-gate-dl-tip-hiding');
+		window.clearTimeout(tooltipHideTimer);
+		tooltipHideTimer = window.setTimeout(() => {
+			tooltipHideTimer = 0;
+			tip.remove();
+		}, exitMs);
+	}
+
 	function showTooltip(anchor) {
-		hideTooltip();
+		removeTooltipEl();
+		window.clearTimeout(tooltipShowTimer);
+		tooltipShowTimer = 0;
+		if (!isTooltipAnchorActive(anchor)) return;
+		const variant = tooltipVariantFor(anchor);
+		tooltipAnchor = anchor;
+		startTooltipTracking();
 		const tip = document.createElement('div');
 		tip.id = TOOLTIP_ID;
+		tip.dataset.variant = variant;
 		tip.setAttribute('role', 'tooltip');
-		tip.innerHTML = `<div class="sc-gate-dl-tip-arrow"></div><div class="sc-gate-dl-tip-content"></div>`;
+		tip.className = `sc-gate-dl-tip-${variant}`;
+		// Classic SC tooltips use a caret; Webi/MUI track actions do not.
+		tip.innerHTML =
+			variant === 'mui'
+				? `<div class="sc-gate-dl-tip-content"></div>`
+				: `<div class="sc-gate-dl-tip-arrow"></div><div class="sc-gate-dl-tip-content"></div>`;
 		const content = tip.querySelector('.sc-gate-dl-tip-content');
 		if (content) content.textContent = TOOLTIP_LABEL;
 		document.documentElement.appendChild(tip);
@@ -1476,20 +1580,59 @@
 			(anchor.hasAttribute?.(BUTTON_ATTR) ? anchor : null) ||
 			anchor;
 		const ar = icon.getBoundingClientRect();
+
+		// Measure untransformed so width/height match the final painted box.
+		tip.classList.add('sc-gate-dl-tip-measure');
 		const tr = tip.getBoundingClientRect();
-		let top = ar.top - tr.height - 8;
+		tip.classList.remove('sc-gate-dl-tip-measure');
+
+		const gap = variant === 'mui' ? 4 : 8;
+		let below = false;
+		let top;
+		if (variant === 'classic') {
+			// Classic feed tooltips (Buy Link, etc.) open below the control.
+			below = true;
+			top = ar.bottom + gap;
+			if (top + tr.height > window.innerHeight - 4) {
+				const above = ar.top - tr.height - gap;
+				if (above >= 4) {
+					below = false;
+					top = above;
+				}
+			}
+		} else {
+			// MUI track-header actions open above.
+			top = ar.top - tr.height - gap;
+			if (top < 4) {
+				top = ar.bottom + gap;
+				below = true;
+			}
+		}
+		if (below) tip.classList.add('sc-gate-dl-tip-below');
+
 		let left = ar.left + ar.width / 2 - tr.width / 2;
-		if (top < 4) top = ar.bottom + 8;
 		left = Math.min(Math.max(8, left), window.innerWidth - tr.width - 8);
 		tip.style.top = `${Math.round(top)}px`;
 		tip.style.left = `${Math.round(left)}px`;
+
 		const arrow = tip.querySelector('.sc-gate-dl-tip-arrow');
 		if (arrow instanceof HTMLElement) {
-			const tipRect = tip.getBoundingClientRect();
-			const arrowLeft = ar.left + ar.width / 2 - tipRect.left - 5;
-			arrow.style.left = `${Math.round(Math.min(Math.max(6, arrowLeft), tipRect.width - 14))}px`;
-			if (top > ar.top) tip.classList.add('sc-gate-dl-tip-below');
+			arrow.style.left = '50%';
+			arrow.style.marginLeft = '-5px';
 		}
+
+		requestAnimationFrame(() => {
+			requestAnimationFrame(() => {
+				if (document.getElementById(TOOLTIP_ID) !== tip) return;
+				if (!isTooltipAnchorActive(anchor)) {
+					removeTooltipEl();
+					tooltipAnchor = null;
+					stopTooltipTracking();
+					return;
+				}
+				tip.classList.add('sc-gate-dl-tip-visible');
+			});
+		});
 	}
 
 	function openFormatDialog() {
@@ -1583,19 +1726,31 @@
 	}
 
 	function bindTooltip(anchor) {
-		let showTimer = 0;
+		const enterMs =
+			tooltipVariantFor(anchor) === 'mui'
+				? TOOLTIP_ENTER_MS_MUI
+				: TOOLTIP_ENTER_MS_CLASSIC;
 		const onEnter = () => {
-			window.clearTimeout(showTimer);
-			showTimer = window.setTimeout(() => showTooltip(anchor), 60);
+			window.clearTimeout(tooltipShowTimer);
+			tooltipShowTimer = window.setTimeout(() => showTooltip(anchor), enterMs);
 		};
 		const onLeave = () => {
-			window.clearTimeout(showTimer);
+			window.clearTimeout(tooltipShowTimer);
+			tooltipShowTimer = 0;
 			hideTooltip();
 		};
-		anchor.addEventListener('mouseenter', onEnter);
-		anchor.addEventListener('mouseleave', onLeave);
-		anchor.addEventListener('focus', onEnter);
-		anchor.addEventListener('blur', onLeave);
+		anchor.addEventListener('pointerenter', onEnter);
+		anchor.addEventListener('pointerleave', onLeave);
+		anchor.addEventListener('focusin', onEnter);
+		anchor.addEventListener('focusout', (e) => {
+			if (
+				e.relatedTarget instanceof Node &&
+				anchor.contains(e.relatedTarget)
+			) {
+				return;
+			}
+			onLeave();
+		});
 	}
 
 	function isOurNode(el) {
@@ -1614,15 +1769,23 @@
 			anchorPoint.parentElement;
 		if (scope?.querySelector(`[${WRAP_ATTR}]`)) return true;
 		const next = anchorPoint.nextElementSibling;
+		const prev = anchorPoint.previousElementSibling;
 		return !!(
-			next?.hasAttribute?.(WRAP_ATTR) || next?.hasAttribute?.(BUTTON_ATTR)
+			next?.hasAttribute?.(WRAP_ATTR) ||
+			next?.hasAttribute?.(BUTTON_ATTR) ||
+			prev?.hasAttribute?.(WRAP_ATTR) ||
+			prev?.hasAttribute?.(BUTTON_ATTR)
 		);
 	}
 
 	function ensureStyles() {
-		if (document.getElementById(STYLE_ID)) return;
-		const style = document.createElement('style');
-		style.id = STYLE_ID;
+		let style = document.getElementById(STYLE_ID);
+		if (!style) {
+			style = document.createElement('style');
+			style.id = STYLE_ID;
+			document.documentElement.appendChild(style);
+		}
+		// Always rewrite so userscript updates pick up new tooltip CSS without a hard cache.
 		style.textContent = `
 #${PANEL_ID} {
 	position: fixed;
@@ -1914,34 +2077,86 @@
 	transition: outline-color 300ms ease;
 }
 
-/* Match SoundCloud .tooltip (rgb(48,48,48) / #303030) */
+/* Classic: SoundCloud .tooltip (#303030 + caret + opacity fade)
+   MUI/Webi: sampled native tip — #191919 fill, #3a3a3a border, ~#f8f8f8
+   11px regular text, Grow enter (scale 0.75→1 + fade, 200ms) */
 #${TOOLTIP_ID} {
 	position: fixed !important;
 	z-index: 2147483647 !important;
 	pointer-events: none;
+	border: 0;
+	box-shadow: none;
+	white-space: nowrap;
+	max-width: min(280px, calc(100vw - 16px));
+	opacity: 0;
+	transform: none;
+	will-change: opacity, transform;
+}
+#${TOOLTIP_ID}.sc-gate-dl-tip-measure {
+	opacity: 0 !important;
+	transform: none !important;
+	transition: none !important;
+}
+#${TOOLTIP_ID}.sc-gate-dl-tip-classic {
 	background: #303030;
 	color: #fff;
 	border-radius: 4px;
 	padding: 4px 8px;
 	font: 500 12px/1.3 Söhne, Interstate, "Lucida Grande", Arial, sans-serif;
-	box-shadow: none;
-	border: 0;
-	white-space: nowrap;
-	max-width: min(280px, calc(100vw - 16px));
+	transition: opacity ${TOOLTIP_EXIT_MS_CLASSIC}ms ease;
+}
+#${TOOLTIP_ID}.sc-gate-dl-tip-mui {
+	background: #191919;
+	color: #f8f8f8;
+	border: 1px solid #3a3a3a;
+	border-radius: 4px;
+	padding: 4px 8px;
+	font: 400 11px/1.4 Söhne, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+	transform: scale(0.75);
+	transform-origin: center bottom;
+	transition:
+		opacity ${TOOLTIP_ENTER_ANIM_MS_MUI}ms cubic-bezier(0, 0, 0.2, 1),
+		transform ${TOOLTIP_ENTER_ANIM_MS_MUI}ms cubic-bezier(0, 0, 0.2, 1);
+}
+#${TOOLTIP_ID}.sc-gate-dl-tip-mui.sc-gate-dl-tip-below {
+	transform-origin: center top;
+}
+#${TOOLTIP_ID}.sc-gate-dl-tip-mui.sc-gate-dl-tip-hiding {
+	transition:
+		opacity ${TOOLTIP_EXIT_MS_MUI}ms cubic-bezier(0.4, 0, 1, 1),
+		transform ${TOOLTIP_EXIT_MS_MUI}ms cubic-bezier(0.4, 0, 1, 1);
+}
+#${TOOLTIP_ID}.sc-gate-dl-tip-visible {
+	opacity: 1;
+}
+#${TOOLTIP_ID}.sc-gate-dl-tip-mui.sc-gate-dl-tip-visible {
+	transform: scale(1);
 }
 #${TOOLTIP_ID} .sc-gate-dl-tip-content { position: relative; z-index: 1; }
 #${TOOLTIP_ID} .sc-gate-dl-tip-arrow {
 	position: absolute;
 	bottom: -5px;
+	left: 50%;
 	width: 10px;
 	height: 10px;
-	background: #303030;
+	margin-left: -5px;
 	border: 0;
 	transform: rotate(45deg);
+	background: #303030;
 }
 #${TOOLTIP_ID}.sc-gate-dl-tip-below .sc-gate-dl-tip-arrow {
 	bottom: auto;
 	top: -5px;
+}
+@media (prefers-reduced-motion: reduce) {
+	#${TOOLTIP_ID}.sc-gate-dl-tip-classic,
+	#${TOOLTIP_ID}.sc-gate-dl-tip-mui {
+		transition: none;
+		transform: none;
+	}
+	#${TOOLTIP_ID}.sc-gate-dl-tip-mui.sc-gate-dl-tip-visible {
+		transform: none;
+	}
 }
 
 /* Format / server chooser (Violentmonkey menu) */
@@ -2112,7 +2327,6 @@ a[${STORE_SERVICE_ATTR}] > button::after {
 	pointer-events: none;
 }
 `;
-		document.documentElement.appendChild(style);
 	}
 
 	function applyDefaultGeom(panel) {
@@ -2920,6 +3134,13 @@ a[${STORE_SERVICE_ATTR}] > button::after {
 		);
 	}
 
+	/** MUI listen page: "More menu" (older) or "More actions" (current). */
+	function isMuiTrackMoreButton(el) {
+		if (!(el instanceof HTMLButtonElement)) return false;
+		const label = el.getAttribute('aria-label') || '';
+		return label === 'More menu' || label === 'More actions';
+	}
+
 	function isClassicPurchase(el) {
 		if (!(el instanceof Element) || isOurNode(el)) return false;
 		if (el.classList.contains('purchaseLink__container')) return true;
@@ -2976,8 +3197,9 @@ a[${STORE_SERVICE_ATTR}] > button::after {
 		}
 		// Tracks without a purchase link still have the action row's More button.
 		for (const el of scope.querySelectorAll?.(
-			'section[aria-label="Track header"] button[aria-label="More menu"]',
+			'section[aria-label="Track header"] button[aria-label]',
 		) || []) {
+			if (!isMuiTrackMoreButton(el)) continue;
 			injectMuiWithoutBuy(el);
 		}
 	}
