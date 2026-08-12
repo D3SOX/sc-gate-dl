@@ -123,13 +123,15 @@ export function RemoteBrowserPanel({
 			}
 		};
 		const onKeyDown = (event: KeyboardEvent) => {
-			if (event.key === 'Escape') setControlsHelpOpen(false);
+			if (event.key !== 'Escape') return;
+			event.stopImmediatePropagation();
+			setControlsHelpOpen(false);
 		};
 		window.addEventListener('pointerdown', closeHelp, true);
-		window.addEventListener('keydown', onKeyDown);
+		window.addEventListener('keydown', onKeyDown, true);
 		return () => {
 			window.removeEventListener('pointerdown', closeHelp, true);
-			window.removeEventListener('keydown', onKeyDown);
+			window.removeEventListener('keydown', onKeyDown, true);
 		};
 	}, [controlsHelpOpen]);
 
