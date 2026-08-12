@@ -107,6 +107,37 @@ export function RemoteBrowserPanel({
 	const [remember, setRemember] = useState(true);
 	const [status, setStatus] = useState<ConnectionStatus>('idle');
 	const [error, setError] = useState<string | null>(null);
+	const [controlsHelpOpen, setControlsHelpOpen] = useState(false);
+	const controlsHelpRef = useRef<HTMLDivElement>(null);
+
+	useEffect(() => {
+		if (!controlsHelpOpen) return;
+		const closeHelp = (event: Event) => {
+			const root = controlsHelpRef.current;
+			if (
+				root &&
+				event.target instanceof Node &&
+				!root.contains(event.target)
+			) {
+				setControlsHelpOpen(false);
+			}
+		};
+		const onKeyDown = (event: KeyboardEvent) => {
+			if (event.key !== 'Escape') return;
+			event.stopImmediatePropagation();
+			setControlsHelpOpen(false);
+		};
+		window.addEventListener('pointerdown', closeHelp, true);
+		window.addEventListener('keydown', onKeyDown, true);
+		return () => {
+			window.removeEventListener('pointerdown', closeHelp, true);
+			window.removeEventListener('keydown', onKeyDown, true);
+		};
+	}, [controlsHelpOpen]);
+
+	useEffect(() => {
+		if (!open) setControlsHelpOpen(false);
+	}, [open]);
 
 	const updateGeometry = useCallback((nextGeometry: typeof geometry) => {
 		geometryRef.current = nextGeometry;
@@ -986,6 +1017,50 @@ export function RemoteBrowserPanel({
 				>
 					<div className="remote-browser-toolbar-heading">
 						<h2 id="remote-browser-title">Remote Browser</h2>
+						<div
+							ref={controlsHelpRef}
+							className={`remote-browser-help${controlsHelpOpen ? ' is-open' : ''}`}
+						>
+							<button
+								type="button"
+								className="remote-browser-help-trigger"
+								aria-label="How to control the remote browser"
+								aria-expanded={controlsHelpOpen}
+								aria-controls="remote-browser-controls-help"
+								title="Controls help"
+								onClick={(event) => {
+									event.stopPropagation();
+									setControlsHelpOpen((value) => !value);
+								}}
+								onPointerDown={(event) => event.stopPropagation()}
+							>
+								?
+							</button>
+							<div
+								id="remote-browser-controls-help"
+								className="remote-browser-help-panel"
+								role="tooltip"
+							>
+								<p>
+									<strong>Mouse</strong>
+								</p>
+								<ul>
+									<li>Click or drag to use the remote desktop</li>
+									<li>Shift-drag to pan the view</li>
+									<li>Alt-scroll or Alt-drag vertically to zoom</li>
+								</ul>
+								<p>
+									<strong>Touch</strong>
+								</p>
+								<ul>
+									<li>Drag to move the remote pointer</li>
+									<li>Tap to click at the pointer</li>
+									<li>Hold and release to right-click</li>
+									<li>Hold, then drag vertically to zoom</li>
+									<li>Two fingers to pan while zoomed</li>
+								</ul>
+							</div>
+						</div>
 						<span
 							className={`remote-browser-status is-${status}`}
 							role="status"
@@ -1146,7 +1221,6 @@ export function RemoteBrowserPanel({
 				<div
 					className={`remote-browser-screen${shiftHeld ? ' is-shift-held' : ''}${altHeld ? ' is-alt-held' : ''}`}
 					ref={screenContainerRef}
-					title="Shift-drag to pan. Alt-scroll or Alt-drag vertically to zoom. On touch: drag the pointer, tap to click at its current position, hold and release to right-click, hold then drag vertically to zoom, or use two fingers to pan while zoomed."
 					onPointerDownCapture={(event) => {
 						beginViewportInteraction(event);
 						if (
