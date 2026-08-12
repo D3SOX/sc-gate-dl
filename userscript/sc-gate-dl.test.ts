@@ -207,10 +207,14 @@ describe('Web UI preferences', () => {
 });
 
 describe('MUI track header inject', () => {
-	test('matches both More menu and More actions labels', () => {
+	test('finds MUI more button via stable id, not localized aria-label', () => {
 		expect(source).toContain('function isMuiTrackMoreButton(el)');
-		expect(source).toContain("label === 'More menu'");
-		expect(source).toContain("label === 'More actions'");
+		expect(source).toContain("id.startsWith('desktop-menu-button-')");
+		expect(source).toContain('[id^="desktop-menu-button-"]');
+		expect(source).toContain("getAttribute('aria-haspopup') === 'true'");
+		expect(source).toContain('/track[- ]?header/i');
+		expect(source).not.toContain("label === 'More menu'");
+		expect(source).not.toContain("label === 'More actions'");
 		expect(source).toContain('injectMuiWithoutBuy(el)');
 	});
 

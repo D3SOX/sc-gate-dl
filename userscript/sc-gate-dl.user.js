@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         sc-gate-dl
 // @namespace    https://github.com/D3SOX/sc-gate-dl
-// @version      1.11.15
+// @version      1.11.16
 // @description  Add sc-gate-dl download controls and remember your position in the SoundCloud feed
 // @author       D3SOX
 // @match        https://soundcloud.com/*
@@ -3123,7 +3123,7 @@ a[${STORE_SERVICE_ATTR}] > button::after {
 	function injectMuiWithoutBuy(moreButton) {
 		if (!(moreButton instanceof HTMLButtonElement)) return;
 		if (isOurNode(moreButton)) return;
-		if (!moreButton.closest('section[aria-label="Track header"]')) return;
+		if (!isMuiTrackMoreButton(moreButton)) return;
 		if (isPlaylistOrAlbumContext(moreButton)) return;
 		if (alreadyInjectedNear(moreButton)) return;
 		const trackUrl = pageTrackUrl();
@@ -3134,11 +3134,23 @@ a[${STORE_SERVICE_ATTR}] > button::after {
 		);
 	}
 
-	/** MUI listen page: "More menu" (older) or "More actions" (current). */
+	/**
+	 * MUI listen-page overflow control. Prefer the stable id prefix — aria-labels
+	 * are localized ("More actions" / "Mehr Aktionen", etc.).
+	 */
 	function isMuiTrackMoreButton(el) {
 		if (!(el instanceof HTMLButtonElement)) return false;
-		const label = el.getAttribute('aria-label') || '';
-		return label === 'More menu' || label === 'More actions';
+		if (!el.classList.contains('MuiIconButton-root')) return false;
+		const id = el.id || '';
+		if (id.startsWith('desktop-menu-button-')) return true;
+		// Fallback if SC drops the id: last action with a menu popup.
+		return (
+			el.getAttribute('aria-haspopup') === 'true' &&
+			!!el.closest('section[aria-label]') &&
+			/track[- ]?header/i.test(
+				el.closest('section[aria-label]')?.getAttribute('aria-label') || '',
+			)
+		);
 	}
 
 	function isClassicPurchase(el) {
@@ -3196,8 +3208,9 @@ a[${STORE_SERVICE_ATTR}] > button::after {
 			injectMui(el);
 		}
 		// Tracks without a purchase link still have the action row's More button.
+		// id prefix is language-stable; aria-labels are not.
 		for (const el of scope.querySelectorAll?.(
-			'section[aria-label="Track header"] button[aria-label]',
+			'button[id^="desktop-menu-button-"].MuiIconButton-root, section[aria-label] button.MuiIconButton-root[aria-haspopup="true"]',
 		) || []) {
 			if (!isMuiTrackMoreButton(el)) continue;
 			injectMuiWithoutBuy(el);
