@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         sc-gate-dl
 // @namespace    https://github.com/D3SOX/sc-gate-dl
-// @version      1.10.13
+// @version      1.11.1
 // @description  Add sc-gate-dl download controls and remember your position in the SoundCloud feed
 // @author       D3SOX
 // @match        https://soundcloud.com/*
@@ -703,8 +703,14 @@
 			: candidateIndex >= savedIndex;
 	}
 
+	function isFeedNavigatorOpen() {
+		const nav = document.getElementById(FEED_NAV_ID);
+		return Boolean(nav && !nav.hidden);
+	}
+
 	function saveFeedCheckpointFromCard(card, playedUrl = null) {
-		if (!isFeedPage() || !(card instanceof Element)) return;
+		if (!isFeedNavigatorOpen() || !isFeedPage() || !(card instanceof Element))
+			return;
 		const feedCard = card.matches('.sound')
 			? card
 			: card.querySelector('.sound') || card;
@@ -763,7 +769,7 @@
 			lastRecordedPlayingUrl = null;
 			return;
 		}
-		if (!feedPlaybackOriginUrl) return;
+		if (!isFeedNavigatorOpen() || !feedPlaybackOriginUrl) return;
 		const playing = document.querySelector(
 			'.playControls .playControl.playing, .playControls__play.playing, .playControls button[title^="Pause"], .playControls button[aria-label^="Pause"]',
 		);
@@ -1016,6 +1022,7 @@
 		}
 		nav.hidden = false;
 		updateFeedNavigator();
+		recordPlayingFeedTrack();
 	}
 
 	function resolveTrackUrl(el) {
@@ -1060,24 +1067,28 @@
 		return false;
 	}
 
-	function getWebuiBase() {
+	const WEBUI_REACHABILITY_TIMEOUT_MS = 1_500;
+	const WEBUI_RESOLVE_CACHE_MS = 30_000;
+	/** Last server proven reachable — used for iframe origin / API until re-resolved. */
+	let activeWebuiBase = null;
+	let activeWebuiBaseAt = 0;
+
+	function readStoredWebuiRaw() {
 		try {
 			const stored = localStorage.getItem(WEBUI_BASE_KEY);
-			if (stored?.trim()) return normalizeWebuiBase(stored);
+			if (stored?.trim()) return stored;
 		} catch {
 			// ignore
 		}
 		try {
 			if (typeof GM_getValue === 'function') {
 				const stored = GM_getValue(WEBUI_BASE_KEY, null);
-				if (typeof stored === 'string' && stored.trim()) {
-					return normalizeWebuiBase(stored);
-				}
+				if (typeof stored === 'string' && stored.trim()) return stored;
 			}
 		} catch {
 			// ignore
 		}
-		return DEFAULT_WEBUI_BASE;
+		return null;
 	}
 
 	function normalizeWebuiBase(value) {
@@ -1090,43 +1101,206 @@
 		return url.href.replace(/\/$/, '');
 	}
 
-	function setWebuiBase(value) {
-		const normalized = value.trim()
-			? normalizeWebuiBase(value)
-			: DEFAULT_WEBUI_BASE;
+	function parseWebuiBases(
+		raw,
+		fallback = DEFAULT_WEBUI_BASE,
+		{ strict = true } = {},
+	) {
+		if (typeof raw !== 'string' || !raw.trim()) {
+			return [normalizeWebuiBase(fallback)];
+		}
+		const parts = raw
+			.split(/[\n,]+/)
+			.map((part) => part.trim())
+			.filter(Boolean);
+		const bases = [];
+		const seen = new Set();
+		for (const part of parts) {
+			try {
+				const normalized = normalizeWebuiBase(part);
+				if (seen.has(normalized)) continue;
+				seen.add(normalized);
+				bases.push(normalized);
+			} catch (error) {
+				if (strict) throw error;
+			}
+		}
+		return bases.length > 0 ? bases : [normalizeWebuiBase(fallback)];
+	}
+
+	function getWebuiBases() {
+		return parseWebuiBases(readStoredWebuiRaw(), DEFAULT_WEBUI_BASE, {
+			strict: false,
+		});
+	}
+
+	function getWebuiBase() {
+		return activeWebuiBase || getWebuiBases()[0] || DEFAULT_WEBUI_BASE;
+	}
+
+	function persistWebuiBases(bases) {
+		const serialized = bases.join('\n');
 		try {
 			if (typeof GM_setValue === 'function') {
-				GM_setValue(WEBUI_BASE_KEY, normalized);
+				GM_setValue(WEBUI_BASE_KEY, serialized);
 			}
 		} catch {
 			// ignore
 		}
 		try {
-			localStorage.setItem(WEBUI_BASE_KEY, normalized);
+			localStorage.setItem(WEBUI_BASE_KEY, serialized);
 		} catch {
 			// ignore
 		}
-		return normalized;
+		return serialized;
+	}
+
+	function setWebuiBases(value) {
+		const bases = value.trim()
+			? parseWebuiBases(value)
+			: [DEFAULT_WEBUI_BASE];
+		activeWebuiBase = null;
+		activeWebuiBaseAt = 0;
+		persistWebuiBases(bases);
+		return bases;
+	}
+
+	function apiOriginFromWebui(webuiBase) {
+		const url = new URL(webuiBase);
+		if (url.port === '4321') url.port = '3000';
+		return url.origin;
+	}
+
+	function abortSignalTimeout(ms) {
+		if (typeof AbortSignal?.timeout === 'function') {
+			return AbortSignal.timeout(ms);
+		}
+		const controller = new AbortController();
+		const timer = window.setTimeout(() => controller.abort(), ms);
+		controller.signal.addEventListener(
+			'abort',
+			() => window.clearTimeout(timer),
+			{ once: true },
+		);
+		return controller.signal;
+	}
+
+	async function isWebuiReachable(base) {
+		const apiOrigin = apiOriginFromWebui(base);
+		try {
+			const response = await fetch(`${apiOrigin}/api/capabilities`, {
+				method: 'GET',
+				mode: 'cors',
+				cache: 'no-store',
+				signal: abortSignalTimeout(WEBUI_REACHABILITY_TIMEOUT_MS),
+			});
+			if (response.ok) return true;
+		} catch {
+			// API may be proxied behind the Web UI origin — try that next.
+		}
+		try {
+			await fetch(`${base}/`, {
+				method: 'GET',
+				mode: 'no-cors',
+				cache: 'no-store',
+				signal: abortSignalTimeout(WEBUI_REACHABILITY_TIMEOUT_MS),
+			});
+			return true;
+		} catch {
+			return false;
+		}
+	}
+
+	async function resolveWebuiBase() {
+		const bases = getWebuiBases();
+		const now = Date.now();
+		const cached =
+			activeWebuiBase &&
+			now - activeWebuiBaseAt < WEBUI_RESOLVE_CACHE_MS &&
+			bases.includes(activeWebuiBase)
+				? activeWebuiBase
+				: null;
+		const ordered = cached
+			? [cached, ...bases.filter((base) => base !== cached)]
+			: bases;
+		for (const base of ordered) {
+			if (await isWebuiReachable(base)) {
+				activeWebuiBase = base;
+				activeWebuiBaseAt = Date.now();
+				return base;
+			}
+		}
+		activeWebuiBase = null;
+		activeWebuiBaseAt = 0;
+		throw new Error(
+			`None of the configured sc-gate-dl servers are reachable:\n${bases.join('\n')}`,
+		);
 	}
 
 	function configureWebuiBase() {
-		const value = window.prompt(
-			'Web UI address (leave empty to reset to localhost):',
-			getWebuiBase(),
-		);
-		if (value === null) return;
-		try {
-			const normalized = setWebuiBase(value);
-			const panel = document.getElementById(PANEL_ID);
-			if (panel && !panel.hidden && panel.dataset.trackUrl) {
-				loadTrackIntoPanel(panel, panel.dataset.trackUrl);
-			}
-			window.alert(`sc-gate-dl server set to ${normalized}`);
-		} catch {
-			window.alert(
-				'Enter a complete HTTP(S) address, for example http://192.168.178.57:4321',
-			);
+		ensureStyles();
+		document.getElementById('sc-gate-dl-server-dialog')?.remove();
+		const dialog = document.createElement('div');
+		dialog.id = 'sc-gate-dl-server-dialog';
+		dialog.innerHTML = `
+			<div class="sc-gate-dl-format-card sc-gate-dl-server-card" role="dialog" aria-label="Configure server">
+				<div class="sc-gate-dl-format-title">Web UI servers</div>
+				<p class="sc-gate-dl-server-hint">One address per line, tried in order before opening. Leave empty to reset to localhost.</p>
+				<textarea class="sc-gate-dl-server-input" rows="4" spellcheck="false"></textarea>
+				<div class="sc-gate-dl-format-actions">
+					<button type="button" class="sc-gate-dl-format-cancel">Cancel</button>
+					<button type="button" class="sc-gate-dl-format-save">Save</button>
+				</div>
+			</div>
+		`;
+		const input = dialog.querySelector('.sc-gate-dl-server-input');
+		if (input instanceof HTMLTextAreaElement) {
+			input.value = getWebuiBases().join('\n');
 		}
+		const close = () => dialog.remove();
+		dialog.addEventListener('click', (event) => {
+			if (event.target === dialog) close();
+		});
+		dialog
+			.querySelector('.sc-gate-dl-format-cancel')
+			?.addEventListener('click', close);
+		dialog
+			.querySelector('.sc-gate-dl-format-save')
+			?.addEventListener('click', () => {
+				const value =
+					input instanceof HTMLTextAreaElement ? input.value : '';
+				try {
+					const bases = setWebuiBases(value);
+					close();
+					void (async () => {
+						const panel = document.getElementById(PANEL_ID);
+						if (panel && !panel.hidden && panel.dataset.trackUrl) {
+							try {
+								await resolveWebuiBase();
+								loadTrackIntoPanel(panel, panel.dataset.trackUrl);
+							} catch (error) {
+								window.alert(
+									error instanceof Error
+										? error.message
+										: 'No configured sc-gate-dl server is reachable.',
+								);
+								return;
+							}
+						}
+						window.alert(
+							bases.length === 1
+								? `sc-gate-dl server set to ${bases[0]}`
+								: `sc-gate-dl servers (tried in order):\n${bases.join('\n')}`,
+						);
+					})();
+				} catch {
+					window.alert(
+						'Enter complete HTTP(S) addresses, one per line.\nExample:\nhttp://192.168.178.57:4321\nhttp://100.x.y.z:8123',
+					);
+				}
+			});
+		document.documentElement.appendChild(dialog);
+		if (input instanceof HTMLTextAreaElement) input.focus();
 	}
 
 	function loadGeom() {
@@ -1710,8 +1884,8 @@
 	top: -5px;
 }
 
-/* Format chooser (Violentmonkey menu) */
-:is(#sc-gate-dl-format-dialog, #sc-gate-dl-browser-mode-dialog) {
+/* Format / server chooser (Violentmonkey menu) */
+:is(#sc-gate-dl-format-dialog, #sc-gate-dl-browser-mode-dialog, #sc-gate-dl-server-dialog) {
 	position: fixed;
 	inset: 0;
 	z-index: 2147483647;
@@ -1721,7 +1895,7 @@
 	padding: 72px 16px 16px;
 	pointer-events: auto;
 }
-:is(#sc-gate-dl-format-dialog, #sc-gate-dl-browser-mode-dialog) .sc-gate-dl-format-card {
+:is(#sc-gate-dl-format-dialog, #sc-gate-dl-browser-mode-dialog, #sc-gate-dl-server-dialog) .sc-gate-dl-format-card {
 	pointer-events: auto;
 	width: min(280px, calc(100vw - 32px));
 	background: #16161c;
@@ -1732,24 +1906,48 @@
 	padding: 14px;
 	font: 500 13px/1.35 Interstate, "Lucida Grande", Arial, sans-serif;
 }
-:is(#sc-gate-dl-format-dialog, #sc-gate-dl-browser-mode-dialog) .sc-gate-dl-format-title {
+:is(#sc-gate-dl-format-dialog, #sc-gate-dl-browser-mode-dialog, #sc-gate-dl-server-dialog) .sc-gate-dl-server-card {
+	width: min(360px, calc(100vw - 32px));
+}
+:is(#sc-gate-dl-format-dialog, #sc-gate-dl-browser-mode-dialog, #sc-gate-dl-server-dialog) .sc-gate-dl-format-title {
 	font-weight: 700;
 	margin-bottom: 10px;
 }
-:is(#sc-gate-dl-format-dialog, #sc-gate-dl-browser-mode-dialog) .sc-gate-dl-format-option {
+:is(#sc-gate-dl-format-dialog, #sc-gate-dl-browser-mode-dialog, #sc-gate-dl-server-dialog) .sc-gate-dl-server-hint {
+	margin: 0 0 10px;
+	color: #aaa;
+	font-size: 12px;
+	font-weight: 400;
+	line-height: 1.4;
+}
+:is(#sc-gate-dl-format-dialog, #sc-gate-dl-browser-mode-dialog, #sc-gate-dl-server-dialog) .sc-gate-dl-server-input {
+	display: block;
+	width: 100%;
+	box-sizing: border-box;
+	resize: vertical;
+	min-height: 88px;
+	margin: 0;
+	padding: 8px;
+	border-radius: 6px;
+	border: 1px solid rgba(255,255,255,0.16);
+	background: #0f0f14;
+	color: #eee;
+	font: 500 12px/1.4 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+:is(#sc-gate-dl-format-dialog, #sc-gate-dl-browser-mode-dialog, #sc-gate-dl-server-dialog) .sc-gate-dl-format-option {
 	display: flex;
 	align-items: center;
 	gap: 8px;
 	padding: 8px 4px;
 	cursor: pointer;
 }
-:is(#sc-gate-dl-format-dialog, #sc-gate-dl-browser-mode-dialog) .sc-gate-dl-format-actions {
+:is(#sc-gate-dl-format-dialog, #sc-gate-dl-browser-mode-dialog, #sc-gate-dl-server-dialog) .sc-gate-dl-format-actions {
 	display: flex;
 	justify-content: flex-end;
 	gap: 8px;
 	margin-top: 12px;
 }
-:is(#sc-gate-dl-format-dialog, #sc-gate-dl-browser-mode-dialog) button {
+:is(#sc-gate-dl-format-dialog, #sc-gate-dl-browser-mode-dialog, #sc-gate-dl-server-dialog) button {
 	appearance: none;
 	border: 1px solid rgba(255,255,255,0.14);
 	background: #0f0f12;
@@ -1759,7 +1957,7 @@
 	cursor: pointer;
 	font: inherit;
 }
-:is(#sc-gate-dl-format-dialog, #sc-gate-dl-browser-mode-dialog) .sc-gate-dl-format-save {
+:is(#sc-gate-dl-format-dialog, #sc-gate-dl-browser-mode-dialog, #sc-gate-dl-server-dialog) .sc-gate-dl-format-save {
 	background: #f50;
 	border-color: #f50;
 	color: #fff;
@@ -2080,10 +2278,7 @@ a[${STORE_SERVICE_ATTR}] > button::after {
 			// ignore
 		}
 		try {
-			const webui = getWebuiBase();
-			const u = new URL(webui);
-			if (u.port === '4321') u.port = '3000';
-			return u.origin;
+			return apiOriginFromWebui(getWebuiBase());
 		} catch {
 			return 'http://localhost:3000';
 		}
@@ -2225,18 +2420,21 @@ a[${STORE_SERVICE_ATTR}] > button::after {
 		renderQueue();
 	}
 
-	function startNextFromQueue() {
+	async function startNextFromQueue() {
 		window.clearTimeout(autoCloseTimer);
 		const next = downloadQueue.shift();
 		renderQueue();
-		if (next) {
-			openPanel(next.url);
-			return true;
+		if (!next) return false;
+		const opened = await openDownload(next.url);
+		if (!opened) {
+			downloadQueue.unshift(next);
+			renderQueue();
+			return false;
 		}
-		return false;
+		return true;
 	}
 
-	function startQueuedAt(index) {
+	async function startQueuedAt(index) {
 		if (index < 0 || index >= downloadQueue.length) return;
 		const [item] = downloadQueue.splice(index, 1);
 		renderQueue();
@@ -2248,7 +2446,11 @@ a[${STORE_SERVICE_ATTR}] > button::after {
 			renderQueue();
 			return;
 		}
-		openPanel(item.url);
+		const opened = await openDownload(item.url);
+		if (!opened) {
+			downloadQueue.splice(Math.min(index, downloadQueue.length), 0, item);
+			renderQueue();
+		}
 	}
 
 	function renderQueue() {
@@ -2313,21 +2515,64 @@ a[${STORE_SERVICE_ATTR}] > button::after {
 		clampQueue(el);
 	}
 
-	function requestDownload(trackUrl) {
+	async function openDownload(trackUrl) {
 		if (getAlwaysOpenTab()) {
-			window.open(buildWebuiSrc(trackUrl), '_blank', 'noopener,noreferrer');
-			return;
+			const bases = getWebuiBases();
+			const cacheHit =
+				activeWebuiBase &&
+				Date.now() - activeWebuiBaseAt < WEBUI_RESOLVE_CACHE_MS &&
+				bases.includes(activeWebuiBase);
+			if (cacheHit) {
+				window.open(buildWebuiSrc(trackUrl), '_blank', 'noopener,noreferrer');
+				return true;
+			}
+			// Keep the window handle (no noopener) so we can navigate after probing.
+			const tab = window.open('about:blank', '_blank');
+			if (!tab) {
+				window.alert(
+					'sc-gate-dl: popup blocked. Allow popups for SoundCloud or disable always-open-in-tab.',
+				);
+				return false;
+			}
+			try {
+				await resolveWebuiBase();
+				tab.location.href = buildWebuiSrc(trackUrl);
+				return true;
+			} catch (error) {
+				tab.close();
+				window.alert(
+					error instanceof Error
+						? error.message
+						: 'No configured sc-gate-dl server is reachable.',
+				);
+				return false;
+			}
+		}
+		try {
+			await resolveWebuiBase();
+		} catch (error) {
+			window.alert(
+				error instanceof Error
+					? error.message
+					: 'No configured sc-gate-dl server is reachable.',
+			);
+			return false;
 		}
 		if (isPanelBusy()) {
 			enqueueDownload(trackUrl);
-			return;
+			return true;
 		}
 		openPanel(trackUrl);
+		return true;
+	}
+
+	function requestDownload(trackUrl) {
+		void openDownload(trackUrl);
 	}
 
 	function finishCurrentAndAdvance() {
 		if (downloadQueue.length > 0) {
-			startNextFromQueue();
+			void startNextFromQueue();
 			return;
 		}
 		void closePanel();
@@ -2747,6 +2992,6 @@ a[${STORE_SERVICE_ATTR}] > button::after {
 	registerMenuCommands();
 
 	console.info(
-		`[sc-gate-dl] ready — Web UI: ${getWebuiBase()} (run \`bun webui\`). Override with localStorage key "${WEBUI_BASE_KEY}".`,
+		`[sc-gate-dl] ready — Web UI: ${getWebuiBases().join(' → ')} (run \`bun webui\`). Override with localStorage key "${WEBUI_BASE_KEY}" (one address per line).`,
 	);
 })();

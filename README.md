@@ -493,14 +493,25 @@ Chrome may ask once to allow the page to access your local network (`localhost`)
 
 To point the userscript at another machine without developer tools, click the
 gear button in its panel header or choose **Configure server…** from
-Violentmonkey's userscript menu. Enter the complete Web UI address, for example
-`http://192.168.178.57:4321`. The setting is remembered across browser
-restarts. Leaving the address empty resets it to localhost.
+Violentmonkey's userscript menu. Enter one or more complete Web UI addresses
+(one per line), for example:
+
+```text
+http://192.168.178.57:4321
+http://100.x.y.z:8123
+```
+
+Addresses are tried in order before a download opens: the first reachable server
+wins, then the script falls back to the next. Leaving the field empty resets to
+localhost. The list is remembered across browser restarts.
 
 The same setting can also be changed from the SoundCloud tab console:
 
 ```js
-localStorage.setItem('sc-gate-dl-webui-base', 'http://localhost:4321')
+localStorage.setItem(
+  'sc-gate-dl-webui-base',
+  'http://192.168.178.57:4321\nhttp://100.x.y.z:8123',
+)
 ```
 
 Panel size/position is remembered in `localStorage` (`sc-gate-dl-panel-geom`).
