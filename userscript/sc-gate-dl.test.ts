@@ -8,6 +8,12 @@ type UpdateFeedPlaybackOrigin = (
 
 type StoreServiceForUrl = (href: string) => string | null;
 type NormalizeWebuiBase = (value: string) => string;
+type ParseWebuiBases = (
+	raw: string | null | undefined,
+	fallback?: string,
+	options?: { strict?: boolean },
+) => string[];
+type ApiOriginFromWebui = (webuiBase: string) => string;
 
 const source = await Bun.file(
 	new URL('./sc-gate-dl.user.js', import.meta.url),
@@ -25,6 +31,34 @@ function extractHelper<T>(
 	return Function(`"use strict"; ${helperSource}; return ${name};`)() as T;
 }
 
+function extractWebuiHelpers(): {
+	normalizeWebuiBase: NormalizeWebuiBase;
+	parseWebuiBases: ParseWebuiBases;
+	apiOriginFromWebui: ApiOriginFromWebui;
+} {
+	const normalizeStart = source.indexOf('\tfunction normalizeWebuiBase(');
+	const parseEnd = source.indexOf('\n\n\tfunction getWebuiBases(', normalizeStart);
+	const apiStart = source.indexOf('\tfunction apiOriginFromWebui(');
+	const apiEnd = source.indexOf(
+		'\n\n\tasync function isWebuiReachable(',
+		apiStart,
+	);
+	if (normalizeStart < 0 || parseEnd < 0 || apiStart < 0 || apiEnd < 0) {
+		throw new Error('webui helpers not found');
+	}
+	return Function(
+		`"use strict";
+		const DEFAULT_WEBUI_BASE = 'http://localhost:4321';
+		${source.slice(normalizeStart, parseEnd)}
+		${source.slice(apiStart, apiEnd)}
+		return { normalizeWebuiBase, parseWebuiBases, apiOriginFromWebui };`,
+	)() as {
+		normalizeWebuiBase: NormalizeWebuiBase;
+		parseWebuiBases: ParseWebuiBases;
+		apiOriginFromWebui: ApiOriginFromWebui;
+	};
+}
+
 const updateFeedPlaybackOrigin = extractHelper<UpdateFeedPlaybackOrigin>(
 	'\tfunction updateFeedPlaybackOrigin(',
 	'\n\n\tlet lastRecordedPlayingUrl',
@@ -35,11 +69,8 @@ const storeServiceForUrl = extractHelper<StoreServiceForUrl>(
 	'\n\n\tfunction decorateStoreLink(',
 	'storeServiceForUrl',
 );
-const normalizeWebuiBase = extractHelper<NormalizeWebuiBase>(
-	'\tfunction normalizeWebuiBase(',
-	'\n\n\tfunction setWebuiBase(',
-	'normalizeWebuiBase',
-);
+const { normalizeWebuiBase, parseWebuiBases, apiOriginFromWebui } =
+	extractWebuiHelpers();
 
 describe('feed playback origin', () => {
 	test('clears feed provenance when another track is selected outside the feed', () => {
@@ -88,9 +119,48 @@ describe('Web UI preferences', () => {
 		expect(() => normalizeWebuiBase('ftp://downloads.example.com')).toThrow();
 	});
 
+	test('parses multiple server addresses in order', () => {
+		expect(
+			parseWebuiBases(
+				'http://192.168.178.57:4321\nhttp://100.64.0.1:8123/',
+			),
+		).toEqual([
+			'http://192.168.178.57:4321',
+			'http://100.64.0.1:8123',
+		]);
+		expect(
+			parseWebuiBases(
+				'http://192.168.178.57:4321, http://192.168.178.57:4321, http://100.64.0.1:8123',
+			),
+		).toEqual([
+			'http://192.168.178.57:4321',
+			'http://100.64.0.1:8123',
+		]);
+		expect(parseWebuiBases('')).toEqual(['http://localhost:4321']);
+		expect(
+			parseWebuiBases('http://ok:4321\nftp://bad\nhttp://also:8123', undefined, {
+				strict: false,
+			}),
+		).toEqual(['http://ok:4321', 'http://also:8123']);
+		expect(() =>
+			parseWebuiBases('http://ok:4321\nftp://bad', undefined, { strict: true }),
+		).toThrow();
+	});
+
+	test('maps Web UI addresses to API origins', () => {
+		expect(apiOriginFromWebui('http://192.168.178.57:4321')).toBe(
+			'http://192.168.178.57:3000',
+		);
+		expect(apiOriginFromWebui('http://100.64.0.1:8123')).toBe(
+			'http://100.64.0.1:8123',
+		);
+	});
+
 	test('offers server configuration without developer tools', () => {
 		expect(source).toContain("GM_registerMenuCommand('Configure server…'");
 		expect(source).toContain('class="sc-gate-dl-server"');
+		expect(source).toContain('sc-gate-dl-server-dialog');
+		expect(source).toContain('resolveWebuiBase');
 	});
 
 	test('offers a remembered always-open-in-tab mode', () => {
