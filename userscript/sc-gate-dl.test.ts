@@ -40,7 +40,7 @@ function extractWebuiHelpers(): {
 	const parseEnd = source.indexOf('\n\n\tfunction getWebuiBases(', normalizeStart);
 	const apiStart = source.indexOf('\tfunction apiOriginFromWebui(');
 	const apiEnd = source.indexOf(
-		'\n\n\tasync function isWebuiReachable(',
+		'\n\n\tfunction abortSignalTimeout(',
 		apiStart,
 	);
 	if (normalizeStart < 0 || parseEnd < 0 || apiStart < 0 || apiEnd < 0) {

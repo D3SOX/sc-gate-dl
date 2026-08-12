@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         sc-gate-dl
 // @namespace    https://github.com/D3SOX/sc-gate-dl
-// @version      1.11.0
+// @version      1.11.1
 // @description  Add sc-gate-dl download controls and remember your position in the SoundCloud feed
 // @author       D3SOX
 // @match        https://soundcloud.com/*
@@ -1067,9 +1067,11 @@
 		return false;
 	}
 
-	const WEBUI_REACHABILITY_TIMEOUT_MS = 2_000;
+	const WEBUI_REACHABILITY_TIMEOUT_MS = 1_500;
+	const WEBUI_RESOLVE_CACHE_MS = 30_000;
 	/** Last server proven reachable — used for iframe origin / API until re-resolved. */
 	let activeWebuiBase = null;
+	let activeWebuiBaseAt = 0;
 
 	function readStoredWebuiRaw() {
 		try {
@@ -1158,6 +1160,7 @@
 			? parseWebuiBases(value)
 			: [DEFAULT_WEBUI_BASE];
 		activeWebuiBase = null;
+		activeWebuiBaseAt = 0;
 		persistWebuiBases(bases);
 		return bases;
 	}
@@ -1168,6 +1171,20 @@
 		return url.origin;
 	}
 
+	function abortSignalTimeout(ms) {
+		if (typeof AbortSignal?.timeout === 'function') {
+			return AbortSignal.timeout(ms);
+		}
+		const controller = new AbortController();
+		const timer = window.setTimeout(() => controller.abort(), ms);
+		controller.signal.addEventListener(
+			'abort',
+			() => window.clearTimeout(timer),
+			{ once: true },
+		);
+		return controller.signal;
+	}
+
 	async function isWebuiReachable(base) {
 		const apiOrigin = apiOriginFromWebui(base);
 		try {
@@ -1175,7 +1192,7 @@
 				method: 'GET',
 				mode: 'cors',
 				cache: 'no-store',
-				signal: AbortSignal.timeout(WEBUI_REACHABILITY_TIMEOUT_MS),
+				signal: abortSignalTimeout(WEBUI_REACHABILITY_TIMEOUT_MS),
 			});
 			if (response.ok) return true;
 		} catch {
@@ -1186,7 +1203,7 @@
 				method: 'GET',
 				mode: 'no-cors',
 				cache: 'no-store',
-				signal: AbortSignal.timeout(WEBUI_REACHABILITY_TIMEOUT_MS),
+				signal: abortSignalTimeout(WEBUI_REACHABILITY_TIMEOUT_MS),
 			});
 			return true;
 		} catch {
@@ -1196,13 +1213,25 @@
 
 	async function resolveWebuiBase() {
 		const bases = getWebuiBases();
-		for (const base of bases) {
+		const now = Date.now();
+		const cached =
+			activeWebuiBase &&
+			now - activeWebuiBaseAt < WEBUI_RESOLVE_CACHE_MS &&
+			bases.includes(activeWebuiBase)
+				? activeWebuiBase
+				: null;
+		const ordered = cached
+			? [cached, ...bases.filter((base) => base !== cached)]
+			: bases;
+		for (const base of ordered) {
 			if (await isWebuiReachable(base)) {
 				activeWebuiBase = base;
+				activeWebuiBaseAt = Date.now();
 				return base;
 			}
 		}
 		activeWebuiBase = null;
+		activeWebuiBaseAt = 0;
 		throw new Error(
 			`None of the configured sc-gate-dl servers are reachable:\n${bases.join('\n')}`,
 		);
@@ -1243,9 +1272,9 @@
 				try {
 					const bases = setWebuiBases(value);
 					close();
-					const panel = document.getElementById(PANEL_ID);
-					if (panel && !panel.hidden && panel.dataset.trackUrl) {
-						void (async () => {
+					void (async () => {
+						const panel = document.getElementById(PANEL_ID);
+						if (panel && !panel.hidden && panel.dataset.trackUrl) {
 							try {
 								await resolveWebuiBase();
 								loadTrackIntoPanel(panel, panel.dataset.trackUrl);
@@ -1255,14 +1284,15 @@
 										? error.message
 										: 'No configured sc-gate-dl server is reachable.',
 								);
+								return;
 							}
-						})();
-					}
-					window.alert(
-						bases.length === 1
-							? `sc-gate-dl server set to ${bases[0]}`
-							: `sc-gate-dl servers (tried in order):\n${bases.join('\n')}`,
-					);
+						}
+						window.alert(
+							bases.length === 1
+								? `sc-gate-dl server set to ${bases[0]}`
+								: `sc-gate-dl servers (tried in order):\n${bases.join('\n')}`,
+						);
+					})();
 				} catch {
 					window.alert(
 						'Enter complete HTTP(S) addresses, one per line.\nExample:\nhttp://192.168.178.57:4321\nhttp://100.x.y.z:8123',
@@ -2390,18 +2420,21 @@ a[${STORE_SERVICE_ATTR}] > button::after {
 		renderQueue();
 	}
 
-	function startNextFromQueue() {
+	async function startNextFromQueue() {
 		window.clearTimeout(autoCloseTimer);
 		const next = downloadQueue.shift();
 		renderQueue();
-		if (next) {
-			void openDownload(next.url);
-			return true;
+		if (!next) return false;
+		const opened = await openDownload(next.url);
+		if (!opened) {
+			downloadQueue.unshift(next);
+			renderQueue();
+			return false;
 		}
-		return false;
+		return true;
 	}
 
-	function startQueuedAt(index) {
+	async function startQueuedAt(index) {
 		if (index < 0 || index >= downloadQueue.length) return;
 		const [item] = downloadQueue.splice(index, 1);
 		renderQueue();
@@ -2413,7 +2446,11 @@ a[${STORE_SERVICE_ATTR}] > button::after {
 			renderQueue();
 			return;
 		}
-		void openDownload(item.url);
+		const opened = await openDownload(item.url);
+		if (!opened) {
+			downloadQueue.splice(Math.min(index, downloadQueue.length), 0, item);
+			renderQueue();
+		}
 	}
 
 	function renderQueue() {
@@ -2487,17 +2524,18 @@ a[${STORE_SERVICE_ATTR}] > button::after {
 					? error.message
 					: 'No configured sc-gate-dl server is reachable.',
 			);
-			return;
+			return false;
 		}
 		if (getAlwaysOpenTab()) {
 			window.open(buildWebuiSrc(trackUrl), '_blank', 'noopener,noreferrer');
-			return;
+			return true;
 		}
 		if (isPanelBusy()) {
 			enqueueDownload(trackUrl);
-			return;
+			return true;
 		}
 		openPanel(trackUrl);
+		return true;
 	}
 
 	function requestDownload(trackUrl) {
@@ -2506,7 +2544,7 @@ a[${STORE_SERVICE_ATTR}] > button::after {
 
 	function finishCurrentAndAdvance() {
 		if (downloadQueue.length > 0) {
-			startNextFromQueue();
+			void startNextFromQueue();
 			return;
 		}
 		void closePanel();
