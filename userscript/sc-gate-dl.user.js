@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         sc-gate-dl
 // @namespace    https://github.com/D3SOX/sc-gate-dl
-// @version      1.11.2
+// @version      1.11.3
 // @description  Add sc-gate-dl download controls and remember your position in the SoundCloud feed
 // @author       D3SOX
 // @match        https://soundcloud.com/*
@@ -12,6 +12,8 @@
 // @grant        GM_getValue
 // @grant        GM_setValue
 // @grant        GM_deleteValue
+// @grant        GM_xmlhttpRequest
+// @connect      *
 // @connect      localhost
 // @connect      127.0.0.1
 // @run-at       document-idle
@@ -1185,30 +1187,60 @@
 		return controller.signal;
 	}
 
+	const gmXmlHttpRequest =
+		typeof GM_xmlhttpRequest === 'function'
+			? GM_xmlhttpRequest
+			: typeof GM !== 'undefined' && typeof GM.xmlHttpRequest === 'function'
+				? GM.xmlHttpRequest.bind(GM)
+				: null;
+
+	/** Probe via the userscript bridge — page fetch is blocked by Private Network Access. */
+	function probeUrl(url) {
+		if (gmXmlHttpRequest) {
+			return new Promise((resolve) => {
+				gmXmlHttpRequest({
+					method: 'GET',
+					url,
+					timeout: WEBUI_REACHABILITY_TIMEOUT_MS,
+					anonymous: true,
+					onload: (response) => resolve(response.status > 0),
+					onerror: () => resolve(false),
+					ontimeout: () => resolve(false),
+					onabort: () => resolve(false),
+				});
+			});
+		}
+		return fetch(url, {
+			method: 'GET',
+			mode: 'cors',
+			cache: 'no-store',
+			signal: abortSignalTimeout(WEBUI_REACHABILITY_TIMEOUT_MS),
+		})
+			.then((response) => response.ok)
+			.catch(async () => {
+				try {
+					await fetch(url, {
+						method: 'GET',
+						mode: 'no-cors',
+						cache: 'no-store',
+						signal: abortSignalTimeout(WEBUI_REACHABILITY_TIMEOUT_MS),
+					});
+					return true;
+				} catch {
+					return false;
+				}
+			});
+	}
+
 	async function isWebuiReachable(base) {
-		const apiOrigin = apiOriginFromWebui(base);
-		try {
-			const response = await fetch(`${apiOrigin}/api/capabilities`, {
-				method: 'GET',
-				mode: 'cors',
-				cache: 'no-store',
-				signal: abortSignalTimeout(WEBUI_REACHABILITY_TIMEOUT_MS),
-			});
-			if (response.ok) return true;
-		} catch {
-			// API may be proxied behind the Web UI origin — try that next.
+		const urls = [`${base}/`, `${apiOriginFromWebui(base)}/api/capabilities`];
+		const seen = new Set();
+		for (const url of urls) {
+			if (seen.has(url)) continue;
+			seen.add(url);
+			if (await probeUrl(url)) return true;
 		}
-		try {
-			await fetch(`${base}/`, {
-				method: 'GET',
-				mode: 'no-cors',
-				cache: 'no-store',
-				signal: abortSignalTimeout(WEBUI_REACHABILITY_TIMEOUT_MS),
-			});
-			return true;
-		} catch {
-			return false;
-		}
+		return false;
 	}
 
 	async function resolveWebuiBase() {

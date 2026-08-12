@@ -502,7 +502,11 @@ http://100.x.y.z:8123
 ```
 
 Addresses are tried in order before a download opens: the first reachable server
-wins, then the script falls back to the next. Leaving the field empty resets to
+wins, then the script falls back to the next. Reachability is checked through the
+userscript bridge (`GM_xmlhttpRequest`), so LAN / Tailscale hosts work even when
+the browser blocks page `fetch` to private networks (Chrome / Cromite Private
+Network Access). After updating the userscript, approve the new network
+permission prompt if Violentmonkey asks. Leaving the field empty resets to
 localhost. The list is remembered across browser restarts.
 
 The same setting can also be changed from the SoundCloud tab console:

@@ -162,6 +162,8 @@ describe('Web UI preferences', () => {
 		expect(source).toContain('sc-gate-dl-server-dialog');
 		expect(source).toContain('resolveWebuiBase');
 		expect(source).toContain('bindBackdropDismiss');
+		expect(source).toContain('GM_xmlhttpRequest');
+		expect(source).toContain('@connect      *');
 	});
 
 	test('offers a remembered always-open-in-tab mode', () => {
