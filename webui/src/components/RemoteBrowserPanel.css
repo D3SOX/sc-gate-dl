@@ -270,8 +270,14 @@
 	min-height: 0;
 	overflow: auto;
 	touch-action: none;
+	overscroll-behavior: contain;
 	background: #000;
 	border-radius: 0 0 11px 11px;
+}
+
+.remote-browser-viewport,
+.remote-browser-viewport canvas {
+	touch-action: none;
 }
 
 .remote-browser-screen.is-shift-held,

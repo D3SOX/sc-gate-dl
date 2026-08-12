@@ -17,7 +17,9 @@ import {
 	browserRememberStorageKey,
 	browserViewWebSocketUrl,
 	markInternalRemotePointerRelease,
+	normalizedRemotePointer,
 	REMOTE_POINTER_RELEASE_EVENT,
+	remotePointerClientPosition,
 	shouldBlockRemoteMouseEvent,
 } from './remoteBrowser';
 import {
@@ -403,6 +405,10 @@ export function RemoteBrowserPanel({
 			const canvas = screenRef.current?.querySelector('canvas');
 			const pointer = remotePointerPositionRef.current;
 			if (!canvas || !pointer) return;
+			const client = remotePointerClientPosition(
+				pointer,
+				canvas.getBoundingClientRect(),
+			);
 			canvas.dispatchEvent(
 				markInternalRemotePointerRelease(
 					new MouseEvent('mouseup', {
@@ -411,8 +417,8 @@ export function RemoteBrowserPanel({
 						view: window,
 						button: 0,
 						buttons: 0,
-						clientX: pointer.x,
-						clientY: pointer.y,
+						clientX: client.x,
+						clientY: client.y,
 					}),
 				),
 			);
@@ -655,7 +661,10 @@ export function RemoteBrowserPanel({
 		) => {
 			const canvas = screenRef.current?.querySelector('canvas');
 			if (!canvas) return;
-			remotePointerPositionRef.current = { x: clientX, y: clientY };
+			remotePointerPositionRef.current = normalizedRemotePointer(
+				{ x: clientX, y: clientY },
+				canvas.getBoundingClientRect(),
+			);
 			canvas.dispatchEvent(
 				new MouseEvent(type, {
 					bubbles: true,
@@ -669,11 +678,20 @@ export function RemoteBrowserPanel({
 			);
 		};
 
-		const clickRemote = (clientX: number, clientY: number, button: 0 | 2) => {
+		const currentRemotePointer = (canvas: HTMLCanvasElement) => {
+			return remotePointerClientPosition(
+				remotePointerPositionRef.current,
+				canvas.getBoundingClientRect(),
+			);
+		};
+
+		const clickRemote = (button: 0 | 2) => {
+			const canvas = screenRef.current?.querySelector('canvas');
+			if (!canvas) return;
+			const { x, y } = currentRemotePointer(canvas);
 			const buttons = button === 2 ? 2 : 1;
-			dispatchRemoteMouse('mousemove', clientX, clientY);
-			dispatchRemoteMouse('mousedown', clientX, clientY, button, buttons);
-			dispatchRemoteMouse('mouseup', clientX, clientY, button);
+			dispatchRemoteMouse('mousedown', x, y, button, buttons);
+			dispatchRemoteMouse('mouseup', x, y, button);
 		};
 
 		const controls = createMobileRemoteControls({
@@ -684,8 +702,22 @@ export function RemoteBrowserPanel({
 				const timer = window.setTimeout(callback, delay);
 				return () => window.clearTimeout(timer);
 			},
-			movePointer: (clientX, clientY) => {
-				dispatchRemoteMouse('mousemove', clientX, clientY);
+			movePointerBy: (deltaX, deltaY) => {
+				const canvas = screenRef.current?.querySelector('canvas');
+				if (!canvas) return;
+				const current = currentRemotePointer(canvas);
+				const bounds = canvas.getBoundingClientRect();
+				dispatchRemoteMouse(
+					'mousemove',
+					Math.min(
+						Math.max(current.x + deltaX, bounds.left),
+						bounds.left + bounds.width - 1,
+					),
+					Math.min(
+						Math.max(current.y + deltaY, bounds.top),
+						bounds.top + bounds.height - 1,
+					),
+				);
 			},
 			click: clickRemote,
 			panBy: (deltaX, deltaY) => {
@@ -701,6 +733,24 @@ export function RemoteBrowserPanel({
 						viewportInteractionRef.current = null;
 					}
 					screen.classList.remove('is-panning');
+				}
+			},
+			zoomBy: (deltaY, anchorX, anchorY) => {
+				const bounds = screen.getBoundingClientRect();
+				updateZoom(zoomRef.current + deltaY * ZOOM_DRAG_PER_PIXEL, {
+					x: anchorX - bounds.left - screen.clientLeft,
+					y: anchorY - bounds.top - screen.clientTop,
+				});
+			},
+			setZooming: (active) => {
+				if (active) {
+					viewportInteractionRef.current = 'zoom';
+					screen.classList.add('is-zooming');
+				} else {
+					if (viewportInteractionRef.current === 'zoom') {
+						viewportInteractionRef.current = null;
+					}
+					screen.classList.remove('is-zooming');
 				}
 			},
 		});
@@ -757,7 +807,7 @@ export function RemoteBrowserPanel({
 			screen.removeEventListener('touchend', handleTouchEnd, true);
 			screen.removeEventListener('touchcancel', handleTouchCancel, true);
 		};
-	}, []);
+	}, [updateZoom]);
 
 	const resetBrowserView = () => {
 		const canvas = screenRef.current?.querySelector('canvas');
@@ -1096,7 +1146,7 @@ export function RemoteBrowserPanel({
 				<div
 					className={`remote-browser-screen${shiftHeld ? ' is-shift-held' : ''}${altHeld ? ' is-alt-held' : ''}`}
 					ref={screenContainerRef}
-					title="Shift-drag to pan. Alt-scroll or Alt-drag vertically to zoom. On touch: drag the pointer, tap to click, hold to right-click, or use two fingers to pan while zoomed."
+					title="Shift-drag to pan. Alt-scroll or Alt-drag vertically to zoom. On touch: drag the pointer, tap to click at its current position, hold and release to right-click, hold then drag vertically to zoom, or use two fingers to pan while zoomed."
 					onPointerDownCapture={(event) => {
 						beginViewportInteraction(event);
 						if (
@@ -1104,10 +1154,13 @@ export function RemoteBrowserPanel({
 							!event.altKey &&
 							event.pointerType !== 'touch'
 						) {
-							remotePointerPositionRef.current = {
-								x: event.clientX,
-								y: event.clientY,
-							};
+							const canvas = screenRef.current?.querySelector('canvas');
+							if (canvas) {
+								remotePointerPositionRef.current = normalizedRemotePointer(
+									{ x: event.clientX, y: event.clientY },
+									canvas.getBoundingClientRect(),
+								);
+							}
 						}
 					}}
 					onPointerMoveCapture={(event) => {
@@ -1119,10 +1172,13 @@ export function RemoteBrowserPanel({
 						) {
 							return;
 						}
-						remotePointerPositionRef.current = {
-							x: event.clientX,
-							y: event.clientY,
-						};
+						const canvas = screenRef.current?.querySelector('canvas');
+						if (canvas) {
+							remotePointerPositionRef.current = normalizedRemotePointer(
+								{ x: event.clientX, y: event.clientY },
+								canvas.getBoundingClientRect(),
+							);
+						}
 					}}
 				>
 					<div

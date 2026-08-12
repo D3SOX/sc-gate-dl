@@ -52,6 +52,8 @@ export class StillhypeDownloader {
 	private downloadFilename: string | null = null;
 	private config: HypedditConfig;
 	private progressCallback: ProgressCallback | null = null;
+	private cancelPendingDownloadWait: (() => void) | null = null;
+	private readonly downloadAbortController = new AbortController();
 
 	constructor(config: HypedditConfig) {
 		this.config = config;
@@ -285,6 +287,9 @@ export class StillhypeDownloader {
 	}
 
 	async close() {
+		this.cancelPendingDownloadWait?.();
+		this.cancelPendingDownloadWait = null;
+		this.downloadAbortController.abort();
 		await this.browser?.close();
 	}
 
@@ -903,6 +908,10 @@ export class StillhypeDownloader {
 			downloadCompleteResolve = resolve;
 			downloadCompleteReject = reject;
 		});
+		const cancelPendingDownloadWait = () => {
+			downloadCompleteReject(new Error('Download was canceled'));
+		};
+		this.cancelPendingDownloadWait = cancelPendingDownloadWait;
 		// Abandoned when the unlock URL path returns first.
 		downloadCompletePromise.catch(() => {});
 		const downloadTimer = setTimeout(
@@ -1028,6 +1037,9 @@ export class StillhypeDownloader {
 
 			return await downloadCompletePromise;
 		} finally {
+			if (this.cancelPendingDownloadWait === cancelPendingDownloadWait) {
+				this.cancelPendingDownloadWait = null;
+			}
 			clearTimeout(downloadTimer);
 			pBar.stop();
 			page.off('response', onResponse);
@@ -1047,7 +1059,10 @@ export class StillhypeDownloader {
 		for (let hop = 0; hop < maxRedirects; hop++) {
 			const result = await safeFetch(current, {
 				headers: { 'User-Agent': USER_AGENT },
-				signal: AbortSignal.timeout(60_000),
+				signal: AbortSignal.any([
+					this.downloadAbortController.signal,
+					AbortSignal.timeout(60_000),
+				]),
 			});
 			finalUrl = result.url;
 			response = result.response;
