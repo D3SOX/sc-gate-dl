@@ -1,5 +1,8 @@
 import type { Browser, Page } from 'puppeteer';
-import { browserModeToLaunchOptions, launchAppBrowser } from './browserLaunch';
+import {
+	browserModeToLaunchOptions,
+	CancellableBrowserLaunch,
+} from './browserLaunch';
 import { DirectDownloader } from './directDownload';
 import type { ProgressCallback } from './hypeddit';
 import Selectors from './selectors';
@@ -22,6 +25,7 @@ const SC_AUTHORIZE_RE = /secure\.soundcloud\.com\/authorize/i;
  */
 export class PumpyoursoundDownloader {
 	private browser!: Browser;
+	private readonly browserLaunch = new CancellableBrowserLaunch();
 	private directDownloader: DirectDownloader | null = null;
 	private downloadFilename: string | null = null;
 	private config: HypedditConfig;
@@ -45,7 +49,7 @@ export class PumpyoursoundDownloader {
 	}
 
 	async initialize() {
-		this.browser = await launchAppBrowser({
+		this.browser = await this.browserLaunch.launch({
 			...browserModeToLaunchOptions(this.config.browserMode),
 			userDataDir: this.config.userDataDir ?? './browser-data',
 			// SC.connect authorize popup shares session cookies more reliably with this.
@@ -142,7 +146,7 @@ export class PumpyoursoundDownloader {
 
 	async close() {
 		await this.directDownloader?.close();
-		await this.browser?.close();
+		await this.browserLaunch.close();
 	}
 
 	private async dismissOverlays(page: Page) {

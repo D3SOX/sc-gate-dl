@@ -1,6 +1,6 @@
 import { Presets, SingleBar } from 'cli-progress';
 import type { Browser, Page } from 'puppeteer';
-import { launchConfiguredBrowser } from './browserLaunch';
+import { CancellableBrowserLaunch } from './browserLaunch';
 import type { ProgressCallback } from './hypeddit';
 import Selectors from './selectors';
 import { SoundcloudClient } from './soundcloud';
@@ -19,6 +19,7 @@ type PaneKind =
 
 export class DroploudDownloader {
 	private browser!: Browser;
+	private readonly browserLaunch = new CancellableBrowserLaunch();
 	private downloadFilename: string | null = null;
 	private config: HypedditConfig;
 	private progressCallback: ProgressCallback | null = null;
@@ -42,7 +43,7 @@ export class DroploudDownloader {
 	}
 
 	async initialize() {
-		this.browser = await launchConfiguredBrowser(this.config);
+		this.browser = await this.browserLaunch.launchConfigured(this.config);
 
 		const browserContext = this.browser.defaultBrowserContext();
 		const soundCloudCookies = await loadCookies('soundcloud-cookies.json');
@@ -179,7 +180,7 @@ export class DroploudDownloader {
 	async close() {
 		this.cancelPendingDownloadWait?.();
 		this.cancelPendingDownloadWait = null;
-		await this.browser?.close();
+		await this.browserLaunch.close();
 	}
 
 	private async dismissCookieBanner(page: Page) {

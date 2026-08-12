@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import {
 	buildXvfbBrowserEnv,
+	CancellableBrowserLaunch,
 	createXvfbManager,
 	getGpuWorkaroundArgs,
 	isXvfbSupported,
@@ -116,5 +117,43 @@ describe('isXvfbSupported', () => {
 		expect(isXvfbSupported('linux')).toBeTrue();
 		expect(isXvfbSupported('darwin')).toBeFalse();
 		expect(isXvfbSupported('win32')).toBeFalse();
+	});
+});
+
+describe('CancellableBrowserLaunch', () => {
+	test('closes a browser that finishes launching after close()', async () => {
+		const events: string[] = [];
+		let resolveLaunch!: (browser: { close: () => Promise<void> }) => void;
+		const launchPromise = new Promise<{ close: () => Promise<void> }>(
+			(resolve) => {
+				resolveLaunch = resolve;
+			},
+		);
+
+		const session = new CancellableBrowserLaunch(
+			() => launchPromise as Promise<never>,
+		);
+		const launching = session.launch();
+		const closing = session.close();
+		let closed = false;
+		resolveLaunch({
+			close: async () => {
+				if (closed) return;
+				closed = true;
+				events.push('close');
+			},
+		});
+
+		await expect(launching).rejects.toThrow('Download cancelled');
+		await closing;
+		expect(events).toEqual(['close']);
+	});
+
+	test('rejects a late launch after close()', async () => {
+		const session = new CancellableBrowserLaunch(async () => {
+			throw new Error('should not launch');
+		});
+		await session.close();
+		await expect(session.launch()).rejects.toThrow('Download cancelled');
 	});
 });

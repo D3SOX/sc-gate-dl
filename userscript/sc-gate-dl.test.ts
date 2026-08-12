@@ -186,4 +186,19 @@ describe('Web UI preferences', () => {
 			"window.addEventListener('pointerup', releaseRemotePointer, true)",
 		);
 	});
+
+	test('cancels active jobs via GM bridge on panel close and host unload', () => {
+		expect(source).toContain('function requestJobCancel(jobId)');
+		expect(source).toContain('gmXmlHttpRequest({');
+		expect(source).toContain("method: 'POST'");
+		expect(source).toContain(
+			"window.addEventListener('pagehide', cancelJobOnHostUnload)",
+		);
+		expect(source).toContain('await cancellation');
+		expect(source).toContain("iframe.src = 'about:blank'");
+		const cancelIdx = source.indexOf('await cancellation');
+		const blankIdx = source.indexOf("iframe.src = 'about:blank'");
+		expect(cancelIdx).toBeGreaterThan(-1);
+		expect(blankIdx).toBeGreaterThan(cancelIdx);
+	});
 });

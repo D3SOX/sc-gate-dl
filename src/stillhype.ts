@@ -2,7 +2,7 @@ import { mkdir, rm } from 'node:fs/promises';
 import { basename, join } from 'node:path';
 import { Presets, SingleBar } from 'cli-progress';
 import type { Browser, HTTPResponse, Page } from 'puppeteer';
-import { launchConfiguredBrowser } from './browserLaunch';
+import { CancellableBrowserLaunch } from './browserLaunch';
 import type { ProgressCallback } from './hypeddit';
 import { safeFetch } from './safeOutboundUrl';
 import Selectors from './selectors';
@@ -49,6 +49,7 @@ function safePageUrl(page: Page): string {
 
 export class StillhypeDownloader {
 	private browser!: Browser;
+	private readonly browserLaunch = new CancellableBrowserLaunch();
 	private downloadFilename: string | null = null;
 	private config: HypedditConfig;
 	private progressCallback: ProgressCallback | null = null;
@@ -73,7 +74,7 @@ export class StillhypeDownloader {
 	}
 
 	async initialize() {
-		this.browser = await launchConfiguredBrowser(this.config);
+		this.browser = await this.browserLaunch.launchConfigured(this.config);
 
 		const browserContext = this.browser.defaultBrowserContext();
 		const soundCloudCookies = await loadCookies('soundcloud-cookies.json');
@@ -290,7 +291,7 @@ export class StillhypeDownloader {
 		this.cancelPendingDownloadWait?.();
 		this.cancelPendingDownloadWait = null;
 		this.downloadAbortController.abort();
-		await this.browser?.close();
+		await this.browserLaunch.close();
 	}
 
 	private async safeEvaluate<T>(

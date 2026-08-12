@@ -274,3 +274,62 @@ export async function launchAppBrowser(
 		throw error;
 	}
 }
+
+/**
+ * Tracks an in-flight Chromium launch so cancel can close the browser even when
+ * `close()` races `initialize()` before `this.browser` is assigned.
+ */
+export class CancellableBrowserLaunch {
+	private browser: Browser | undefined;
+	private inflight: Promise<Browser> | null = null;
+	private closed = false;
+
+	constructor(
+		private readonly launchBrowser: (
+			options?: AppBrowserLaunchOptions,
+		) => Promise<Browser> = launchAppBrowser,
+	) {}
+
+	async launch(options: AppBrowserLaunchOptions = {}): Promise<Browser> {
+		if (this.closed) {
+			throw new Error('Download cancelled');
+		}
+		const inflight = this.launchBrowser(options);
+		this.inflight = inflight;
+		try {
+			const browser = await inflight;
+			this.browser = browser;
+			if (this.closed) {
+				this.browser = undefined;
+				await browser.close().catch(() => {});
+				throw new Error('Download cancelled');
+			}
+			return browser;
+		} finally {
+			if (this.inflight === inflight) this.inflight = null;
+		}
+	}
+
+	async launchConfigured(config: HypedditConfig): Promise<Browser> {
+		return this.launch({
+			...browserModeToLaunchOptions(config.browserMode),
+			userDataDir: config.userDataDir ?? './browser-data',
+		});
+	}
+
+	async close(): Promise<void> {
+		this.closed = true;
+		const inflight = this.inflight;
+		if (inflight) {
+			try {
+				const browser = await inflight;
+				await browser.close().catch(() => {});
+			} catch {
+				// Launch failed or already closed after cancel.
+			}
+		}
+		const browser = this.browser;
+		this.browser = undefined;
+		await browser?.close().catch(() => {});
+	}
+}

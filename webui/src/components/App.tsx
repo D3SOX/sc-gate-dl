@@ -455,15 +455,16 @@ export default function App() {
 			if (!jobId || !stage || !ACTIVE_JOB_STAGES.has(stage)) return;
 			cancelRequestedRef.current = true;
 			const url = `${API_BASE}/api/job/${encodeURIComponent(jobId)}/cancel`;
-			try {
-				if (navigator.sendBeacon(url)) return;
-			} catch {
-				// Fall back to a keepalive request below.
-			}
+			// Prefer keepalive fetch: sendBeacon is easy to drop for cross-origin
+			// POSTs, and pagehide is more reliable than beforeunload for iframes/tabs.
 			void fetch(url, { method: 'POST', keepalive: true }).catch(() => {});
 		};
+		window.addEventListener('pagehide', cancelJobOnUnload);
 		window.addEventListener('beforeunload', cancelJobOnUnload);
-		return () => window.removeEventListener('beforeunload', cancelJobOnUnload);
+		return () => {
+			window.removeEventListener('pagehide', cancelJobOnUnload);
+			window.removeEventListener('beforeunload', cancelJobOnUnload);
+		};
 	}, []);
 
 	const showCleanupSoundcloudToast = useCallback(() => {
