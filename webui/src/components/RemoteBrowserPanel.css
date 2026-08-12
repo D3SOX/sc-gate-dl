@@ -145,6 +145,84 @@
 	font-size: 1rem;
 }
 
+.remote-browser-help {
+	position: relative;
+	flex: none;
+}
+
+.remote-browser-help-trigger {
+	display: grid;
+	place-items: center;
+	width: 22px;
+	height: 22px;
+	padding: 0;
+	font: 700 0.8rem/1 inherit;
+	color: var(--text-secondary);
+	background: transparent;
+	border: 1px solid var(--border-strong);
+	border-radius: 999px;
+	cursor: help;
+}
+
+.remote-browser-help-trigger:hover,
+.remote-browser-help.is-open .remote-browser-help-trigger,
+.remote-browser-help:focus-within .remote-browser-help-trigger {
+	color: var(--neon-cyan);
+	border-color: var(--neon-cyan);
+}
+
+.remote-browser-help-panel {
+	position: absolute;
+	top: calc(100% + 8px);
+	left: 0;
+	z-index: 5;
+	width: min(280px, calc(100vw - 32px));
+	padding: var(--space-sm) var(--space-md);
+	color: var(--text-primary);
+	font-size: 0.8rem;
+	line-height: 1.35;
+	text-align: left;
+	pointer-events: none;
+	visibility: hidden;
+	opacity: 0;
+	background: var(--bg-elevated);
+	border: 1px solid var(--border-strong);
+	border-radius: 8px;
+	box-shadow: 0 10px 28px rgb(0 0 0 / 35%);
+	transition:
+		opacity 120ms ease,
+		visibility 120ms ease;
+}
+
+.remote-browser-help:hover .remote-browser-help-panel,
+.remote-browser-help:focus-within .remote-browser-help-panel,
+.remote-browser-help.is-open .remote-browser-help-panel {
+	pointer-events: auto;
+	visibility: visible;
+	opacity: 1;
+}
+
+.remote-browser-help-panel p {
+	margin: 0 0 4px;
+}
+
+.remote-browser-help-panel p + ul {
+	margin-top: 0;
+}
+
+.remote-browser-help-panel ul {
+	margin: 0 0 10px;
+	padding-left: 1.1em;
+}
+
+.remote-browser-help-panel ul:last-child {
+	margin-bottom: 0;
+}
+
+.remote-browser-help-panel li + li {
+	margin-top: 2px;
+}
+
 .remote-browser-toolbar button {
 	padding: var(--space-xs) var(--space-sm);
 	color: var(--text-secondary);
@@ -476,6 +554,11 @@
 
 	.remote-browser-toolbar-heading h2 {
 		display: none;
+	}
+
+	.remote-browser-help-panel {
+		left: auto;
+		right: 0;
 	}
 
 	.remote-browser-zoom button:nth-child(2) {
