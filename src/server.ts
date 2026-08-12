@@ -1178,24 +1178,26 @@ const server = Bun.serve({
 					}
 
 					jobStore.requestCancellation(jobId);
+					const teardown = (async () => {
+						// The task owns the shared downloads directory until its final cleanup
+						// completes. JobQueue advances automatically when this resolves.
+						await closeJobDownloader(jobId);
+						await jobQueue.waitForCompletion(jobId);
+						jobStore.cancel(jobId, 'Download cancelled');
+					})();
 					const teardownCompleted = await Promise.race([
-						(async () => {
-							// Close the provider and wait for its task to finish before the
-							// serialized queue advances.
-							await closeJobDownloader(jobId);
-							await jobQueue.waitForCompletion(jobId);
-							return true;
-						})(),
+						teardown.then(() => true),
 						Bun.sleep(10_000).then(() => false),
 					]);
 					if (!teardownCompleted) {
 						console.warn(
-							`Cancellation teardown timed out for ${jobId}; releasing its queue slot`,
+							`Cancellation teardown is still pending for ${jobId}; retaining its queue slot`,
 						);
-						await cleanupCancelledJobDownloads(jobId);
+						return jsonResponse(
+							{ success: true, message: 'Cancellation is still in progress' },
+							{ status: 202 },
+						);
 					}
-					jobQueue.releaseActive(jobId);
-					jobStore.cancel(jobId, 'Download cancelled');
 
 					return jsonResponse({ success: true, message: 'Download cancelled' });
 				} catch (error) {

@@ -774,7 +774,11 @@ export class HypedditDownloader {
 				console.log(
 					'Download not started after 10 seconds, clicking button again...',
 				);
-				await page.click(Selectors.DW_DOWNLOAD_BUTTON);
+				try {
+					await page.click(Selectors.DW_DOWNLOAD_BUTTON);
+				} catch {
+					// Browser closure can race this best-effort retry during cancellation.
+				}
 			}
 		}, 10_000);
 

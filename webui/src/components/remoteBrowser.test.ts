@@ -7,6 +7,8 @@ import {
 	browserRememberStorageKey,
 	browserViewWebSocketUrl,
 	markInternalRemotePointerRelease,
+	normalizedRemotePointer,
+	remotePointerClientPosition,
 	shouldBlockRemoteMouseEvent,
 } from './remoteBrowser';
 
@@ -51,6 +53,40 @@ describe('remote pointer release', () => {
 		expect(
 			shouldBlockRemoteMouseEvent(new Event('mouseup'), true, true),
 		).toBeTrue();
+	});
+});
+
+describe('remote pointer coordinates', () => {
+	test('preserves the remote location after canvas pan and zoom', () => {
+		const pointer = normalizedRemotePointer(
+			{ x: 250, y: 150 },
+			{ left: 50, top: 50, width: 400, height: 200 },
+		);
+
+		expect(pointer).toEqual({ x: 0.5, y: 0.5 });
+		expect(
+			remotePointerClientPosition(pointer, {
+				left: -100,
+				top: -50,
+				width: 800,
+				height: 400,
+			}),
+		).toEqual({ x: 300, y: 150 });
+	});
+
+	test('applies relative movement from the transformed pointer location', () => {
+		const transformed = { left: -100, top: -50, width: 800, height: 400 };
+		const current = remotePointerClientPosition(
+			{ x: 0.5, y: 0.5 },
+			transformed,
+		);
+		const moved = normalizedRemotePointer(
+			{ x: current.x + 40, y: current.y - 20 },
+			transformed,
+		);
+
+		expect(moved.x).toBeCloseTo(0.55, 2);
+		expect(moved.y).toBeCloseTo(0.45, 2);
 	});
 });
 

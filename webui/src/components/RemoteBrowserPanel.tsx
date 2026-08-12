@@ -17,7 +17,9 @@ import {
 	browserRememberStorageKey,
 	browserViewWebSocketUrl,
 	markInternalRemotePointerRelease,
+	normalizedRemotePointer,
 	REMOTE_POINTER_RELEASE_EVENT,
+	remotePointerClientPosition,
 	shouldBlockRemoteMouseEvent,
 } from './remoteBrowser';
 import {
@@ -403,6 +405,10 @@ export function RemoteBrowserPanel({
 			const canvas = screenRef.current?.querySelector('canvas');
 			const pointer = remotePointerPositionRef.current;
 			if (!canvas || !pointer) return;
+			const client = remotePointerClientPosition(
+				pointer,
+				canvas.getBoundingClientRect(),
+			);
 			canvas.dispatchEvent(
 				markInternalRemotePointerRelease(
 					new MouseEvent('mouseup', {
@@ -411,8 +417,8 @@ export function RemoteBrowserPanel({
 						view: window,
 						button: 0,
 						buttons: 0,
-						clientX: pointer.x,
-						clientY: pointer.y,
+						clientX: client.x,
+						clientY: client.y,
 					}),
 				),
 			);
@@ -655,7 +661,10 @@ export function RemoteBrowserPanel({
 		) => {
 			const canvas = screenRef.current?.querySelector('canvas');
 			if (!canvas) return;
-			remotePointerPositionRef.current = { x: clientX, y: clientY };
+			remotePointerPositionRef.current = normalizedRemotePointer(
+				{ x: clientX, y: clientY },
+				canvas.getBoundingClientRect(),
+			);
 			canvas.dispatchEvent(
 				new MouseEvent(type, {
 					bubbles: true,
@@ -670,15 +679,10 @@ export function RemoteBrowserPanel({
 		};
 
 		const currentRemotePointer = (canvas: HTMLCanvasElement) => {
-			const bounds = canvas.getBoundingClientRect();
-			const current = remotePointerPositionRef.current ?? {
-				x: bounds.left + bounds.width / 2,
-				y: bounds.top + bounds.height / 2,
-			};
-			return {
-				x: Math.min(Math.max(current.x, bounds.left), bounds.right - 1),
-				y: Math.min(Math.max(current.y, bounds.top), bounds.bottom - 1),
-			};
+			return remotePointerClientPosition(
+				remotePointerPositionRef.current,
+				canvas.getBoundingClientRect(),
+			);
 		};
 
 		const clickRemote = (button: 0 | 2) => {
@@ -705,8 +709,14 @@ export function RemoteBrowserPanel({
 				const bounds = canvas.getBoundingClientRect();
 				dispatchRemoteMouse(
 					'mousemove',
-					Math.min(Math.max(current.x + deltaX, bounds.left), bounds.right - 1),
-					Math.min(Math.max(current.y + deltaY, bounds.top), bounds.bottom - 1),
+					Math.min(
+						Math.max(current.x + deltaX, bounds.left),
+						bounds.left + bounds.width - 1,
+					),
+					Math.min(
+						Math.max(current.y + deltaY, bounds.top),
+						bounds.top + bounds.height - 1,
+					),
 				);
 			},
 			click: clickRemote,
@@ -1144,10 +1154,13 @@ export function RemoteBrowserPanel({
 							!event.altKey &&
 							event.pointerType !== 'touch'
 						) {
-							remotePointerPositionRef.current = {
-								x: event.clientX,
-								y: event.clientY,
-							};
+							const canvas = screenRef.current?.querySelector('canvas');
+							if (canvas) {
+								remotePointerPositionRef.current = normalizedRemotePointer(
+									{ x: event.clientX, y: event.clientY },
+									canvas.getBoundingClientRect(),
+								);
+							}
 						}
 					}}
 					onPointerMoveCapture={(event) => {
@@ -1159,10 +1172,13 @@ export function RemoteBrowserPanel({
 						) {
 							return;
 						}
-						remotePointerPositionRef.current = {
-							x: event.clientX,
-							y: event.clientY,
-						};
+						const canvas = screenRef.current?.querySelector('canvas');
+						if (canvas) {
+							remotePointerPositionRef.current = normalizedRemotePointer(
+								{ x: event.clientX, y: event.clientY },
+								canvas.getBoundingClientRect(),
+							);
+						}
 					}}
 				>
 					<div

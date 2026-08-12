@@ -784,8 +784,7 @@ export class DownloadgaterDownloader {
 		}, 10_000);
 
 		try {
-			await clickDownload();
-			await downloadCompletePromise;
+			await Promise.all([clickDownload(), downloadCompletePromise]);
 		} finally {
 			if (this.cancelPendingDownloadWait === cancelPendingDownloadWait) {
 				this.cancelPendingDownloadWait = null;
