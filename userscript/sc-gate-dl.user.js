@@ -2516,6 +2516,38 @@ a[${STORE_SERVICE_ATTR}] > button::after {
 	}
 
 	async function openDownload(trackUrl) {
+		if (getAlwaysOpenTab()) {
+			const bases = getWebuiBases();
+			const cacheHit =
+				activeWebuiBase &&
+				Date.now() - activeWebuiBaseAt < WEBUI_RESOLVE_CACHE_MS &&
+				bases.includes(activeWebuiBase);
+			if (cacheHit) {
+				window.open(buildWebuiSrc(trackUrl), '_blank', 'noopener,noreferrer');
+				return true;
+			}
+			// Keep the window handle (no noopener) so we can navigate after probing.
+			const tab = window.open('about:blank', '_blank');
+			if (!tab) {
+				window.alert(
+					'sc-gate-dl: popup blocked. Allow popups for SoundCloud or disable always-open-in-tab.',
+				);
+				return false;
+			}
+			try {
+				await resolveWebuiBase();
+				tab.location.href = buildWebuiSrc(trackUrl);
+				return true;
+			} catch (error) {
+				tab.close();
+				window.alert(
+					error instanceof Error
+						? error.message
+						: 'No configured sc-gate-dl server is reachable.',
+				);
+				return false;
+			}
+		}
 		try {
 			await resolveWebuiBase();
 		} catch (error) {
@@ -2525,10 +2557,6 @@ a[${STORE_SERVICE_ATTR}] > button::after {
 					: 'No configured sc-gate-dl server is reachable.',
 			);
 			return false;
-		}
-		if (getAlwaysOpenTab()) {
-			window.open(buildWebuiSrc(trackUrl), '_blank', 'noopener,noreferrer');
-			return true;
 		}
 		if (isPanelBusy()) {
 			enqueueDownload(trackUrl);
