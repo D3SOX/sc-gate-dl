@@ -1,8 +1,10 @@
 import { describe, expect, test } from 'bun:test';
 import { DownloadgaterDownloader } from './downloadgater';
 import { DroploudDownloader } from './droploud';
+import { GaterushDownloader } from './gaterush';
 import { HypedditDownloader } from './hypeddit';
 import { MypresskitDownloader } from './mypresskit';
+import { PumpyoursoundDownloader } from './pumpyoursound';
 import { StillhypeDownloader } from './stillhype';
 import type { HypedditConfig } from './types';
 
@@ -30,7 +32,7 @@ async function expectPendingWaitCancelled(
 			events.push('cancel');
 			rejectPending(new Error('Download was canceled'));
 		},
-		browser: {
+		browserLaunch: {
 			close: async () => {
 				events.push('close');
 			},
@@ -46,6 +48,7 @@ async function expectPendingWaitCancelled(
 describe('browser gate cancellation', () => {
 	for (const [name, create] of [
 		['Droploud', () => new DroploudDownloader(config)],
+		['GateRush', () => new GaterushDownloader(config)],
 		['DownloadGater', () => new DownloadgaterDownloader(config)],
 		['StillHype', () => new StillhypeDownloader(config)],
 		['Hypeddit', () => new HypedditDownloader(config)],
@@ -64,7 +67,7 @@ describe('browser gate cancellation', () => {
 		});
 		Object.assign(downloader, {
 			downloadAbortController,
-			browser: {
+			browserLaunch: {
 				close: async () => {
 					events.push('close');
 				},
@@ -74,5 +77,26 @@ describe('browser gate cancellation', () => {
 		await downloader.close();
 
 		expect(events).toEqual(['abort', 'close']);
+	});
+
+	test('PumpYourSound closes its direct downloader before the browser', async () => {
+		const downloader = new PumpyoursoundDownloader(config);
+		const events: string[] = [];
+		Object.assign(downloader, {
+			directDownloader: {
+				close: async () => {
+					events.push('direct');
+				},
+			},
+			browserLaunch: {
+				close: async () => {
+					events.push('close');
+				},
+			},
+		});
+
+		await downloader.close();
+
+		expect(events).toEqual(['direct', 'close']);
 	});
 });

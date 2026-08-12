@@ -1,6 +1,9 @@
 import { Presets, SingleBar } from 'cli-progress';
 import type { Browser, Page } from 'puppeteer';
-import { browserModeToLaunchOptions, launchAppBrowser } from './browserLaunch';
+import {
+	browserModeToLaunchOptions,
+	CancellableBrowserLaunch,
+} from './browserLaunch';
 import Selectors from './selectors';
 import { waitForSoundcloudLogin } from './soundcloudLogin';
 import type { HypedditConfig, JobProgress, JobStage } from './types';
@@ -22,6 +25,7 @@ interface GateDefinition {
 
 export class HypedditDownloader {
 	private browser!: Browser; // null-asserted because it is initialized async and every call to it comes logically after the init
+	private readonly browserLaunch = new CancellableBrowserLaunch();
 	private downloadFilename: string | null = null;
 	private config: HypedditConfig;
 	private spotifyCookiesExists = false;
@@ -102,7 +106,7 @@ export class HypedditDownloader {
 	}
 
 	async initialize() {
-		this.browser = await launchAppBrowser({
+		this.browser = await this.browserLaunch.launch({
 			...browserModeToLaunchOptions(this.config.browserMode),
 			userDataDir: this.config.userDataDir ?? './browser-data',
 		});
@@ -354,7 +358,7 @@ export class HypedditDownloader {
 	async close() {
 		this.cancelPendingDownloadWait?.();
 		this.cancelPendingDownloadWait = null;
-		await this.browser?.close();
+		await this.browserLaunch.close();
 	}
 
 	private async handleEmailSlide(page: Page) {

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         sc-gate-dl
 // @namespace    https://github.com/D3SOX/sc-gate-dl
-// @version      1.11.3
+// @version      1.11.5
 // @description  Add sc-gate-dl download controls and remember your position in the SoundCloud feed
 // @author       D3SOX
 // @match        https://soundcloud.com/*
@@ -1232,6 +1232,29 @@
 			});
 	}
 
+	/** Cancel via GM bridge — page fetch to localhost is blocked by PNA. */
+	function requestJobCancel(jobId) {
+		const url = `${getApiBase()}/api/job/${encodeURIComponent(jobId)}/cancel`;
+		if (gmXmlHttpRequest) {
+			try {
+				// Dispatch immediately; do not wait for teardown (browser close can take seconds).
+				gmXmlHttpRequest({
+					method: 'POST',
+					url,
+					anonymous: true,
+					onload: () => {},
+					onerror: () => {},
+					ontimeout: () => {},
+					onabort: () => {},
+				});
+			} catch {
+				// Bridge may throw synchronously; panel cleanup must still continue.
+			}
+			return Promise.resolve();
+		}
+		return fetch(url, { method: 'POST', keepalive: true }).catch(() => {});
+	}
+
 	async function isWebuiReachable(base) {
 		const urls = [`${base}/`, `${apiOriginFromWebui(base)}/api/capabilities`];
 		const seen = new Set();
@@ -2337,30 +2360,35 @@ a[${STORE_SERVICE_ATTR}] > button::after {
 				// ignore
 			}
 		}
-		try {
-			await fetch(
-				`${getApiBase()}/api/job/${encodeURIComponent(jobId)}/cancel`,
-				{
-					method: 'POST',
-				},
-			);
-		} catch {
-			// ignore — panel still closes
-		}
+		await requestJobCancel(jobId);
 		delete panel.dataset.jobId;
 	}
+
+	function cancelJobOnHostUnload() {
+		const panel = document.getElementById(PANEL_ID);
+		const jobId = panel?.dataset.jobId;
+		if (!jobId) return;
+		void requestJobCancel(jobId);
+		delete panel.dataset.jobId;
+	}
+
+	window.addEventListener('pagehide', cancelJobOnHostUnload);
+	window.addEventListener('beforeunload', cancelJobOnHostUnload);
 
 	async function closePanel() {
 		window.clearTimeout(autoCloseTimer);
 		const panel = document.getElementById(PANEL_ID);
 		if (!panel) return;
+		// Cancel via the GM bridge before tearing down the iframe — page fetch to
+		// localhost is blocked by Private Network Access, and blanking the iframe
+		// races the embedded WebUI's own unload cancel.
 		const cancellation = cancelActiveJob(panel);
+		await cancellation;
 		const iframe = panel.querySelector('iframe');
 		if (iframe) iframe.src = 'about:blank';
 		delete panel.dataset.trackUrl;
 		delete panel.dataset.jobId;
 		panel.hidden = true;
-		await cancellation;
 	}
 
 	function applyQueueGeom(el) {

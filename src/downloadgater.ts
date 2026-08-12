@@ -1,6 +1,6 @@
 import { Presets, SingleBar } from 'cli-progress';
 import type { Browser, Page } from 'puppeteer';
-import { launchConfiguredBrowser } from './browserLaunch';
+import { CancellableBrowserLaunch } from './browserLaunch';
 import type { ProgressCallback } from './hypeddit';
 import Selectors from './selectors';
 import { waitForSoundcloudLogin } from './soundcloudLogin';
@@ -9,6 +9,7 @@ import { loadCookies, timeout } from './utils';
 
 export class DownloadgaterDownloader {
 	private browser!: Browser;
+	private readonly browserLaunch = new CancellableBrowserLaunch();
 	private downloadFilename: string | null = null;
 	private config: HypedditConfig;
 	private progressCallback: ProgressCallback | null = null;
@@ -32,7 +33,7 @@ export class DownloadgaterDownloader {
 	}
 
 	async initialize() {
-		this.browser = await launchConfiguredBrowser(this.config);
+		this.browser = await this.browserLaunch.launchConfigured(this.config);
 
 		const browserContext = this.browser.defaultBrowserContext();
 		const soundCloudCookies = await loadCookies('soundcloud-cookies.json');
@@ -170,7 +171,7 @@ export class DownloadgaterDownloader {
 	async close() {
 		this.cancelPendingDownloadWait?.();
 		this.cancelPendingDownloadWait = null;
-		await this.browser?.close();
+		await this.browserLaunch.close();
 	}
 
 	private async clickFreeDownload(page: Page) {

@@ -2,7 +2,10 @@ import { mkdir, rm } from 'node:fs/promises';
 import { basename, join } from 'node:path';
 import { Presets, SingleBar } from 'cli-progress';
 import type { Browser, Page } from 'puppeteer';
-import { browserModeToLaunchOptions, launchAppBrowser } from './browserLaunch';
+import {
+	browserModeToLaunchOptions,
+	CancellableBrowserLaunch,
+} from './browserLaunch';
 import type { ProgressCallback } from './hypeddit';
 import { safeFetch } from './safeOutboundUrl';
 import Selectors from './selectors';
@@ -63,6 +66,7 @@ function safePageUrl(page: Page): string {
 
 export class MypresskitDownloader {
 	private browser!: Browser;
+	private readonly browserLaunch = new CancellableBrowserLaunch();
 	private config: HypedditConfig;
 	private progressCallback: ProgressCallback | null = null;
 	private readonly downloadAbortController = new AbortController();
@@ -85,7 +89,7 @@ export class MypresskitDownloader {
 	}
 
 	async initialize() {
-		this.browser = await launchAppBrowser({
+		this.browser = await this.browserLaunch.launch({
 			...browserModeToLaunchOptions(this.config.browserMode),
 			userDataDir: this.config.userDataDir ?? './browser-data',
 			// SC OAuth authorize popup shares session cookies more reliably with this.
@@ -225,7 +229,7 @@ export class MypresskitDownloader {
 
 	async close() {
 		this.downloadAbortController.abort();
-		await this.browser?.close();
+		await this.browserLaunch.close();
 	}
 
 	private async dismissCookies(page: Page) {
