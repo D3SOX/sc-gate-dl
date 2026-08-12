@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         sc-gate-dl
 // @namespace    https://github.com/D3SOX/sc-gate-dl
-// @version      1.11.1
+// @version      1.11.2
 // @description  Add sc-gate-dl download controls and remember your position in the SoundCloud feed
 // @author       D3SOX
 // @match        https://soundcloud.com/*
@@ -1237,6 +1237,17 @@
 		);
 	}
 
+	function bindBackdropDismiss(dialog, close) {
+		let pointerDownOnBackdrop = false;
+		dialog.addEventListener('pointerdown', (event) => {
+			pointerDownOnBackdrop = event.target === dialog;
+		});
+		dialog.addEventListener('click', (event) => {
+			if (pointerDownOnBackdrop && event.target === dialog) close();
+			pointerDownOnBackdrop = false;
+		});
+	}
+
 	function configureWebuiBase() {
 		ensureStyles();
 		document.getElementById('sc-gate-dl-server-dialog')?.remove();
@@ -1258,9 +1269,7 @@
 			input.value = getWebuiBases().join('\n');
 		}
 		const close = () => dialog.remove();
-		dialog.addEventListener('click', (event) => {
-			if (event.target === dialog) close();
-		});
+		bindBackdropDismiss(dialog, close);
 		dialog
 			.querySelector('.sc-gate-dl-format-cancel')
 			?.addEventListener('click', close);
@@ -1456,9 +1465,7 @@
 			</div>
 		`;
 		const close = () => dialog.remove();
-		dialog.addEventListener('click', (e) => {
-			if (e.target === dialog) close();
-		});
+		bindBackdropDismiss(dialog, close);
 		dialog
 			.querySelector('.sc-gate-dl-format-cancel')
 			?.addEventListener('click', close);
@@ -1503,9 +1510,7 @@
 			</div>
 		`;
 		const close = () => dialog.remove();
-		dialog.addEventListener('click', (event) => {
-			if (event.target === dialog) close();
-		});
+		bindBackdropDismiss(dialog, close);
 		dialog
 			.querySelector('.sc-gate-dl-format-cancel')
 			?.addEventListener('click', close);
