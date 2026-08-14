@@ -1,5 +1,4 @@
 import { existsSync } from 'node:fs';
-import { unlink } from 'node:fs/promises';
 import { basename, extname, join } from 'node:path';
 import { lookpath } from 'find-bin';
 import { safeDownloadBasename } from './downloadCleanup';
@@ -163,7 +162,9 @@ async function extractMember(
 			// Ignore a second close after extraction failure.
 		}
 		await Promise.allSettled([process.exited, stderrPromise]);
-		await unlink(outputPath).catch(() => {});
+		await Bun.file(outputPath)
+			.delete()
+			.catch(() => {});
 		throw error;
 	}
 }
@@ -201,7 +202,7 @@ export async function resolveDownloadedAudio(
 
 	const outputPath = await allocateExtractedPath(downloadsDir, member);
 	await extractMember(unzipBin, archivePath, member, outputPath);
-	await unlink(archivePath);
+	await Bun.file(archivePath).delete();
 	console.log(`Extracted ${member} from ${archiveFilename}`);
 	return basename(outputPath);
 }
