@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         sc-gate-dl
 // @namespace    https://github.com/D3SOX/sc-gate-dl
-// @version      1.11.16
+// @version      1.11.17
 // @description  Add sc-gate-dl download controls and remember your position in the SoundCloud feed
 // @author       D3SOX
 // @match        https://soundcloud.com/*
@@ -3137,10 +3137,18 @@ a[${STORE_SERVICE_ATTR}] > button::after {
 	/**
 	 * MUI listen-page overflow control. Prefer the stable id prefix — aria-labels
 	 * are localized ("More actions" / "Mehr Aktionen", etc.).
+	 * Comment ellipsis and related-track menus reuse the same id prefix and can
+	 * sit inside the Track header section, so id-only matching is not enough.
 	 */
 	function isMuiTrackMoreButton(el) {
 		if (!(el instanceof HTMLButtonElement)) return false;
 		if (!el.classList.contains('MuiIconButton-root')) return false;
+		// Comments: variant=ghost + colorPrimary, inside ul[aria-label="Comments"].
+		// Related tracks: sizeSmall, inside the track sidebar aside.
+		if (el.getAttribute('variant') === 'ghost') return false;
+		if (el.classList.contains('MuiIconButton-colorPrimary')) return false;
+		if (el.classList.contains('MuiIconButton-sizeSmall')) return false;
+		if (el.closest('ul[aria-label], aside')) return false;
 		const id = el.id || '';
 		if (id.startsWith('desktop-menu-button-')) return true;
 		// Fallback if SC drops the id: last action with a menu popup.

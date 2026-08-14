@@ -218,6 +218,13 @@ describe('MUI track header inject', () => {
 		expect(source).toContain('injectMuiWithoutBuy(el)');
 	});
 
+	test('does not treat comment or related-track menus as the track overflow', () => {
+		expect(source).toContain("getAttribute('variant') === 'ghost'");
+		expect(source).toContain('MuiIconButton-colorPrimary');
+		expect(source).toContain('MuiIconButton-sizeSmall');
+		expect(source).toContain('ul[aria-label], aside');
+	});
+
 	test('hides stuck tooltips on scroll and pointer move away', () => {
 		expect(source).toContain('function startTooltipTracking()');
 		expect(source).toContain("document.addEventListener('scroll', hideTooltip, true)");
