@@ -1,4 +1,5 @@
 import { confirm, input, select } from '@inquirer/prompts';
+import { resolveDownloadedAudio } from './archiveAudio';
 import { AudioProcessor } from './audioProcessor';
 import { loadConfig, saveConfig } from './config';
 import { DirectDownloader } from './directDownload';
@@ -321,6 +322,7 @@ try {
 	}
 
 	if (downloadFilename) {
+		downloadFilename = await resolveDownloadedAudio(downloadFilename);
 		const artworkUrl = soundcloudClient.getArtworkUrl(track);
 		const artwork = await soundcloudClient.fetchArtwork(artworkUrl);
 

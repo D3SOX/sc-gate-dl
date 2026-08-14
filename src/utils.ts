@@ -859,7 +859,15 @@ export function getDefaultMetadata(track: SoundcloudTrack): Metadata {
 	};
 }
 
-const LOSSLESS_EXTENSIONS = ['.wav', '.aiff', '.aif', '.flac'] as const;
+const LOSSLESS_EXTENSIONS = [
+	'.wav',
+	'.aiff',
+	'.aif',
+	'.flac',
+	'.ape',
+	'.wv',
+	'.alac',
+] as const;
 /** Lossy containers we still re-encode to MP3 (bitrate chosen from the source). */
 const LOSSY_TO_MP3_EXTENSIONS = [
 	'.m4a',
