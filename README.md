@@ -9,7 +9,7 @@ Download and tag SoundCloud tracks unlocked via Hypeddit, Droploud, GateRush, Do
 - 🔄 Handles multiple gate types (see [How It Works](#how-it-works))
 - 📝 Fetches metadata from the provided SoundCloud link
 - 🎨 Manual metadata correction before finalizing
-- 🎧 Converts Lossless (WAV/AIFF/FLAC) files to MP3 (320kbps)
+- 🎧 Extracts audio from ZIP downloads, prefers lossless files, and converts them to the selected format
 - 🏷️ Tags MP3 files with metadata and artwork from SoundCloud
 - 🧹 Optional cleanup of the SoundCloud account (unfollow, unlike, delete comments/reposts)
 - 🧩 Userscript (Violentmonkey) that opens the Web UI in a floating panel next to SoundCloud store/buy links
@@ -18,6 +18,7 @@ Download and tag SoundCloud tracks unlocked via Hypeddit, Droploud, GateRush, Do
 
 - [**Bun**](https://bun.sh) - JavaScript runtime and package manager
 - [**ffmpeg**](https://ffmpeg.org) - Must be installed and available in your `PATH`
+- [**unzip**](https://infozip.sourceforge.net/UnZip.html) - Required when a gate provides its audio inside a ZIP archive
 - [**yt-dlp**](https://github.com/yt-dlp/yt-dlp) - Required for Bandcamp purchase/download links and for downloading a SoundCloud track directly when no gate is found. Bandcamp support requires the optional `curl_cffi` backend (`python-curl-cffi` on Arch Linux or `yt-dlp[default,curl-cffi]` with pip) for Chrome impersonation.
 - [**curl-impersonate**](https://github.com/lwthiker/curl-impersonate) (optional but recommended) - Chrome-TLS curl binary (`curl_chrome131`, `curl_chrome116`, or `curl-impersonate` on your `PATH`). Used for SoundCloud engagement writes (repost GraphQL / `me/track_reposts`) that DataDome often blocks when done with Bun's normal TLS. Without it the tool falls back to Bun `fetch`, which may get a 403. Pair with a residential proxy via `SC_API_PROXY`, `CLOAKBROWSER_PROXY`, or `PROXY_URL` when your IP is hard-blocked.
 - **SoundCloud account** - It is recommended to create a throwaway account for this. Even though there were no reports of accounts getting banned I can't guarantee it. Also most gate downloads require reposts/likes/follows which you might not want to do with your main account

@@ -2,6 +2,7 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import { cp, mkdir, rm } from 'node:fs/promises';
 import { basename, extname, join } from 'node:path';
 import type { SoundcloudTrack } from 'soundcloud.ts';
+import { hasZipSignature, resolveDownloadedAudio } from './archiveAudio';
 import { AudioProcessor } from './audioProcessor';
 import { isXvfbSupported } from './browserLaunch';
 import { attachmentContentDisposition } from './contentDisposition';
@@ -601,6 +602,21 @@ async function runDownloadProcess(jobId: string): Promise<void> {
 		}
 
 		jobStore.update(jobId, { downloadFilename });
+		const downloadedPath = join('./downloads', downloadFilename);
+		const signature = new Uint8Array(
+			await Bun.file(downloadedPath).slice(0, 4).arrayBuffer(),
+		);
+		if (hasZipSignature(signature)) {
+			jobStore.updateProgress(
+				jobId,
+				'processing_audio',
+				'Extracting audio from ZIP...',
+				85,
+			);
+		}
+		downloadFilename = await resolveDownloadedAudio(downloadFilename);
+		jobStore.update(jobId, { downloadFilename });
+		throwIfCancelled();
 		if (job.outputFormat === 'flac') {
 			const sourceIsLossless = await audioProcessor.isLosslessAudio(
 				join('./downloads', downloadFilename),
