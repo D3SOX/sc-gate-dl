@@ -156,15 +156,15 @@ A separate CLI can read your Spotify library, search SoundCloud for likely match
 Set a Spotify user OAuth token in the environment. For a full-library import, grant `user-library-read`, `playlist-read-private`, and `playlist-read-collaborative`.
 
 ```bash
-SPOTIFY_ACCESS_TOKEN=... bun spotify-import
+SPOTIFY_ACCESS_TOKEN=... bun run spotify-import
 ```
 
 By default this reads Liked Songs and playlists. You can narrow the source:
 
 ```bash
-bun spotify-import --liked
-bun spotify-import --playlist https://open.spotify.com/playlist/...
-bun spotify-import --playlists
+bun run spotify-import --liked
+bun run spotify-import --playlist https://open.spotify.com/playlist/...
+bun run spotify-import --playlists
 ```
 
 Matching uses normalized title, artist, duration, and penalties for unexpected variants such as remixes, live versions, covers, slowed/sped-up edits, and instrumentals. The default automatic threshold is `0.86`. Review results are written to `./exports/spotify-soundcloud-import-*.json`.
@@ -172,7 +172,7 @@ Matching uses normalized title, artist, duration, and penalties for unexpected v
 To download matched tracks automatically, add `--download`:
 
 ```bash
-SPOTIFY_ACCESS_TOKEN=... bun spotify-import --download
+SPOTIFY_ACCESS_TOKEN=... bun run spotify-import --download
 ```
 
 Automatic downloads are deliberately limited to tracks where SoundCloud exposes a creator-enabled download and yt-dlp can resolve the authenticated original-download format. Tracks that do not meet that condition stay in the report for review. Spotify local-file entries are also preserved in the report but are not searched or downloaded.
