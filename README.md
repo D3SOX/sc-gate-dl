@@ -149,6 +149,36 @@ bun manage-acc
 
 The export will be written to a timestamped directory inside `./exports` and includes `playlists.json` with playlist track data. `reposted-playlists.json` is also included as an extra export.
 
+### Spotify library matching
+
+A separate CLI can read your Spotify library, search SoundCloud for likely matches, and write a reviewable JSON report. It does not use the download-gate handlers.
+
+Set a Spotify user OAuth token in the environment. For a full-library import, grant `user-library-read`, `playlist-read-private`, and `playlist-read-collaborative`.
+
+```bash
+SPOTIFY_ACCESS_TOKEN=... bun spotify-import
+```
+
+By default this reads Liked Songs and playlists. You can narrow the source:
+
+```bash
+bun spotify-import --liked
+bun spotify-import --playlist https://open.spotify.com/playlist/...
+bun spotify-import --playlists
+```
+
+Matching uses normalized title, artist, duration, and penalties for unexpected variants such as remixes, live versions, covers, slowed/sped-up edits, and instrumentals. The default automatic threshold is `0.86`. Review results are written to `./exports/spotify-soundcloud-import-*.json`.
+
+To download matched tracks automatically, add `--download`:
+
+```bash
+SPOTIFY_ACCESS_TOKEN=... bun spotify-import --download
+```
+
+Automatic downloads are deliberately limited to tracks where SoundCloud exposes a creator-enabled download and yt-dlp can resolve the authenticated original-download format. Tracks that do not meet that condition stay in the report for review. Spotify local-file entries are also preserved in the report but are not searched or downloaded.
+
+Spotify's 2026 Web API only exposes playlist items for playlists the user owns or collaborates on. Followed third-party playlists may therefore appear as collection errors in the report.
+
 ### Web UI
 
 There is now also an experimental (vibe-coded) web UI for the tool. You can start it by running
