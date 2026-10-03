@@ -5,7 +5,6 @@ import {
 	canAccessSoundcloudOriginalDownload,
 	YtDlpDownloader,
 } from './ytdlp';
-import { isSoundcloudDownloadEnabled } from './soundcloudDownload';
 
 const SPOTIFY_API = 'https://api.spotify.com/v1';
 const SOUNDCLOUD_API = 'https://api-v2.soundcloud.com';
@@ -175,7 +174,17 @@ function durationScore(candidateMs: number, wantedMs: number): number {
 	return 0;
 }
 
-function candidateArtist(track: SoundcloudTrack): string {
+type MatchableSoundcloudTrack = {
+	title?: string | null;
+	duration?: number | null;
+	publisher_metadata?: { artist?: string | null } | null;
+	user?: {
+		full_name?: string | null;
+		username?: string | null;
+	} | null;
+};
+
+function candidateArtist(track: MatchableSoundcloudTrack): string {
 	return (
 		track.publisher_metadata?.artist ||
 		track.user?.full_name ||
@@ -186,13 +195,10 @@ function candidateArtist(track: SoundcloudTrack): string {
 
 export function scoreSoundcloudCandidate(
 	wanted: SpotifyImportTrack,
-	candidate: Pick<
-		SoundcloudTrack,
-		'title' | 'duration' | 'publisher_metadata' | 'user'
-	>,
+	candidate: MatchableSoundcloudTrack,
 ): number {
 	const title = candidateTitleScore(candidate.title || '', wanted.title);
-	const artist = tokenScore(candidateArtist(candidate as SoundcloudTrack), wanted.artists.join(' '));
+	const artist = tokenScore(candidateArtist(candidate), wanted.artists.join(' '));
 	const duration = durationScore(candidate.duration || 0, wanted.durationMs);
 	const score = title * 0.5 + artist * 0.3 + duration * 0.2;
 	return Math.max(
