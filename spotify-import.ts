@@ -2,7 +2,7 @@ import { runSpotifyImport } from './src/spotifyImport';
 
 function usage(): never {
 	console.log(`Usage:
-  SPOTIFY_ACCESS_TOKEN=... bun spotify-import [options]
+  SPOTIFY_ACCESS_TOKEN=... bun run spotify-import [options]
 
 Options:
   --liked                 Include Liked Songs
