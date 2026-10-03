@@ -17,6 +17,7 @@ export type SpotifyImportTrack = {
 	title: string;
 	artists: string[];
 	album?: string;
+	isrc?: string;
 	durationMs: number;
 	isLocal: boolean;
 	playlists: string[];
@@ -58,6 +59,7 @@ type SpotifyTrackObject = {
 	is_local?: boolean;
 	artists?: SpotifyArtist[];
 	album?: SpotifyAlbum;
+	external_ids?: { isrc?: string };
 	type?: string;
 };
 
@@ -177,7 +179,7 @@ function durationScore(candidateMs: number, wantedMs: number): number {
 type MatchableSoundcloudTrack = {
 	title?: string | null;
 	duration?: number | null;
-	publisher_metadata?: { artist?: string | null } | null;
+	publisher_metadata?: { artist?: string | null; isrc?: string | null } | null;
 	user?: {
 		full_name?: string | null;
 		username?: string | null;
@@ -197,13 +199,24 @@ export function scoreSoundcloudCandidate(
 	wanted: SpotifyImportTrack,
 	candidate: MatchableSoundcloudTrack,
 ): number {
+	const wantedIsrc = wanted.isrc?.trim().toUpperCase();
+	const candidateIsrc = candidate.publisher_metadata?.isrc?.trim().toUpperCase();
+	if (wantedIsrc && candidateIsrc && wantedIsrc === candidateIsrc) return 1;
+
 	const title = candidateTitleScore(candidate.title || '', wanted.title);
 	const artist = tokenScore(candidateArtist(candidate), wanted.artists.join(' '));
 	const duration = durationScore(candidate.duration || 0, wanted.durationMs);
+	const isrcMismatchPenalty =
+		wantedIsrc && candidateIsrc && wantedIsrc !== candidateIsrc ? 0.15 : 0;
 	const score = title * 0.5 + artist * 0.3 + duration * 0.2;
 	return Math.max(
 		0,
-		Math.min(1, score - variantPenalty(candidate.title || '', wanted.title)),
+		Math.min(
+			1,
+			score -
+				variantPenalty(candidate.title || '', wanted.title) -
+				isrcMismatchPenalty,
+		),
 	);
 }
 
@@ -270,6 +283,7 @@ function parseSpotifyTrack(
 			.map((artist) => artist.name?.trim())
 			.filter((name): name is string => Boolean(name)),
 		album: track.album?.name?.trim() || undefined,
+		isrc: track.external_ids?.isrc?.trim() || undefined,
 		durationMs: track.duration_ms ?? 0,
 		isLocal: Boolean(track.is_local || uri.startsWith('spotify:local:')),
 		playlists: source.playlist ? [source.playlist] : [],
@@ -322,7 +336,7 @@ async function collectPlaylist(
 	);
 	const playlistName = metadata.name?.trim() || playlistId;
 	const items = await spotifyPages<{ item?: SpotifyTrackObject | null }>(
-		`${SPOTIFY_API}/playlists/${encodeURIComponent(playlistId)}/items?limit=100`,
+		`${SPOTIFY_API}/playlists/${encodeURIComponent(playlistId)}/items?limit=50`,
 		accessToken,
 	);
 	for (const entry of items) {
