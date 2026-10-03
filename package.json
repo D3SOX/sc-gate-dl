@@ -15,6 +15,7 @@
 	"scripts": {
 		"start": "bun run .",
 		"manage-acc": "bun run ./manage-acc.ts",
+		"spotify-import": "bun run ./spotify-import.ts",
 		"start:server": "bun run ./src/server.ts",
 		"dev:server": "bun --watch ./src/server.ts",
 		"dev:webui": "cd webui && bun run dev",
