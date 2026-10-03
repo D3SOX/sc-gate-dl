@@ -7,6 +7,7 @@ const wanted: SpotifyImportTrack = {
 	title: 'Example Song',
 	artists: ['Example Artist'],
 	album: 'Example Album',
+	isrc: 'USAAA2600001',
 	durationMs: 180_000,
 	isLocal: false,
 	playlists: [],
@@ -28,6 +29,19 @@ describe('scoreSoundcloudCandidate', () => {
 			user,
 		});
 		expect(score).toBeGreaterThan(0.95);
+	});
+
+	test('treats an exact ISRC as definitive', () => {
+		const score = scoreSoundcloudCandidate(wanted, {
+			title: 'Odd uploader title',
+			duration: 181_000,
+			publisher_metadata: {
+				artist: 'Different display name',
+				isrc: 'usaaa2600001',
+			},
+			user,
+		});
+		expect(score).toBe(1);
 	});
 
 	test('penalizes an unwanted remix', () => {
