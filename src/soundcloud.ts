@@ -6,6 +6,7 @@ import Soundcloud, {
 	type SoundcloudTrack,
 	type SoundcloudUser,
 } from 'soundcloud.ts';
+import { SoundcloudReadQueue } from './soundcloudReadQueue';
 import {
 	extractAndResolveGateUrl,
 	extractCaptchaDeliveryUrl,
@@ -33,6 +34,7 @@ interface SoundcloudCredentials {
 
 interface SoundcloudClientOptions {
 	credentials?: SoundcloudCredentials;
+	readQueue?: SoundcloudReadQueue;
 }
 
 interface ManagedAccountExport {
@@ -46,8 +48,10 @@ interface ManagedAccountExport {
 
 export class SoundcloudClient {
 	private soundcloud: Soundcloud;
+	private readonly readQueue: SoundcloudReadQueue;
 
 	constructor(options?: SoundcloudClientOptions) {
+		this.readQueue = options?.readQueue ?? new SoundcloudReadQueue();
 		const clientId = options?.credentials?.clientId ?? process.env.SC_CLIENT_ID;
 		const oauthToken =
 			options?.credentials?.oauthToken ?? process.env.SC_OAUTH_TOKEN;
@@ -94,8 +98,11 @@ export class SoundcloudClient {
 		return { status, body };
 	}
 
-	async getTrack(url: string) {
-		return await this.soundcloud.tracks.get(url);
+	async getTrack(url: string, onRateLimit?: (milliseconds: number) => void) {
+		return this.readQueue.run(
+			() => this.soundcloud.tracks.get(url),
+			onRateLimit,
+		);
 	}
 
 	/**
