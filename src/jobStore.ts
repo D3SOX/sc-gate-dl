@@ -110,6 +110,9 @@ class JobStore {
 			message,
 			percent,
 			...extra,
+			attentionId: extra?.requiresAttention
+				? job.progress.attentionId || crypto.randomUUID()
+				: undefined,
 		};
 		job.updatedAt = new Date();
 

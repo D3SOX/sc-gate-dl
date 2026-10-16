@@ -3,6 +3,7 @@ import type { Browser, Page } from 'puppeteer';
 import { CancellableBrowserLaunch } from './browserLaunch';
 import type { ProgressCallback } from './hypeddit';
 import Selectors from './selectors';
+import { visitSocialPopup } from './socialPopup';
 import {
 	isSoundcloudLoginPage,
 	saveSoundcloudLogin,
@@ -339,7 +340,11 @@ export class GaterushDownloader {
 							'handling_gates',
 							'Log in to SoundCloud in the browser to continue...',
 							50,
-							{ currentGate: 'soundcloud', browserActive: true },
+							{
+								currentGate: 'soundcloud',
+								browserActive: true,
+								requiresAttention: true,
+							},
 						),
 				});
 				// GateRush stops watching its popup after 60 seconds, even while
@@ -487,87 +492,109 @@ export class GaterushDownloader {
 	}
 
 	private async handleInstagram(page: Page) {
-		const deadline = Date.now() + 120_000;
-		let previousIndex = -1;
-		let repeats = 0;
-		while (Date.now() < deadline) {
-			const nextIndex = await page.evaluate((selector) => {
-				const buttons = Array.from(
-					document.querySelectorAll<HTMLButtonElement>(selector),
-				);
-				return buttons.findIndex(
-					(btn) => !btn.disabled && !btn.classList.contains('done'),
-				);
-			}, Selectors.GATERUSH_IG_ACCOUNT_BUTTON);
-
-			if (nextIndex < 0) {
-				break;
-			}
-
-			repeats = nextIndex === previousIndex ? repeats + 1 : 0;
-			previousIndex = nextIndex;
-			if (repeats >= 3) {
-				throw new Error(
-					`GateRush Instagram step stalled on account button ${nextIndex}`,
-				);
-			}
-
-			const pagesBefore = new Set(await this.browser.pages(true));
-
-			const singleButton = await page.evaluate(
-				(selector, index) => {
-					const buttons = Array.from(
-						document.querySelectorAll<HTMLButtonElement>(selector),
-					);
-					buttons[index]?.click();
-					return buttons[index]?.classList.contains('btn-instagram');
-				},
-				Selectors.GATERUSH_IG_ACCOUNT_BUTTON,
-				nextIndex,
-			);
-
-			let popup: Page | undefined;
-			const started = Date.now();
-			while (!popup && Date.now() - started < 5_000) {
-				const pages = await this.browser.pages(true);
-				popup = pages.find(
-					(candidate) =>
-						candidate !== page &&
-						!pagesBefore.has(candidate) &&
-						candidate.url() !== 'about:blank',
-				);
-				if (!popup) {
-					popup = pages.find(
-						(candidate) =>
-							candidate !== page &&
-							!candidate.url().includes('gaterush.me') &&
-							candidate.url() !== 'about:blank',
-					);
-				}
-				if (!popup) await timeout(200);
-			}
-
-			if (popup && !popup.isClosed()) {
+		const step = await page.$(Selectors.GATERUSH_STEP);
+		if (!step) throw new Error('GateRush Instagram step was not found.');
+		try {
+			const skip = await page.$(Selectors.GATERUSH_SKIP_BUTTON);
+			if (skip && (await skip.isVisible())) {
+				await skip.click();
+			} else {
+				const buttons = await page.$$(Selectors.GATERUSH_IG_ACCOUNT_BUTTON);
+				let needsAttention = false;
 				try {
-					await popup.close();
-				} catch {
-					// already closed
+					for (const button of buttons) {
+						const pending = await button.evaluate(
+							(element) =>
+								element instanceof HTMLButtonElement &&
+								element.checkVisibility() &&
+								!element.disabled &&
+								!element.classList.contains('done'),
+						);
+						if (!pending) continue;
+						if (!(await visitSocialPopup(page, button))) {
+							needsAttention = true;
+							break;
+						}
+						try {
+							await page.waitForFunction(
+								(element) => {
+									if (!element.isConnected) return true;
+									const confirm = element.matches('[data-open]')
+										? element
+												.closest('.follow-pair')
+												?.querySelector('[data-confirm]')
+										: element;
+									if (confirm?.classList.contains('done')) return true;
+									if (
+										!(confirm instanceof HTMLButtonElement) ||
+										confirm.disabled ||
+										!confirm.checkVisibility() ||
+										!/^(done|i followed)$/i.test(
+											confirm.textContent?.trim() ?? '',
+										)
+									)
+										return false;
+									confirm.click();
+									return true;
+								},
+								{ timeout: 10_000 },
+								button,
+							);
+						} catch {
+							needsAttention = true;
+							break; // Additional interaction is needed; surface the browser below.
+						}
+					}
+				} finally {
+					await Promise.all(buttons.map((button) => button.dispose()));
+				}
+				if (!needsAttention) {
+					try {
+						await page.waitForFunction(
+							(element) =>
+								!element.isConnected || element.classList.contains('leaving'),
+							{ timeout: 5_000 },
+							step,
+						);
+					} catch {
+						needsAttention = true;
+					}
+				}
+				if (needsAttention) {
+					await page.bringToFront();
+					this.emitProgress(
+						'handling_gates',
+						'Complete the Instagram follows and confirmations in the remote browser to continue.',
+						60,
+						{ currentGate: 'ig', browserActive: true, requiresAttention: true },
+					);
 				}
 			}
-
-			if (singleButton) break;
-			await timeout(500);
+			// Wait for this step, even when the next step reuses the same selectors.
+			await page.waitForFunction(
+				(element) =>
+					!element.isConnected || element.classList.contains('leaving'),
+				{ timeout: 120_000 },
+				step,
+			);
+			this.emitProgress(
+				'handling_gates',
+				'GateRush Instagram step completed.',
+				65,
+				{
+					currentGate: 'ig',
+					browserActive: true,
+					requiresAttention: false,
+				},
+			);
+		} catch (cause) {
+			throw new Error(
+				'Complete the Instagram step in the remote browser, then retry the gate download.',
+				{ cause },
+			);
+		} finally {
+			await step.dispose();
 		}
-
-		if (Date.now() >= deadline) {
-			throw new Error('GateRush Instagram step timed out');
-		}
-
-		// Wait for IG step completion (server-side gate-step POST)
-		await page.waitForSelector(Selectors.GATERUSH_IG_ACCOUNT_BUTTON, {
-			hidden: true,
-			timeout: 30_000,
-		});
 	}
 
 	private async handleDownload(page: Page) {

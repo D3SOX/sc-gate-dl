@@ -66,6 +66,10 @@ const YT_NEXT_BUTTON = '#skipper_yt_next';
 // Facebook gate
 const FB_NEXT_BUTTON = '#fbCarouselSocialSection';
 
+// Bandcamp gate
+const BC_STEP = '#step_bc';
+const BC_SKIPPER_BUTTON = '#skipper_bc';
+
 // Spotify gate
 const SP_SKIPPER_BUTTON = '#skipper_sp';
 const SP_OPT_IN_SECTION = '#optInSectionSpotify';
@@ -100,7 +104,8 @@ const GATERUSH_EMAIL_SUBMIT = '#stepStage .step:has(#emailInput) [data-go]';
 const GATERUSH_COMMENT_INPUT = '#commentInput';
 const GATERUSH_SC_CONNECT = '#stepStage .btn-soundcloud[data-go]';
 const GATERUSH_IG_ACCOUNT_BUTTON =
-	'#stepStage .list-btn.svc-instagram, #stepStage .btn-instagram[data-go]';
+	'#stepStage .list-btn.svc-instagram, #stepStage .btn-instagram[data-go], #stepStage .btn-instagram[data-open]';
+const GATERUSH_SKIP_BUTTON = '#stepStage .step [data-skip]';
 const GATERUSH_DOWNLOAD_BUTTON = '#download';
 
 // DownloadGater gate
@@ -149,6 +154,8 @@ export default {
 	YT_STATUS_UNDONE_BUTTON,
 	YT_NEXT_BUTTON,
 	FB_NEXT_BUTTON,
+	BC_STEP,
+	BC_SKIPPER_BUTTON,
 	SP_SKIPPER_BUTTON,
 	SP_OPT_IN_SECTION,
 	SP_OPT_OUT_OPTION,
@@ -176,6 +183,7 @@ export default {
 	GATERUSH_COMMENT_INPUT,
 	GATERUSH_SC_CONNECT,
 	GATERUSH_IG_ACCOUNT_BUTTON,
+	GATERUSH_SKIP_BUTTON,
 	GATERUSH_DOWNLOAD_BUTTON,
 	DOWNLOADGATER_FREE_DOWNLOAD,
 	DOWNLOADGATER_DOWNLOAD_FILE,

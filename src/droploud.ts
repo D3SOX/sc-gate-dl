@@ -790,6 +790,16 @@ export class DroploudDownloader {
 		}
 
 		if (this.config.browserMode === 'headed' && !closed && !page.isClosed()) {
+			this.emitProgress(
+				'handling_gates',
+				'Complete the SoundCloud repost or captcha in the browser to continue...',
+				50,
+				{
+					currentGate: 'soundcloud',
+					browserActive: true,
+					requiresAttention: true,
+				},
+			);
 			console.log(
 				'Droploud: waiting up to 2 minutes for manual Repost / captcha solve…',
 			);
@@ -1072,6 +1082,16 @@ export class DroploudDownloader {
 
 		const captchaIframe = await page.$(Selectors.SOUNDCLOUD_CAPTCHA_IFRAME);
 		if (!captchaIframe) {
+			this.emitProgress(
+				'handling_gates',
+				'Solve the SoundCloud captcha in the browser to continue...',
+				50,
+				{
+					currentGate: 'captcha',
+					browserActive: true,
+					requiresAttention: true,
+				},
+			);
 			console.log(
 				'Droploud: SoundCloud captcha visible; waiting for solve (no iframe yet)…',
 			);
@@ -1098,6 +1118,16 @@ export class DroploudDownloader {
 				await captchaIframe.dispose();
 				console.log(
 					'Droploud: captcha slider not ready; waiting for manual solve…',
+				);
+				this.emitProgress(
+					'handling_gates',
+					'Solve the SoundCloud captcha in the browser to continue...',
+					50,
+					{
+						currentGate: 'captcha',
+						browserActive: true,
+						requiresAttention: true,
+					},
 				);
 				await page
 					.waitForSelector(Selectors.SOUNDCLOUD_CAPTCHA_CONTAINER, {
@@ -1135,12 +1165,28 @@ export class DroploudDownloader {
 			await page
 				.waitForSelector(Selectors.SOUNDCLOUD_CAPTCHA_CONTAINER, {
 					hidden: true,
-					timeout: 60_000,
+					timeout: 5_000,
 				})
-				.catch(() => {
+				.catch(async () => {
 					console.warn(
 						'Droploud: captcha still visible after slider drag — solve it manually if needed.',
 					);
+					this.emitProgress(
+						'handling_gates',
+						'Solve the SoundCloud captcha in the browser to continue...',
+						50,
+						{
+							currentGate: 'captcha',
+							browserActive: true,
+							requiresAttention: true,
+						},
+					);
+					await page
+						.waitForSelector(Selectors.SOUNDCLOUD_CAPTCHA_CONTAINER, {
+							hidden: true,
+							timeout: 55_000,
+						})
+						.catch(() => {});
 				});
 		}
 
@@ -1801,7 +1847,11 @@ export class DroploudDownloader {
 								'handling_gates',
 								'Log in to SoundCloud in the browser to continue...',
 								50,
-								{ currentGate: 'soundcloud', browserActive: true },
+								{
+									currentGate: 'soundcloud',
+									browserActive: true,
+									requiresAttention: true,
+								},
 							),
 					});
 					deadline = Date.now() + 90_000;

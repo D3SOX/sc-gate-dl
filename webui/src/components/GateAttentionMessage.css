@@ -1,0 +1,30 @@
+.gate-attention-message {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 12px;
+	margin-top: 12px;
+	padding: 12px;
+	border: 1px solid var(--neon-orange);
+	border-radius: 8px;
+}
+
+.gate-attention-message strong {
+	color: var(--neon-orange);
+}
+
+.gate-attention-message button {
+	min-height: 44px;
+	padding: 7px 12px;
+	color: var(--text-primary);
+	background: var(--bg-elevated);
+	border: 1px solid var(--border-strong);
+	border-radius: 6px;
+	cursor: pointer;
+}
+
+.gate-attention-sound button:focus-visible,
+.gate-attention-message button:focus-visible {
+	outline: 2px solid var(--neon-cyan);
+	outline-offset: 3px;
+}

@@ -13,6 +13,7 @@ import {
 	shouldAutoStartDeepLink,
 	shouldUseEmbeddedLayout,
 } from './deepLink';
+import { GateAttentionMessage } from './GateAttentionMessage';
 import { RemoteBrowserPanel } from './RemoteBrowserPanel';
 import { REMOTE_POINTER_RELEASE_EVENT } from './remoteBrowser';
 
@@ -41,6 +42,8 @@ interface JobProgress {
 	totalBytes?: number;
 	browserless?: boolean;
 	browserActive?: boolean;
+	requiresAttention?: boolean;
+	attentionId?: string;
 	bandcampAlbumTracks?: BandcampAlbumTrackChoice[];
 	queuePosition?: number;
 }
@@ -1233,6 +1236,18 @@ export default function App() {
 			</div>
 
 			{/* Error display */}
+			<GateAttentionMessage
+				attention={
+					job.progress?.requiresAttention && job.progress.attentionId
+						? { id: job.progress.attentionId, message: job.progress.message }
+						: undefined
+				}
+				onShowBrowser={
+					browserViewUrl && browserMode === 'headed'
+						? () => setBrowserViewOpen(true)
+						: undefined
+				}
+			/>
 			{job.error && (
 				<div className="error-banner">
 					<div className="error-banner-message">

@@ -2,6 +2,7 @@ import { rename, rm } from 'node:fs/promises';
 import { basename, join } from 'node:path';
 import { filenameFromContentDisposition } from './contentDisposition';
 import type { ProgressCallback } from './hypeddit';
+import { inspectHypedditPage, NoHypedditDownloadError } from './hypedditLinks';
 import type { HypedditConfig } from './types';
 import { sanitizeFilenamePart } from './utils';
 
@@ -122,6 +123,9 @@ export class HypedditHttpDownloader {
 	async tryDownload(url: string): Promise<string | null> {
 		try {
 			const { html, finalUrl } = await this.fetchGatePage(url);
+			// Link gates grant a destination, not a file. Let the normal browser
+			// Unlock action complete before handing that destination to its downloader.
+			if (/\bdata-type\s*=\s*["']linkGate["']/i.test(html)) return null;
 			const gate = parseGateData(html);
 			if (!gate) {
 				console.log(
@@ -184,7 +188,10 @@ export class HypedditHttpDownloader {
 			if (this.abortController.signal.aborted) {
 				throw new Error('Download cancelled');
 			}
-			if (error instanceof BrowserlessConfigError) {
+			if (
+				error instanceof BrowserlessConfigError ||
+				error instanceof NoHypedditDownloadError
+			) {
 				throw error;
 			}
 			console.log(
@@ -316,14 +323,19 @@ export class HypedditHttpDownloader {
 		let finalUrl = url;
 		let html = await this.get(finalUrl);
 
-		// Follow a smart-link selection page to the actual Hypeddit gate.
-		if (!matchHiddenInput(html, 'gvt')) {
-			const smartLinkUrl = findSmartLinkHypedditUrl(html);
+		// A custom smartlink button can point to a real Hypeddit gate too.
+		const visited = new Set([finalUrl]);
+		for (let hop = 0; hop < 5 && !matchHiddenInput(html, 'gvt'); hop++) {
+			const smartLinkUrl =
+				inspectHypedditPage(html, finalUrl) || findSmartLinkHypedditUrl(html);
 			if (smartLinkUrl) {
+				if (visited.has(smartLinkUrl))
+					throw new Error('Hypeddit smartlink loop detected.');
+				visited.add(smartLinkUrl);
 				console.log(`Browserless: following smart link to ${smartLinkUrl}`);
 				finalUrl = smartLinkUrl;
 				html = await this.get(finalUrl);
-			}
+			} else break;
 		}
 
 		return { html, finalUrl };

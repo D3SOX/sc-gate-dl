@@ -44,7 +44,11 @@ import {
 	validateGateUrl,
 	validateSoundcloudUrl,
 } from './utils';
-import { canAccessSoundcloudOriginalDownload, YtDlpDownloader } from './ytdlp';
+import {
+	canAccessSoundcloudOriginalDownload,
+	YtDlpDownloader,
+	type YtDlpDownloadOptions,
+} from './ytdlp';
 
 const ffmpegBin = await getFfmpegBin();
 const ffprobeBin = await getFfprobeBin();
@@ -327,6 +331,39 @@ async function runDownloadProcess(jobId: string): Promise<void> {
 			return { ...gateConfigBase, userDataDir };
 		};
 
+		const selectBandcampTrack =
+			(
+				browserless: boolean,
+			): NonNullable<YtDlpDownloadOptions['onAlbumMatchFailed']> =>
+			async (error) => {
+				throwIfCancelled();
+				jobStore.update(jobId, {
+					bandcampAlbumTracks: error.tracks,
+					error: null,
+				});
+				const message = error.matchTitle
+					? `Could not match “${error.matchTitle}” — pick a Bandcamp track`
+					: 'Pick a track from the Bandcamp album';
+				jobStore.updateProgress(jobId, 'waiting_bandcamp_track', message, 45, {
+					browserless,
+					bandcampAlbumTracks: error.tracks,
+				});
+				const selectedUrl = await jobStore.waitForBandcampTrackSelection(jobId);
+				throwIfCancelled();
+				if (!selectedUrl) {
+					throw new Error('Download cancelled');
+				}
+				jobStore.update(jobId, { bandcampAlbumTracks: null });
+				jobStore.updateProgress(
+					jobId,
+					'handling_gates',
+					'Resolving selected Bandcamp track...',
+					0,
+					{ browserless },
+				);
+				return selectedUrl;
+			};
+
 		let downloadFilename: string | null = null;
 
 		if (provider === 'bandcamp' || provider === 'soundcloud') {
@@ -347,41 +384,7 @@ async function runDownloadProcess(jobId: string): Promise<void> {
 				downloadSourceUrl,
 				{
 					matchTitle: job.track?.title,
-					onAlbumMatchFailed: async (error) => {
-						throwIfCancelled();
-						jobStore.update(jobId, {
-							bandcampAlbumTracks: error.tracks,
-							error: null,
-						});
-						const message = error.matchTitle
-							? `Could not match “${error.matchTitle}” — pick a Bandcamp track`
-							: 'Pick a track from the Bandcamp album';
-						jobStore.updateProgress(
-							jobId,
-							'waiting_bandcamp_track',
-							message,
-							45,
-							{
-								browserless: true,
-								bandcampAlbumTracks: error.tracks,
-							},
-						);
-						const selectedUrl =
-							await jobStore.waitForBandcampTrackSelection(jobId);
-						throwIfCancelled();
-						if (!selectedUrl) {
-							throw new Error('Download cancelled');
-						}
-						jobStore.update(jobId, { bandcampAlbumTracks: null });
-						jobStore.updateProgress(
-							jobId,
-							'handling_gates',
-							'Resolving selected Bandcamp track...',
-							0,
-							{ browserless: true },
-						);
-						return selectedUrl;
-					},
+					onAlbumMatchFailed: selectBandcampTrack(true),
 				},
 			);
 			throwIfCancelled();
@@ -502,8 +505,13 @@ async function runDownloadProcess(jobId: string): Promise<void> {
 				25,
 				{ browserActive: job.browserMode === 'headed' },
 			);
-			downloadFilename =
-				await pumpyoursoundDownloader.downloadAudio(downloadSourceUrl);
+			downloadFilename = await pumpyoursoundDownloader.downloadAudio(
+				downloadSourceUrl,
+				{
+					matchTitle: job.track?.title,
+					onAlbumMatchFailed: selectBandcampTrack(false),
+				},
+			);
 			throwIfCancelled();
 		} else if (provider === 'mypresskit') {
 			jobStore.updateProgress(
@@ -586,8 +594,13 @@ async function runDownloadProcess(jobId: string): Promise<void> {
 					{ browserActive: job.browserMode === 'headed' },
 				);
 
-				downloadFilename =
-					await hypedditDownloader.downloadAudio(downloadSourceUrl);
+				downloadFilename = await hypedditDownloader.downloadAudio(
+					downloadSourceUrl,
+					{
+						matchTitle: job.track?.title,
+						onAlbumMatchFailed: selectBandcampTrack(false),
+					},
+				);
 				throwIfCancelled();
 			}
 		}

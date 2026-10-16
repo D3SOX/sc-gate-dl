@@ -2,6 +2,39 @@ import { describe, expect, test } from 'bun:test';
 import { jobStore } from './jobStore';
 
 describe('jobStore Bandcamp track selection', () => {
+	test('manual waits keep a stable alert id until ordinary progress resumes', () => {
+		const job = jobStore.create('https://soundcloud.com/a/b', 'original');
+		try {
+			jobStore.updateProgress(job.id, 'handling_gates', 'Connecting...', 40);
+			expect(job.progress.attentionId).toBeUndefined();
+			jobStore.updateProgress(job.id, 'handling_gates', 'Log in...', 50, {
+				requiresAttention: true,
+			});
+			const first = job.progress.attentionId;
+			expect(first).toBeTruthy();
+			jobStore.updateProgress(
+				job.id,
+				'handling_gates',
+				'Still waiting...',
+				50,
+				{ requiresAttention: true },
+			);
+			expect(job.progress.attentionId).toBe(first);
+			jobStore.updateProgress(job.id, 'handling_gates', 'Connected', 60);
+			expect(job.progress.attentionId).toBeUndefined();
+			expect(job.progress.requiresAttention).toBeUndefined();
+			jobStore.updateProgress(
+				job.id,
+				'handling_gates',
+				'Solve captcha...',
+				60,
+				{ requiresAttention: true },
+			);
+			expect(job.progress.attentionId).not.toBe(first);
+		} finally {
+			jobStore.delete(job.id);
+		}
+	});
 	test('resolveBandcampTrackSelection delivers URL to waiter', async () => {
 		const job = jobStore.create('https://soundcloud.com/a/b', 'mp3-320');
 		try {

@@ -575,7 +575,11 @@ export class MypresskitDownloader {
 					'handling_gates',
 					'Waiting for SoundCloud login in browser…',
 					50,
-					{ currentGate: 'soundcloud', browserActive: true },
+					{
+						currentGate: 'soundcloud',
+						browserActive: true,
+						requiresAttention: true,
+					},
 				);
 			},
 		});

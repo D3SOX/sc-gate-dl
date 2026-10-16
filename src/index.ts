@@ -18,7 +18,7 @@ import {
 	resolveGateUrlOrFollow,
 	validateSoundcloudUrl,
 } from './utils';
-import { YtDlpDownloader } from './ytdlp';
+import { YtDlpDownloader, type YtDlpDownloadOptions } from './ytdlp';
 
 try {
 	const ffmpegBin = await getFfmpegBin();
@@ -157,6 +157,24 @@ try {
 				: ('headed' as const),
 	};
 
+	const selectBandcampTrack: NonNullable<
+		YtDlpDownloadOptions['onAlbumMatchFailed']
+	> = async (error) => {
+		const selected = await select({
+			message: error.matchTitle
+				? `Could not match “${error.matchTitle}”. Pick a Bandcamp album track:`
+				: 'Pick a track from the Bandcamp album:',
+			choices: error.tracks.map((t) => ({
+				name:
+					t.score > 0
+						? `${t.title} (${Math.round(t.score * 100)}% match)`
+						: t.title,
+				value: t.url,
+			})),
+		});
+		return selected;
+	};
+
 	let downloadFilename: string | null = null;
 	let usedBrowser = false;
 
@@ -166,21 +184,7 @@ try {
 		const ytDlpDownloader = new YtDlpDownloader(sourceLabel);
 		downloadFilename = await ytDlpDownloader.downloadAudio(gateUrl, {
 			matchTitle: track.title,
-			onAlbumMatchFailed: async (error) => {
-				const selected = await select({
-					message: error.matchTitle
-						? `Could not match “${error.matchTitle}”. Pick a Bandcamp album track:`
-						: 'Pick a track from the Bandcamp album:',
-					choices: error.tracks.map((t) => ({
-						name:
-							t.score > 0
-								? `${t.title} (${Math.round(t.score * 100)}% match)`
-								: t.title,
-						value: t.url,
-					})),
-				});
-				return selected;
-			},
+			onAlbumMatchFailed: selectBandcampTrack,
 		});
 	} else if (gate.provider === 'direct') {
 		const directDownloader = new DirectDownloader();
@@ -261,7 +265,10 @@ try {
 					console.log('✓ Updated config.json: initializeLogins set to false');
 				}
 			}
-			downloadFilename = await pumpyoursoundDownloader.downloadAudio(gateUrl);
+			downloadFilename = await pumpyoursoundDownloader.downloadAudio(gateUrl, {
+				matchTitle: track.title,
+				onAlbumMatchFailed: selectBandcampTrack,
+			});
 		} finally {
 			await pumpyoursoundDownloader.close();
 		}
@@ -301,7 +308,10 @@ try {
 					}
 				}
 
-				downloadFilename = await hypedditDownloader.downloadAudio(gateUrl);
+				downloadFilename = await hypedditDownloader.downloadAudio(gateUrl, {
+					matchTitle: track.title,
+					onAlbumMatchFailed: selectBandcampTrack,
+				});
 			} finally {
 				await hypedditDownloader.close();
 			}

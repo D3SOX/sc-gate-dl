@@ -1,13 +1,26 @@
 import { Presets, SingleBar } from 'cli-progress';
 import type { Browser, Page } from 'puppeteer';
 import {
+	BandcampGateDownloader,
+	type BandcampGateOptions,
+} from './bandcampGate';
+import {
 	browserModeToLaunchOptions,
 	CancellableBrowserLaunch,
 } from './browserLaunch';
+import { DirectDownloader } from './directDownload';
+import { inspectHypedditPage } from './hypedditLinks';
 import Selectors from './selectors';
+import { visitSocialPopup } from './socialPopup';
 import { waitForSoundcloudLogin } from './soundcloudLogin';
 import type { HypedditConfig, JobProgress, JobStage } from './types';
-import { loadCookies, REPO_URL, timeout, writeBrowserCookies } from './utils';
+import {
+	isBandcampUrl,
+	loadCookies,
+	REPO_URL,
+	timeout,
+	writeBrowserCookies,
+} from './utils';
 
 export type ProgressCallback = (
 	stage: JobStage,
@@ -31,6 +44,13 @@ export class HypedditDownloader {
 	private spotifyCookiesExists = false;
 	private progressCallback: ProgressCallback | null = null;
 	private cancelPendingDownloadWait: (() => void) | null = null;
+	private readonly downloadStartTimeoutMs = 60_000;
+	private destinationDownloader:
+		| BandcampGateDownloader
+		| DirectDownloader
+		| null = null;
+	private downloadOptions: BandcampGateOptions = {};
+	downloadMethod: 'gate' | 'bandcamp-stream' = 'gate';
 	private readonly gateDefinitions: GateDefinition[] = [
 		{
 			name: 'email',
@@ -67,6 +87,12 @@ export class HypedditDownloader {
 			label: 'Facebook',
 			difficulty: 2,
 			handler: (p) => this.handleFacebookSlide(p),
+		},
+		{
+			name: 'bc',
+			label: 'Bandcamp',
+			difficulty: 4,
+			handler: (p) => this.handleBandcampSlide(p),
 		},
 		{
 			name: 'sp',
@@ -189,9 +215,27 @@ export class HypedditDownloader {
 		console.log('Drag performed');
 
 		// wait for the captcha to be solved
-		await page.waitForSelector(Selectors.SOUNDCLOUD_CAPTCHA_CONTAINER, {
-			hidden: true,
-		});
+		try {
+			await page.waitForSelector(Selectors.SOUNDCLOUD_CAPTCHA_CONTAINER, {
+				hidden: true,
+				timeout: 5_000,
+			});
+		} catch {
+			this.emitProgress(
+				'handling_gates',
+				'Solve the SoundCloud captcha in the browser to continue...',
+				50,
+				{
+					currentGate: 'captcha',
+					browserActive: this.config.browserMode === 'headed',
+					requiresAttention: true,
+				},
+			);
+			await page.waitForSelector(Selectors.SOUNDCLOUD_CAPTCHA_CONTAINER, {
+				hidden: true,
+				timeout: 120_000,
+			});
+		}
 	}
 
 	async prepareLogins() {
@@ -251,7 +295,12 @@ export class HypedditDownloader {
 		}
 	}
 
-	async downloadAudio(url: string): Promise<string | null> {
+	async downloadAudio(
+		url: string,
+		options: BandcampGateOptions = {},
+	): Promise<string | null> {
+		this.downloadOptions = options;
+		this.downloadMethod = 'gate';
 		console.log('Navigating to Hypeddit post...');
 		this.emitProgress('handling_gates', 'Navigating to Hypeddit post...', 25);
 
@@ -264,13 +313,13 @@ export class HypedditDownloader {
 		// Some Hypeddit URLs resolve to a smart link "selection" page that lists multiple
 		// platforms (Bandcamp, Hypeddit, etc.). In that case we need to follow the
 		// Hypeddit anchor before we can run the gate flow.
-		const smartLinkAnchor = await page.$(
-			Selectors.HYPEDDIT_SMART_LINK_HYPEDDIT_ANCHOR,
-		);
-		if (smartLinkAnchor) {
-			const hypedditUrl = await smartLinkAnchor.evaluate(
-				(el) => (el as HTMLAnchorElement).href,
-			);
+		const visited = new Set([page.url()]);
+		for (let hop = 0; hop < 5; hop++) {
+			const hypedditUrl = inspectHypedditPage(await page.content(), page.url());
+			if (!hypedditUrl) break;
+			if (visited.has(hypedditUrl))
+				throw new Error('Hypeddit smartlink loop detected.');
+			visited.add(hypedditUrl);
 			console.log(
 				`Smart link selection page detected, following Hypeddit URL: ${hypedditUrl}`,
 			);
@@ -356,6 +405,7 @@ export class HypedditDownloader {
 	}
 
 	async close() {
+		await this.destinationDownloader?.close();
 		this.cancelPendingDownloadWait?.();
 		this.cancelPendingDownloadWait = null;
 		await this.browserLaunch.close();
@@ -524,7 +574,11 @@ export class HypedditDownloader {
 					'handling_gates',
 					'Log in to SoundCloud in the browser to continue...',
 					50,
-					{ currentGate: 'soundcloud', browserActive: true },
+					{
+						currentGate: 'soundcloud',
+						browserActive: true,
+						requiresAttention: true,
+					},
 				),
 		});
 
@@ -543,22 +597,45 @@ export class HypedditDownloader {
 	}
 
 	private async handleInstagramSlide(page: Page) {
-		// check if #skipper_ig exists, if yes we can just click it to skip this step
-		const skipperIg = await page.evaluate((skipperIgSelector) => {
-			return document.querySelector(skipperIgSelector) !== null;
-		}, Selectors.IG_SKIPPER_BUTTON);
-		if (skipperIg) {
-			console.log('Instagram gate can be skipped for this post. Skipping...');
-			await page.click(Selectors.IG_SKIPPER_BUTTON);
+		await page.waitForSelector('#step_ig', { visible: true });
+		const skip = await page.$(Selectors.IG_SKIPPER_BUTTON);
+		if (skip && (await skip.isVisible())) {
+			await skip.click();
 			return;
 		}
-
-		await this.handleSocialButtonsSlide(page, 'Instagram', {
-			statusButtonSelector: Selectors.IG_STATUS_BUTTON,
-			undoneButtonSelector: Selectors.IG_STATUS_UNDONE_BUTTON,
-			nextButtonSelector: Selectors.IG_NEXT_BUTTON,
-			windowUrlPart: 'instagram.com',
-		});
+		let visited = false;
+		while (true) {
+			const button = await page.$(Selectors.IG_STATUS_UNDONE_BUTTON);
+			if (!button) break;
+			try {
+				if (!(await button.isVisible())) break;
+				if (!(await visitSocialPopup(page, button))) break;
+				visited = true;
+				await page.waitForFunction(
+					(element) =>
+						!element.isConnected || !element.classList.contains('undone'),
+					{ timeout: 10_000 },
+					button,
+				);
+			} catch {
+				break;
+			} finally {
+				await button.dispose();
+			}
+		}
+		const next = visited
+			? await page
+					.waitForSelector(Selectors.IG_NEXT_BUTTON, {
+						visible: true,
+						timeout: 10_000,
+					})
+					.catch(() => null)
+			: await page.$(Selectors.IG_NEXT_BUTTON);
+		if (next && (await next.isVisible())) {
+			await next.evaluate((element) => (element as HTMLElement).click());
+			return;
+		}
+		await this.handleOptionalSocialSlide(page, 'Instagram', 'ig');
 	}
 
 	private async handleTiktokSlide(page: Page) {
@@ -602,6 +679,50 @@ export class HypedditDownloader {
 	private async handleFacebookSlide(page: Page) {
 		await page.waitForSelector(Selectors.FB_NEXT_BUTTON);
 		await page.click(Selectors.FB_NEXT_BUTTON);
+	}
+
+	private async handleBandcampSlide(page: Page) {
+		await this.handleOptionalSocialSlide(page, 'Bandcamp', 'bc');
+	}
+
+	private async handleOptionalSocialSlide(
+		page: Page,
+		label: string,
+		gate: 'bc' | 'ig',
+	) {
+		const stepSelector = gate === 'bc' ? Selectors.BC_STEP : '#step_ig';
+		const skipSelector =
+			gate === 'bc' ? Selectors.BC_SKIPPER_BUTTON : Selectors.IG_SKIPPER_BUTTON;
+		await page.waitForSelector(stepSelector, { visible: true });
+		const skip = await page.$(skipSelector);
+		if (skip && (await skip.isVisible())) {
+			await skip.click();
+			return;
+		}
+
+		await page.bringToFront();
+		this.emitProgress(
+			'handling_gates',
+			`Complete the ${label} step in the remote browser to continue.`,
+			50,
+			{ currentGate: gate, browserActive: true, requiresAttention: true },
+		);
+		try {
+			await page.waitForSelector(stepSelector, {
+				hidden: true,
+				timeout: 120_000,
+			});
+		} catch (cause) {
+			throw new Error(
+				`Complete the ${label} step in the remote browser, then retry the gate download.`,
+				{ cause },
+			);
+		}
+		this.emitProgress('handling_gates', `${label} step completed.`, 50, {
+			currentGate: gate,
+			browserActive: true,
+			requiresAttention: false,
+		});
 	}
 
 	private async handleSpotifySlide(page: Page) {
@@ -675,6 +796,61 @@ export class HypedditDownloader {
 		if (!downloadButton) {
 			throw new Error('Download button not found');
 		}
+		const linkGate = await page.$eval(
+			Selectors.DW_DOWNLOAD_BUTTON,
+			(button) => button.getAttribute('data-type') === 'linkGate',
+		);
+		if (linkGate) {
+			const origin = new URL(page.url()).origin;
+			const unlocked = page.waitForResponse(
+				(response) => {
+					const url = new URL(response.url());
+					return url.origin === origin && url.pathname === '/gate/download/ul';
+				},
+				{ timeout: 60_000 },
+			);
+			const [response] = await Promise.all([
+				unlocked,
+				page.click(Selectors.DW_DOWNLOAD_BUTTON),
+			]);
+			const result = (await response.json()) as {
+				download_status?: boolean;
+				custom_redirection_url?: string;
+			};
+			if (!result.download_status || !result.custom_redirection_url)
+				throw new Error(
+					'Hypeddit did not grant access to the unlocked destination. Review the gate in the remote browser.',
+				);
+			const destination = result.custom_redirection_url;
+
+			if (isBandcampUrl(destination)) {
+				const bandcamp = new BandcampGateDownloader(
+					page,
+					this.progressCallback ?? undefined,
+				);
+				this.destinationDownloader = bandcamp;
+				const result = await bandcamp.downloadAudio(
+					destination,
+					this.downloadOptions,
+				);
+				this.downloadFilename = result.filename;
+				this.downloadMethod = result.method;
+			} else {
+				// Cancel the gate page's delayed navigation; fetch the granted file once.
+				await page.goto('about:blank');
+				const direct = new DirectDownloader();
+				this.destinationDownloader = direct;
+				if (this.progressCallback)
+					direct.setProgressCallback((stage, message, percent, extra) =>
+						this.progressCallback?.(stage, message, percent, {
+							...extra,
+							browserless: false,
+						}),
+					);
+				this.downloadFilename = await direct.downloadAudio(destination);
+			}
+			return;
+		}
 		console.log('Download button found, setting up CDP session...');
 		this.emitProgress('handling_gates', 'Preparing download...', 75);
 
@@ -705,6 +881,15 @@ export class HypedditDownloader {
 				),
 			10 * 60_000,
 		);
+		const downloadStartTimer = setTimeout(
+			() =>
+				downloadCompleteReject(
+					new Error(
+						'Hypeddit download did not start. Review the gate in the browser before retrying.',
+					),
+				),
+			this.downloadStartTimeoutMs,
+		);
 
 		// create progress bar (for CLI)
 		const pBar = new SingleBar(
@@ -725,6 +910,7 @@ export class HypedditDownloader {
 
 		// listen for download start event
 		client.on('Browser.downloadWillBegin', (event) => {
+			clearTimeout(downloadStartTimer);
 			downloadGuid = event.guid;
 			this.downloadFilename = event.suggestedFilename;
 			console.log('Download started:', this.downloadFilename);
@@ -799,6 +985,7 @@ export class HypedditDownloader {
 				this.cancelPendingDownloadWait = null;
 			}
 			clearTimeout(downloadTimer);
+			clearTimeout(downloadStartTimer);
 			clearTimeout(retryTimer);
 			pBar.stop();
 			await client.detach().catch(() => {});

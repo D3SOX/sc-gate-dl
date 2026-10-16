@@ -1,5 +1,9 @@
 import type { Browser, Page } from 'puppeteer';
 import {
+	BandcampGateDownloader,
+	type BandcampGateOptions,
+} from './bandcampGate';
+import {
 	browserModeToLaunchOptions,
 	CancellableBrowserLaunch,
 } from './browserLaunch';
@@ -8,7 +12,7 @@ import type { ProgressCallback } from './hypeddit';
 import Selectors from './selectors';
 import { waitForSoundcloudLogin } from './soundcloudLogin';
 import type { HypedditConfig } from './types';
-import { loadCookies, timeout, trimExtractedUrl } from './utils';
+import { isBandcampUrl, loadCookies, timeout, trimExtractedUrl } from './utils';
 
 const SC_AUTHORIZE_RE = /secure\.soundcloud\.com\/authorize/i;
 
@@ -27,6 +31,8 @@ export class PumpyoursoundDownloader {
 	private browser!: Browser;
 	private readonly browserLaunch = new CancellableBrowserLaunch();
 	private directDownloader: DirectDownloader | null = null;
+	private bandcampDownloader: BandcampGateDownloader | null = null;
+	downloadMethod: 'gate' | 'bandcamp-stream' = 'gate';
 	private downloadFilename: string | null = null;
 	private config: HypedditConfig;
 	private progressCallback: ProgressCallback | null = null;
@@ -95,7 +101,11 @@ export class PumpyoursoundDownloader {
 		await soundCloudPage.close();
 	}
 
-	async downloadAudio(url: string): Promise<string | null> {
+	async downloadAudio(
+		url: string,
+		options: BandcampGateOptions = {},
+	): Promise<string | null> {
+		this.downloadMethod = 'gate';
 		console.log('Navigating to PumpYourSound gate...');
 		this.emitProgress(
 			'handling_gates',
@@ -117,7 +127,17 @@ export class PumpyoursoundDownloader {
 			await this.completeGateSteps(page);
 
 			const fileUrl = await this.submitAndReadDownloadLink(page);
-			console.log('PumpYourSound download link:', fileUrl);
+			if (isBandcampUrl(fileUrl)) {
+				const bandcamp = new BandcampGateDownloader(
+					page,
+					this.progressCallback ?? undefined,
+				);
+				this.bandcampDownloader = bandcamp;
+				const result = await bandcamp.downloadAudio(fileUrl, options);
+				this.downloadMethod = result.method;
+				this.downloadFilename = result.filename;
+				return result.filename;
+			}
 			this.emitProgress(
 				'handling_gates',
 				'Downloading PumpYourSound file...',
@@ -145,6 +165,7 @@ export class PumpyoursoundDownloader {
 	}
 
 	async close() {
+		await this.bandcampDownloader?.close();
 		await this.directDownloader?.close();
 		await this.browserLaunch.close();
 	}
@@ -379,7 +400,11 @@ export class PumpyoursoundDownloader {
 								'handling_gates',
 								'Log in to SoundCloud in the browser to continue...',
 								50,
-								{ currentGate: 'soundcloud', browserActive: true },
+								{
+									currentGate: 'soundcloud',
+									browserActive: true,
+									requiresAttention: true,
+								},
 							),
 					});
 					deadline = Date.now() + 180_000;

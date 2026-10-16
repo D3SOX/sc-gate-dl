@@ -667,7 +667,11 @@ export class DownloadgaterDownloader {
 						'handling_gates',
 						'Log in to SoundCloud in the browser to continue...',
 						50,
-						{ currentGate: 'soundcloud', browserActive: true },
+						{
+							currentGate: 'soundcloud',
+							browserActive: true,
+							requiresAttention: true,
+						},
 					),
 			});
 			return this.clickSoundcloudOauthAllow(oauthPage);

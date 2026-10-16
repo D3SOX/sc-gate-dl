@@ -76,6 +76,10 @@ export interface JobProgress {
 	browserless?: boolean;
 	/** True once a visible headed browser is running and can be viewed remotely. */
 	browserActive?: boolean;
+	/** A manual action is needed in the gate browser. Cleared by normal progress. */
+	requiresAttention?: boolean;
+	/** Stable for one uninterrupted wait, so clients alert only once. */
+	attentionId?: string;
 	/** Present while stage is `waiting_bandcamp_track`. */
 	bandcampAlbumTracks?: BandcampAlbumTrackChoice[];
 	/** One-based position among jobs waiting for the server's download slot. */

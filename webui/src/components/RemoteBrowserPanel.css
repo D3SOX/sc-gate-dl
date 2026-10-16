@@ -7,6 +7,7 @@
 	place-items: center;
 	width: 44px;
 	height: 44px;
+	padding: 0;
 	color: var(--text-secondary);
 	background: rgba(18, 18, 26, 0.94);
 	border: 1px solid var(--border-strong);
@@ -42,8 +43,12 @@
 }
 
 .remote-browser-launcher svg {
+	position: absolute;
+	inset: 0;
+	display: block;
 	width: 22px;
 	height: 22px;
+	margin: auto;
 	fill: none;
 	stroke: currentcolor;
 	stroke-width: 1.8;
@@ -210,13 +215,13 @@
 	margin: 0 0 4px;
 }
 
-.remote-browser-help-panel p + ul {
-	margin-top: 0;
-}
-
 .remote-browser-help-panel ul {
 	margin: 0 0 10px;
 	padding-left: 1.1em;
+}
+
+.remote-browser-help-panel p + ul {
+	margin-top: 0;
 }
 
 .remote-browser-help-panel ul:last-child {
@@ -323,7 +328,7 @@
 	white-space: nowrap;
 }
 
-.remote-browser-window-control {
+.remote-browser-toolbar .remote-browser-window-control {
 	display: grid;
 	flex: none;
 	place-items: center;
