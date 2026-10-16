@@ -31,7 +31,7 @@
 	"dependencies": {
 		"@inquirer/prompts": "^8.7.3",
 		"cli-progress": "^3.12.0",
-		"cloakbrowser": "^0.5.3",
+		"cloakbrowser": "^0.6.0",
 		"find-bin": "^1.1.1",
 		"mmdb-lib": "^3.0.3",
 		"puppeteer": "^25.13.0",
