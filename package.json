@@ -34,7 +34,7 @@
 		"cloakbrowser": "^0.5.3",
 		"find-bin": "^1.1.1",
 		"mmdb-lib": "^3.0.3",
-		"puppeteer": "^25.4.0",
+		"puppeteer": "^25.13.0",
 		"soundcloud.ts": "^0.7.4"
 	},
 	"patchedDependencies": {
