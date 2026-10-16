@@ -1,5 +1,6 @@
 import { mkdir, unlink } from 'node:fs/promises';
 import { basename, join } from 'node:path';
+import { filenameFromContentDisposition } from './contentDisposition';
 import {
 	normalizeDirectDownloadParsedUrl,
 	urlLooksLikeDirectDownload,
@@ -36,16 +37,6 @@ export function normalizeDirectDownloadUrl(url: string): string {
 	} catch {
 		return trimmed;
 	}
-}
-
-function filenameFromContentDisposition(value: string | null): string | null {
-	if (!value) return null;
-	const star = value.match(/filename\*=(?:UTF-8'')?([^;]+)/i)?.[1];
-	if (star) {
-		return decodeURIComponent(star.replace(/["']/g, ''));
-	}
-	const plain = value.match(/filename=["']?([^"';]+)["']?/i)?.[1];
-	return plain ? plain.trim() : null;
 }
 
 function safeDownloadFilename(raw: string | null): string | null {

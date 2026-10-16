@@ -1,7 +1,9 @@
 import { rename, rm } from 'node:fs/promises';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
+import { filenameFromContentDisposition } from './contentDisposition';
 import type { ProgressCallback } from './hypeddit';
 import type { HypedditConfig } from './types';
+import { sanitizeFilenamePart } from './utils';
 
 // Steps whose Hypeddit "gate" is purely client-side: clicking through them only
 // toggles CSS classes and, on the download request, declares the step as skipped
@@ -97,18 +99,6 @@ function findSmartLinkHypedditUrl(html: string): string | null {
 			/<a[^>]*href=["']([^"']+)["'][^>]*data-type=["']hypeddit["']/,
 		)?.[1] ?? null
 	);
-}
-
-function filenameFromContentDisposition(value: string | null): string | null {
-	if (!value) {
-		return null;
-	}
-	const star = value.match(/filename\*=(?:UTF-8'')?([^;]+)/i)?.[1];
-	if (star) {
-		return decodeURIComponent(star.replace(/["']/g, ''));
-	}
-	const plain = value.match(/filename=["']?([^"';]+)["']?/i)?.[1];
-	return plain ? plain.trim() : null;
 }
 
 export class HypedditHttpDownloader {
@@ -254,16 +244,16 @@ export class HypedditHttpDownloader {
 			throw new Error(`Download request failed: ${response.status}`);
 		}
 
-		const filename =
+		const suggestedFilename =
 			filenameFromContentDisposition(
 				response.headers.get('content-disposition'),
 			) ??
 			filenameFromContentDisposition(
-				decodeURIComponent(downloadUrl).match(
-					/response-content-disposition=([^&]+)/,
-				)?.[1] ?? null,
+				new URL(downloadUrl).searchParams.get('response-content-disposition'),
 			) ??
 			'download';
+		const filename =
+			sanitizeFilenamePart(basename(suggestedFilename)) || 'download';
 
 		const totalBytes = Number(response.headers.get('content-length')) || 0;
 		const destPath = join('./downloads', filename);
