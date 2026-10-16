@@ -12,10 +12,10 @@
 		"@astrojs/react": "^6.0.2",
 		"@novnc/novnc": "1.7.0",
 		"@types/react": "^19.2.18",
-		"@types/react-dom": "^19.2.4",
+		"@types/react-dom": "^19.3.0",
 		"astro": "^7.1.6",
 		"react": "^19.2.8",
-		"react-dom": "^19.2.8",
+		"react-dom": "^19.3.0",
 		"sonner": "^2.0.7"
 	},
 	"devDependencies": {
