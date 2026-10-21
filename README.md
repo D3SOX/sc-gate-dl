@@ -81,7 +81,7 @@ Install the [EditThisCookie (fork)](https://chromewebstore.google.com/detail/edi
 
 Used for SoundCloud API/session automation and for **yt-dlp** when downloading a SoundCloud track directly (so downloadable tracks can fetch the original upload, not only the 128k stream).
 
-You can omit `soundcloud-cookies.json` and use **Set up logins** in the Web
+You can omit `soundcloud-cookies.json` and use **Initialize logins** in the Web
 UI instead. Sign in through the visible or remote browser; after SoundCloud's
 Library page opens, sc-gate-dl saves the browser cookies to
 `soundcloud-cookies.json` with owner-only permissions. A blank file and `[]` are
@@ -199,7 +199,7 @@ CDN.
 
 For a remotely hosted headed browser, set `BROWSER_VIEW_URL` to an HTTP(S)
 viewer such as noVNC. The Web UI then shows a **View Browser** button next to
-**Set up logins**. Virtual displays without GPU device access can set
+**Initialize logins**. Virtual displays without GPU device access can set
 `SC_GATE_DL_DISABLE_GPU=true`. Containers with a constrained `/dev/shm` can
 separately set `SC_GATE_DL_DISABLE_DEV_SHM=true`.
 
@@ -207,7 +207,7 @@ separately set `SC_GATE_DL_DISABLE_DEV_SHM=true`.
 
 This setup lets a headless server open Chromium in headed mode while you view
 and control it inside the sc-gate-dl Web UI. It is useful for **Initialize
-Logins**, OAuth consent, and captchas.
+logins**, OAuth consent, and captchas.
 
 ##### Prerequisites
 

@@ -1342,19 +1342,19 @@ export default function App() {
 	};
 
 	const handleInitializeLogins = async () => {
-		toast('Set up logins?', {
+		toast('Initialize logins?', {
 			description:
 				'Opens a browser on the server to sign in to SoundCloud and Spotify. Use the remote browser button to watch it or solve a captcha.',
 			closeButton: false,
 			duration: Infinity,
 			action: {
-				label: 'Set up',
+				label: 'Initialize',
 				onClick: async () => {
 					if (browserViewUrl) {
 						setBrowserViewActive(true);
 						setBrowserViewOpen(true);
 					}
-					const toastId = toast.loading('Setting up logins');
+					const toastId = toast.loading('Initializing logins');
 
 					try {
 						const response = await fetch(`${API_BASE}/api/logins/initialize`, {
@@ -1364,15 +1364,15 @@ export default function App() {
 
 						if (!response.ok) {
 							throw new Error(
-								data.error || 'The server could not set up the logins.',
+								data.error || 'The server could not initialize the logins.',
 							);
 						}
 
-						toast.success('Logins set up', {
+						toast.success('Logins initialized', {
 							id: toastId,
 						});
 					} catch (err) {
-						toast.error('Login setup failed', {
+						toast.error('Login initialization failed', {
 							id: toastId,
 							description:
 								err instanceof Error ? err.message : 'Check the server log.',
@@ -2220,7 +2220,7 @@ export default function App() {
 								className="btn-secondary btn-small"
 								onClick={handleInitializeLogins}
 							>
-								Set up logins
+								Initialize logins
 							</button>
 							<button
 								type="button"
