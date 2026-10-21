@@ -51,9 +51,18 @@ describe('appendSearchResults', () => {
 });
 
 describe('searchThumbnailUrl', () => {
-	test('requests the small artwork size', () => {
-		expect(
-			searchThumbnailUrl('https://i1.sndcdn.com/artworks-abc-t500x500.jpg'),
-		).toBe('https://i1.sndcdn.com/artworks-abc-large.jpg');
+	test('requests the small artwork size through the API proxy', () => {
+		const url = new URL(
+			searchThumbnailUrl(
+				'http://192.168.1.50:3000',
+				'https://i1.sndcdn.com/artworks-abc-t500x500.jpg',
+			),
+		);
+		expect(url.origin + url.pathname).toBe(
+			'http://192.168.1.50:3000/api/artwork',
+		);
+		expect(url.searchParams.get('url')).toBe(
+			'https://i1.sndcdn.com/artworks-abc-large.jpg',
+		);
 	});
 });

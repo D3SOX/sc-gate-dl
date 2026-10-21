@@ -1504,7 +1504,7 @@ export default function App() {
 									>
 										{result.artworkUrl ? (
 											<img
-												src={searchThumbnailUrl(result.artworkUrl)}
+												src={searchThumbnailUrl(API_BASE, result.artworkUrl)}
 												alt=""
 												className="search-result-artwork"
 												loading="lazy"

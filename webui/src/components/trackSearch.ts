@@ -30,7 +30,14 @@ export function appendSearchResults(
 	return [...current, ...page.filter((result) => !seen.has(result.id))];
 }
 
-/** Search returns 500px artwork; the list only needs SoundCloud's 100px size. */
-export function searchThumbnailUrl(artworkUrl: string): string {
-	return artworkUrl.replace('-t500x500.', '-large.');
+/**
+ * Load the 100px cover through the API's artwork proxy, so a search never
+ * makes the browser contact SoundCloud. Results carry 500px artwork URLs.
+ */
+export function searchThumbnailUrl(
+	apiBase: string,
+	artworkUrl: string,
+): string {
+	const url = artworkUrl.replace('-t500x500.', '-large.');
+	return `${apiBase}/api/artwork?${new URLSearchParams({ url })}`;
 }
