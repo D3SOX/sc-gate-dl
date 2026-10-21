@@ -12,11 +12,11 @@ export function GateAttentionMessage({
 	if (!attention) return null;
 	return (
 		<div className="gate-attention-message" role="alert" aria-atomic="true">
-			<strong>Gate needs your attention</strong>
+			<strong>The gate needs your help</strong>
 			<span>{attention.message}</span>
 			{onShowBrowser && (
 				<button type="button" onClick={onShowBrowser}>
-					Show browser
+					Open the browser
 				</button>
 			)}
 		</div>
