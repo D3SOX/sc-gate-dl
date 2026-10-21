@@ -49,6 +49,29 @@ export function isJobDestination(value: unknown): value is JobDestination {
 	return value === 'library' || value === 'client';
 }
 
+/**
+ * Where a download would most likely come from, judged only from the search
+ * listing. `none` does not rule out a gate behind a short link.
+ */
+export type SearchSource = 'download' | 'gate' | 'none';
+
+export interface SearchResult {
+	id: number;
+	url: string;
+	title: string;
+	artist: string;
+	uploader: string;
+	artworkUrl: string | null;
+	durationMs: number;
+	genre: string | null;
+	source: SearchSource;
+}
+
+export interface SearchResponse {
+	results: SearchResult[];
+	nextOffset: number | null;
+}
+
 // Job system types for Web UI
 export type JobStage =
 	| 'pending'
