@@ -20,8 +20,10 @@ import { HypedditDownloader } from './hypeddit';
 import { HypedditHttpDownloader } from './hypedditHttp';
 import { JobQueue } from './jobQueue';
 import { jobStore } from './jobStore';
+import { libraryDirFromEnv, moveIntoLibrary } from './libraryDestination';
 import { MypresskitDownloader } from './mypresskit';
 import { PumpyoursoundDownloader } from './pumpyoursound';
+import { parseSearchQuery, toSearchResponse } from './search';
 import { isAllowedCorsOrigin } from './serverCors';
 import { SoundcloudClient } from './soundcloud';
 import { isSoundcloudDownloadEnabled } from './soundcloudDownload';
@@ -29,6 +31,7 @@ import { StillhypeDownloader } from './stillhype';
 import {
 	type BrowserMode,
 	isBrowserMode,
+	isJobDestination,
 	type Job,
 	type Metadata,
 	type OutputFormat,
@@ -79,6 +82,7 @@ const BROWSER_VIEW_URL = getOptionalEnv('BROWSER_VIEW_URL');
 const DELETE_AFTER_DOWNLOAD = deleteAfterDownloadEnabled(
 	process.env.SC_GATE_DL_DELETE_AFTER_DOWNLOAD,
 );
+const LIBRARY_DIR = libraryDirFromEnv();
 
 const soundcloudClient = new SoundcloudClient();
 const audioProcessor = new AudioProcessor(ffmpegBin, ffprobeBin);
@@ -105,6 +109,125 @@ async function renameDownloadFile(
 			});
 		},
 	});
+}
+
+type Artwork = { buffer: ArrayBuffer; fileName: string };
+
+function jobArtwork(job: Job): Artwork | null {
+	return job.artworkBuffer && job.artworkFileName
+		? { buffer: job.artworkBuffer, fileName: job.artworkFileName }
+		: null;
+}
+
+function existingJobArtwork(job: Job): Artwork | null {
+	return job.existingArtworkBuffer && job.existingArtworkFileName
+		? {
+				buffer: job.existingArtworkBuffer,
+				fileName: job.existingArtworkFileName,
+			}
+		: null;
+}
+
+/**
+ * Tag and convert a job's downloaded file, or only rename it for original
+ * output and preserved MP3 metadata. Returns the final downloads/ filename.
+ */
+async function finalizeJobFile(
+	job: Job,
+	metadata: Metadata,
+	options: {
+		preserveMetadata: boolean;
+		nameAsArtistTitle: boolean;
+		artwork: Artwork | null;
+	},
+): Promise<string> {
+	const sourceFilename = job.outputFilename || job.downloadFilename;
+	if (!sourceFilename) {
+		throw new Error('No downloaded file available');
+	}
+
+	let outputFilename = sourceFilename;
+	if (job.outputFormat === 'original' || options.preserveMetadata) {
+		if (options.nameAsArtistTitle) {
+			outputFilename = await renameDownloadFile(
+				job.id,
+				sourceFilename,
+				artistTitleFilename(
+					metadata.artist,
+					metadata.title,
+					extname(sourceFilename) || '.mp3',
+				),
+			);
+		}
+	} else {
+		if (!options.artwork?.buffer) {
+			throw new Error('No artwork available');
+		}
+		jobStore.updateProgress(
+			job.id,
+			'processing_audio',
+			'Processing audio...',
+			95,
+		);
+		const outputPath = await audioProcessor.processAudio(
+			sourceFilename,
+			metadata,
+			options.artwork,
+			'always',
+			job.outputFormat,
+		);
+		outputFilename = basename(outputPath);
+		if (options.nameAsArtistTitle) {
+			outputFilename = await renameDownloadFile(
+				job.id,
+				outputFilename,
+				artistTitleFilename(
+					metadata.artist,
+					metadata.title,
+					job.outputFormat === 'flac' ? '.flac' : '.mp3',
+				),
+			);
+		}
+	}
+
+	jobStore.update(job.id, {
+		outputFilename,
+		downloadFilename: outputFilename,
+	});
+	return outputFilename;
+}
+
+/** Tag an unattended job with SoundCloud metadata and deliver the file. */
+async function finishUnattendedJob(job: Job): Promise<void> {
+	const filename = await finalizeJobFile(job, job.defaultMetadata ?? {}, {
+		preserveMetadata: false,
+		nameAsArtistTitle: true,
+		artwork: jobArtwork(job) ?? existingJobArtwork(job),
+	});
+
+	if (job.destination !== 'library') {
+		jobStore.updateProgress(job.id, 'ready', 'File ready', 100);
+		return;
+	}
+	if (!LIBRARY_DIR) {
+		throw new Error('SC_GATE_DL_LIBRARY_DIR is not set');
+	}
+	jobStore.updateProgress(
+		job.id,
+		'processing_audio',
+		'Saving to library...',
+		98,
+	);
+	const libraryFilename = await moveIntoLibrary(
+		join('./downloads', filename),
+		LIBRARY_DIR,
+	);
+	jobStore.update(job.id, {
+		libraryFilename,
+		outputFilename: null,
+		downloadFilename: null,
+	});
+	jobStore.updateProgress(job.id, 'ready', 'Saved to library', 100);
 }
 
 type AnyDownloader = {
@@ -614,7 +737,8 @@ async function runDownloadProcess(jobId: string): Promise<void> {
 			return;
 		}
 
-		jobStore.update(jobId, { downloadFilename });
+		// A retry must not finalize the output of an earlier failed attempt.
+		jobStore.update(jobId, { downloadFilename, outputFilename: null });
 		const downloadedPath = join('./downloads', downloadFilename);
 		const signature = new Uint8Array(
 			await Bun.file(downloadedPath).slice(0, 4).arrayBuffer(),
@@ -639,6 +763,10 @@ async function runDownloadProcess(jobId: string): Promise<void> {
 
 		if (job.outputFormat === 'original') {
 			jobStore.update(jobId, { outputFilename: downloadFilename });
+			if (job.destination) {
+				await finishUnattendedJob(job);
+				return;
+			}
 			jobStore.updateProgress(jobId, 'ready', 'Original file ready', 100);
 			return;
 		}
@@ -690,6 +818,10 @@ async function runDownloadProcess(jobId: string): Promise<void> {
 			return;
 		}
 
+		if (job.destination) {
+			await finishUnattendedJob(job);
+			return;
+		}
 		jobStore.updateProgress(jobId, 'ready', 'Ready for metadata editing', 100);
 	} catch (error) {
 		if (jobStore.isCancelled(jobId)) {
@@ -804,7 +936,33 @@ const server = Bun.serve({
 			jsonResponse({
 				browserModes: availableBrowserModes,
 				browserViewUrl: BROWSER_VIEW_URL ?? null,
+				search: true,
+				libraryDestination: LIBRARY_DIR !== null,
 			}),
+
+		'/api/search': {
+			GET: async (req) => {
+				const query = parseSearchQuery(new URL(req.url).searchParams);
+				if (typeof query === 'string') {
+					return jsonResponse({ error: query }, { status: 400 });
+				}
+				try {
+					const search = await soundcloudClient.searchTracks(
+						query.q,
+						query.limit,
+						query.offset,
+					);
+					return jsonResponse(toSearchResponse(search, query));
+				} catch (error) {
+					return jsonResponse(
+						{
+							error: `SoundCloud search failed: ${error instanceof Error ? error.message : 'Unknown error'}`,
+						},
+						{ status: 502 },
+					);
+				}
+			},
+		},
 
 		'/api/soundcloud/cleanup': {
 			POST: async () => {
@@ -864,12 +1022,17 @@ const server = Bun.serve({
 			POST: async (req) => {
 				try {
 					const body = await req.json();
-					const { soundcloudUrl, skipAutomaticHypedditFetch, outputFormat } =
-						body as {
-							soundcloudUrl?: string;
-							skipAutomaticHypedditFetch?: boolean;
-							outputFormat?: OutputFormat;
-						};
+					const {
+						soundcloudUrl,
+						skipAutomaticHypedditFetch,
+						outputFormat,
+						destination,
+					} = body as {
+						soundcloudUrl?: string;
+						skipAutomaticHypedditFetch?: boolean;
+						outputFormat?: OutputFormat;
+						destination?: unknown;
+					};
 
 					if (!soundcloudUrl) {
 						return jsonResponse(
@@ -897,7 +1060,27 @@ const server = Bun.serve({
 						);
 					}
 
-					const job = jobStore.create(soundcloudUrl, outputFormat ?? 'mp3-320');
+					if (destination !== undefined && !isJobDestination(destination)) {
+						return jsonResponse(
+							{ error: 'destination must be "library" or "client"' },
+							{ status: 400 },
+						);
+					}
+					if (destination === 'library' && !LIBRARY_DIR) {
+						return jsonResponse(
+							{
+								error:
+									'Set SC_GATE_DL_LIBRARY_DIR on the server to save downloads into the library',
+							},
+							{ status: 400 },
+						);
+					}
+
+					const job = jobStore.create(
+						soundcloudUrl,
+						outputFormat ?? 'mp3-320',
+						destination ?? null,
+					);
 					jobStore.updateProgress(
 						job.id,
 						'fetching_track',
@@ -963,14 +1146,22 @@ const server = Bun.serve({
 						);
 					}
 
+					// Unattended jobs start as soon as their source is known.
+					const started = Boolean(updatedJob.destination && hypedditUrl);
+					if (started) {
+						jobQueue.enqueue(job.id, () => runDownloadProcess(job.id));
+					}
+
 					return jsonResponse({
 						jobId: job.id,
 						track: updatedJob.track,
 						hypedditUrl: updatedJob.hypedditUrl,
 						defaultMetadata: updatedJob.defaultMetadata,
 						outputFormat: updatedJob.outputFormat,
+						destination: updatedJob.destination,
 						soundcloudDownloadWarning,
 						needsHypedditUrl: !hypedditUrl,
+						started,
 					});
 				} catch (error) {
 					return jsonResponse(
@@ -1358,6 +1549,8 @@ const server = Bun.serve({
 					existingMetadata: job.existingMetadata,
 					outputFormat: job.outputFormat,
 					browserMode: job.browserMode,
+					destination: job.destination,
+					libraryFilename: job.libraryFilename,
 					progress: job.progress,
 					downloadFilename: job.downloadFilename,
 					outputFilename: job.outputFilename,
@@ -1497,89 +1690,29 @@ const server = Bun.serve({
 						);
 					}
 
-					if (job.outputFormat === 'original' || preserveMetadata) {
-						let outputFilename = sourceFilename;
-						if (nameAsArtistTitle) {
-							outputFilename = await renameDownloadFile(
-								jobId,
-								sourceFilename,
-								artistTitleFilename(
-									metadata.artist,
-									metadata.title,
-									extname(sourceFilename) || '.mp3',
-								),
-							);
-						}
-						jobStore.update(jobId, {
-							outputFilename,
-							downloadFilename: outputFilename,
-						});
-						jobStore.updateProgress(
-							jobId,
-							'ready',
-							job.outputFormat === 'original'
-								? 'Original file ready'
-								: 'Existing MP3 metadata preserved',
-							100,
-						);
-						return jsonResponse({
-							success: true,
-							outputFilename,
-						});
-					}
-
-					jobStore.updateProgress(
-						jobId,
-						'processing_audio',
-						'Processing audio...',
-						95,
-					);
-
-					const artwork =
-						customArtwork ||
-						(job.artworkBuffer && job.artworkFileName
-							? {
-									buffer: job.artworkBuffer,
-									fileName: job.artworkFileName,
-								}
-							: null);
-
-					if (!artwork?.buffer) {
+					const keepsFile = job.outputFormat === 'original' || preserveMetadata;
+					const artwork = customArtwork || jobArtwork(job);
+					if (!keepsFile && !artwork?.buffer) {
 						return jsonResponse(
 							{ error: 'No artwork available' },
 							{ status: 400 },
 						);
 					}
 
-					const outputPath = await audioProcessor.processAudio(
-						sourceFilename,
-						metadata,
+					const outputFilename = await finalizeJobFile(job, metadata, {
+						preserveMetadata,
+						nameAsArtistTitle,
 						artwork,
-						'always',
-						job.outputFormat,
-					);
-
-					let outputFilename = basename(outputPath);
-					if (nameAsArtistTitle) {
-						outputFilename = await renameDownloadFile(
-							jobId,
-							outputFilename,
-							artistTitleFilename(
-								metadata.artist,
-								metadata.title,
-								job.outputFormat === 'flac' ? '.flac' : '.mp3',
-							),
-						);
-					}
-					jobStore.update(jobId, {
-						outputFilename,
-						downloadFilename: outputFilename,
 					});
 
 					jobStore.updateProgress(
 						jobId,
 						'ready',
-						'Audio processing complete',
+						job.outputFormat === 'original'
+							? 'Original file ready'
+							: preserveMetadata
+								? 'Existing MP3 metadata preserved'
+								: 'Audio processing complete',
 						100,
 					);
 

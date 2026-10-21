@@ -105,6 +105,12 @@ export class SoundcloudClient {
 		);
 	}
 
+	async searchTracks(query: string, limit: number, offset: number) {
+		return this.readQueue.run(() =>
+			this.soundcloud.tracks.search({ q: query, limit, offset }),
+		);
+	}
+
 	/**
 	 * True if this track is already in the account's reposts (GET, not DataDome PUT).
 	 */
