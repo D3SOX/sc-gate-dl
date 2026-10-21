@@ -39,6 +39,7 @@ class JobStore {
 			outputFormat,
 			destination,
 			libraryFilename: null,
+			reviewTags: false,
 			cancelled: false,
 			track: null,
 			defaultMetadata: null,
@@ -120,7 +121,8 @@ class JobStore {
 		job.progress = {
 			stage,
 			message,
-			percent,
+			// Download progress is fractional; clients expect whole percents.
+			percent: Math.round(percent),
 			...extra,
 			attentionId: extra?.requiresAttention
 				? job.progress.attentionId || crypto.randomUUID()

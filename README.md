@@ -189,6 +189,36 @@ replaces an existing file. A second copy gets a ` (2)` suffix instead. A job
 created with `"destination": "client"` runs the same way but keeps the file
 for `GET /api/job/:id/file`. Web UI jobs work as before.
 
+These jobs also accept `"browserMode"` (`headless`, `xvfb`, or `headed`, as
+listed by `GET /api/capabilities`) to pick the gate browser, for example a
+headed one to watch through `BROWSER_VIEW_URL`. `"reviewTags": true` needs a
+`destination`. Such a job stops at the `waiting_metadata` stage once the file
+is downloaded. `GET /api/job/:id` then returns `defaultMetadata` (SoundCloud's
+tags), `existingMetadata` (the tags already in an MP3), `downloadFilename`,
+`outputFormat`, `sourceIsLossless`, `hasArtwork` and `hasExistingArtwork`.
+`GET /api/job/:id/artwork` and `GET /api/job/:id/existing-artwork` return the
+two covers.
+
+Finish the job with `POST /api/job/:id/metadata`:
+
+```json
+{
+  "title": "Track title",
+  "artist": "Artist",
+  "album": "Album",
+  "genre": "Genre",
+  "nameAsArtistTitle": true,
+  "preserveMetadata": false
+}
+```
+
+`preserveMetadata: true` keeps the MP3's own tags. `nameAsArtistTitle`
+defaults to `true` for these jobs. To use another cover, send the same fields
+as `multipart/form-data` with an `artwork` file. The endpoint answers
+`{ "success": true }` right away and the job continues through
+`processing_audio` to `ready` or `error`. A second submit gets `409`.
+`POST /api/job/:id/cancel` drops the waiting file.
+
 `GET /api/search?q=…&limit=…&offset=…` searches SoundCloud tracks with the
 configured account. Each result has a `source` hint: `download` for a
 creator-enabled download, `gate` when the listing links a supported gate, and
