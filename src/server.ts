@@ -23,7 +23,7 @@ import { jobStore } from './jobStore';
 import { libraryDirFromEnv, moveIntoLibrary } from './libraryDestination';
 import { MypresskitDownloader } from './mypresskit';
 import { PumpyoursoundDownloader } from './pumpyoursound';
-import { parseSearchQuery, toSearchResponse } from './search';
+import { parseArtworkUrl, parseSearchQuery, toSearchResponse } from './search';
 import { isAllowedCorsOrigin } from './serverCors';
 import { SoundcloudClient } from './soundcloud';
 import { isSoundcloudDownloadEnabled } from './soundcloudDownload';
@@ -974,6 +974,43 @@ const server = Bun.serve({
 					return jsonResponse(
 						{
 							error: `SoundCloud search failed: ${error instanceof Error ? error.message : 'Unknown error'}`,
+						},
+						{ status: 502 },
+					);
+				}
+			},
+		},
+
+		// Clients load result covers through the server instead of contacting SoundCloud.
+		'/api/artwork': {
+			GET: async (req) => {
+				const url = parseArtworkUrl(new URL(req.url).searchParams.get('url'));
+				if (!url) {
+					return jsonResponse(
+						{ error: 'url must be a SoundCloud artwork URL' },
+						{ status: 400 },
+					);
+				}
+				try {
+					const response = await fetch(url, {
+						redirect: 'error',
+						signal: AbortSignal.timeout(15_000),
+					});
+					const contentType = response.headers.get('content-type') ?? '';
+					if (!response.ok || !contentType.startsWith('image/')) {
+						return jsonResponse(
+							{ error: `Artwork request failed: HTTP ${response.status}` },
+							{ status: 502 },
+						);
+					}
+					return fileResponse(response.body, {
+						'Content-Type': contentType,
+						'Cache-Control': 'public, max-age=86400',
+					});
+				} catch (error) {
+					return jsonResponse(
+						{
+							error: `Artwork request failed: ${error instanceof Error ? error.message : 'Unknown error'}`,
 						},
 						{ status: 502 },
 					);

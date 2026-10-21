@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import type { SoundcloudTrack } from 'soundcloud.ts';
 import {
 	MAX_SEARCH_LIMIT,
+	parseArtworkUrl,
 	parseSearchQuery,
 	toSearchResponse,
 	toSearchResult,
@@ -134,5 +135,27 @@ describe('toSearchResponse', () => {
 				query,
 			),
 		).toEqual({ results: [], nextOffset: null });
+	});
+});
+
+describe('parseArtworkUrl', () => {
+	test('accepts SoundCloud image CDN URLs', () => {
+		const url = 'https://i1.sndcdn.com/artworks-abc-t300x300.jpg';
+		expect(parseArtworkUrl(url)).toBe(url);
+	});
+
+	test('rejects other hosts, schemes, ports and credentials', () => {
+		for (const url of [
+			null,
+			'not a url',
+			'http://i1.sndcdn.com/a.jpg',
+			'https://sndcdn.com.example.org/a.jpg',
+			'https://evilsndcdn.com/a.jpg',
+			'https://i1.sndcdn.com:8443/a.jpg',
+			'https://user:pass@i1.sndcdn.com/a.jpg',
+			'https://127.0.0.1/a.jpg',
+		]) {
+			expect(parseArtworkUrl(url)).toBeNull();
+		}
 	});
 });

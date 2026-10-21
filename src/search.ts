@@ -87,3 +87,23 @@ export function toSearchResponse(
 		nextOffset: search.next_href ? query.offset + query.limit : null,
 	};
 }
+
+/**
+ * Accepts only SoundCloud's image CDN, so the artwork proxy cannot be used to
+ * reach other hosts. Returns the normalized URL or null.
+ */
+export function parseArtworkUrl(value: string | null): string | null {
+	if (!value) return null;
+	try {
+		const url = new URL(value);
+		const allowed =
+			url.protocol === 'https:' &&
+			url.hostname.endsWith('.sndcdn.com') &&
+			url.port === '' &&
+			url.username === '' &&
+			url.password === '';
+		return allowed ? url.href : null;
+	} catch {
+		return null;
+	}
+}

@@ -185,7 +185,9 @@ for `GET /api/job/:id/file`. Web UI jobs work as before.
 configured account. Each result has a `source` hint: `download` for a
 creator-enabled download, `gate` when the listing links a supported gate, and
 `none` otherwise. sc-gate-dl can still find a gate behind a short link when
-the job starts.
+the job starts. `GET /api/artwork?url=…` returns a result's cover, so clients
+never contact SoundCloud themselves. It only fetches from SoundCloud's image
+CDN.
 
 For a remotely hosted headed browser, set `BROWSER_VIEW_URL` to an HTTP(S)
 viewer such as noVNC. The Web UI then shows a **View Browser** button next to
