@@ -1,4 +1,10 @@
-import type { Job, JobProgress, JobStage, OutputFormat } from './types';
+import type {
+	Job,
+	JobDestination,
+	JobProgress,
+	JobStage,
+	OutputFormat,
+} from './types';
 
 type ProgressListener = (progress: JobProgress) => void;
 type BandcampTrackResolver = (url: string | null) => void;
@@ -16,7 +22,11 @@ class JobStore {
 	/**
 	 * Creates a new job and returns its ID
 	 */
-	create(soundcloudUrl: string, outputFormat: OutputFormat): Job {
+	create(
+		soundcloudUrl: string,
+		outputFormat: OutputFormat,
+		destination: JobDestination | null = null,
+	): Job {
 		const id = crypto.randomUUID();
 		const now = new Date();
 		const job: Job = {
@@ -27,6 +37,8 @@ class JobStore {
 			browserMode:
 				process.env.BROWSER_HEADLESS === 'false' ? 'headed' : 'headless',
 			outputFormat,
+			destination,
+			libraryFilename: null,
 			cancelled: false,
 			track: null,
 			defaultMetadata: null,

@@ -39,6 +39,16 @@ export function isOutputFormat(value: unknown): value is OutputFormat {
 	return value === 'original' || value === 'mp3-320' || value === 'flac';
 }
 
+/**
+ * Unattended jobs finish without the Web UI: `library` moves the tagged file
+ * into `SC_GATE_DL_LIBRARY_DIR`, `client` keeps it for `/api/job/:id/file`.
+ */
+export type JobDestination = 'library' | 'client';
+
+export function isJobDestination(value: unknown): value is JobDestination {
+	return value === 'library' || value === 'client';
+}
+
 // Job system types for Web UI
 export type JobStage =
 	| 'pending'
@@ -94,6 +104,10 @@ export interface Job {
 	bandcampAlbumTracks: BandcampAlbumTrackChoice[] | null;
 	browserMode: BrowserMode;
 	outputFormat: OutputFormat;
+	/** Set for unattended jobs; null for jobs driven by the Web UI. */
+	destination: JobDestination | null;
+	/** File name inside the library folder once a `library` job is ready. */
+	libraryFilename: string | null;
 	/** Set when the user cancels; download loop should stop and close the browser. */
 	cancelled: boolean;
 	track: {
