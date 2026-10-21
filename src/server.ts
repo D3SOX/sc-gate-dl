@@ -18,6 +18,7 @@ import { DroploudDownloader } from './droploud';
 import { GaterushDownloader } from './gaterush';
 import { HypedditDownloader } from './hypeddit';
 import { HypedditHttpDownloader } from './hypedditHttp';
+import { parseBrowserMode, parseUnattendedJobOptions } from './jobOptions';
 import { JobQueue } from './jobQueue';
 import { jobStore } from './jobStore';
 import { libraryDirFromEnv, moveIntoLibrary } from './libraryDestination';
@@ -197,14 +198,21 @@ async function finalizeJobFile(
 	return outputFilename;
 }
 
-/** Tag an unattended job with SoundCloud metadata and deliver the file. */
-async function finishUnattendedJob(job: Job): Promise<void> {
+/**
+ * Tag an unattended job and deliver the file. Without [metadata] and
+ * [options], it uses the SoundCloud metadata and artwork.
+ */
+async function finishUnattendedJob(
+	job: Job,
+	metadata: Metadata = job.defaultMetadata ?? {},
+	options: Parameters<typeof finalizeJobFile>[2] = {
+		preserveMetadata: false,
+		nameAsArtistTitle: true,
+		artwork: jobArtwork(job) ?? existingJobArtwork(job),
+	},
+): Promise<void> {
 	try {
-		const filename = await finalizeJobFile(job, job.defaultMetadata ?? {}, {
-			preserveMetadata: false,
-			nameAsArtistTitle: true,
-			artwork: jobArtwork(job) ?? existingJobArtwork(job),
-		});
+		const filename = await finalizeJobFile(job, metadata, options);
 		if (jobStore.isCancelled(job.id)) {
 			throw new Error('Download cancelled');
 		}
@@ -245,6 +253,15 @@ async function finishUnattendedJob(job: Job): Promise<void> {
 		jobStore.update(job.id, { downloadFilename: null, outputFilename: null });
 		throw error;
 	}
+}
+
+/** Wait for the client's tags when the job asked to review them. */
+async function finishOrReviewUnattendedJob(job: Job): Promise<void> {
+	if (job.reviewTags) {
+		jobStore.updateProgress(job.id, 'waiting_metadata', 'Check the tags', 100);
+		return;
+	}
+	await finishUnattendedJob(job);
 }
 
 type AnyDownloader = {
@@ -781,7 +798,7 @@ async function runDownloadProcess(jobId: string): Promise<void> {
 		if (job.outputFormat === 'original') {
 			jobStore.update(jobId, { outputFilename: downloadFilename });
 			if (job.destination) {
-				await finishUnattendedJob(job);
+				await finishOrReviewUnattendedJob(job);
 				return;
 			}
 			jobStore.updateProgress(jobId, 'ready', 'Original file ready', 100);
@@ -836,7 +853,7 @@ async function runDownloadProcess(jobId: string): Promise<void> {
 		}
 
 		if (job.destination) {
-			await finishUnattendedJob(job);
+			await finishOrReviewUnattendedJob(job);
 			return;
 		}
 		jobStore.updateProgress(jobId, 'ready', 'Ready for metadata editing', 100);
@@ -1081,11 +1098,15 @@ const server = Bun.serve({
 						skipAutomaticHypedditFetch,
 						outputFormat,
 						destination,
+						browserMode,
+						reviewTags,
 					} = body as {
 						soundcloudUrl?: string;
 						skipAutomaticHypedditFetch?: boolean;
 						outputFormat?: OutputFormat;
 						destination?: unknown;
+						browserMode?: unknown;
+						reviewTags?: unknown;
 					};
 
 					if (!soundcloudUrl) {
@@ -1129,12 +1150,24 @@ const server = Bun.serve({
 							{ status: 400 },
 						);
 					}
+					const options = parseUnattendedJobOptions(
+						{ browserMode, reviewTags },
+						destination ?? null,
+						availableBrowserModes,
+					);
+					if (typeof options === 'string') {
+						return jsonResponse({ error: options }, { status: 400 });
+					}
 
 					const job = jobStore.create(
 						soundcloudUrl,
 						outputFormat ?? 'mp3-320',
 						destination ?? null,
 					);
+					jobStore.update(job.id, {
+						reviewTags: options.reviewTags,
+						...(options.browserMode && { browserMode: options.browserMode }),
+					});
 					jobStore.updateProgress(
 						job.id,
 						'fetching_track',
@@ -1371,19 +1404,14 @@ const server = Bun.serve({
 						const body = (await req.json()) as Record<string, unknown>;
 						let browserMode: Job['browserMode'] | undefined;
 						if (body.browserMode !== undefined) {
-							if (!isBrowserMode(body.browserMode)) {
-								return jsonResponse(
-									{ error: 'Invalid browser mode' },
-									{ status: 400 },
-								);
+							const parsed = parseBrowserMode(
+								body.browserMode,
+								availableBrowserModes,
+							);
+							if (!isBrowserMode(parsed)) {
+								return jsonResponse({ error: parsed }, { status: 400 });
 							}
-							if (!availableBrowserModes.includes(body.browserMode)) {
-								return jsonResponse(
-									{ error: 'Xvfb browser mode is only available on Linux' },
-									{ status: 400 },
-								);
-							}
-							browserMode = body.browserMode;
+							browserMode = parsed;
 						} else if (
 							typeof body.headless === 'boolean' &&
 							body.xvfb === undefined
@@ -1445,7 +1473,11 @@ const server = Bun.serve({
 							message: 'Queued download cancelled',
 						});
 					}
-					if (stage === 'ready' || stage === 'cancelled') {
+					if (
+						stage === 'ready' ||
+						stage === 'cancelled' ||
+						stage === 'waiting_metadata'
+					) {
 						jobStore.cancel(jobId);
 						await closeJobDownloader(jobId);
 						await cleanupCancelledJobDownloads(jobId, false);
@@ -1679,6 +1711,17 @@ const server = Bun.serve({
 						return jsonResponse({ error: 'Job not found' }, { status: 404 });
 					}
 
+					// Unattended jobs accept tags once, while they wait for them.
+					const notWaiting = () =>
+						job.destination !== null &&
+						job.progress.stage !== 'waiting_metadata';
+					if (notWaiting()) {
+						return jsonResponse(
+							{ error: 'Job is not waiting for tags' },
+							{ status: 409 },
+						);
+					}
+
 					if (!job.downloadFilename && !job.outputFilename) {
 						return jsonResponse(
 							{ error: 'No downloaded file available' },
@@ -1689,7 +1732,8 @@ const server = Bun.serve({
 					const contentType = req.headers.get('content-type') || '';
 					let metadata: Metadata;
 					let preserveMetadata = false;
-					let nameAsArtistTitle = false;
+					// Unattended jobs keep their `Artist - Title` name unless told otherwise.
+					let nameAsArtistTitle = job.destination !== null;
 					let customArtwork: { buffer: ArrayBuffer; fileName: string } | null =
 						null;
 
@@ -1702,7 +1746,8 @@ const server = Bun.serve({
 							genre: formData.get('genre')?.toString() || undefined,
 						};
 						preserveMetadata = formData.get('preserveMetadata') === 'true';
-						nameAsArtistTitle = formData.get('nameAsArtistTitle') === 'true';
+						const nameField = formData.get('nameAsArtistTitle');
+						if (nameField !== null) nameAsArtistTitle = nameField === 'true';
 
 						const artworkFile = formData.get('artwork');
 						if (artworkFile instanceof File) {
@@ -1723,7 +1768,9 @@ const server = Bun.serve({
 							genre: body.genre,
 						};
 						preserveMetadata = body.preserveMetadata === true;
-						nameAsArtistTitle = body.nameAsArtistTitle === true;
+						if (typeof body.nameAsArtistTitle === 'boolean') {
+							nameAsArtistTitle = body.nameAsArtistTitle;
+						}
 					}
 
 					const sourceFilename =
@@ -1745,12 +1792,43 @@ const server = Bun.serve({
 					}
 
 					const keepsFile = job.outputFormat === 'original' || preserveMetadata;
-					const artwork = customArtwork || jobArtwork(job);
+					const artwork =
+						customArtwork ||
+						jobArtwork(job) ||
+						(job.destination ? existingJobArtwork(job) : null);
 					if (!keepsFile && !artwork?.buffer) {
 						return jsonResponse(
 							{ error: 'No artwork available' },
 							{ status: 400 },
 						);
+					}
+
+					if (job.destination) {
+						// A concurrent submit or cancel may have won while the body was read.
+						if (notWaiting()) {
+							return jsonResponse(
+								{ error: 'Job is not waiting for tags' },
+								{ status: 409 },
+							);
+						}
+						jobStore.updateProgress(
+							jobId,
+							'processing_audio',
+							'Writing tags...',
+							95,
+						);
+						void finishUnattendedJob(job, metadata, {
+							preserveMetadata,
+							nameAsArtistTitle,
+							artwork,
+						}).catch((error) => {
+							if (jobStore.isCancelled(jobId)) return;
+							jobStore.setError(
+								jobId,
+								error instanceof Error ? error.message : 'Unknown error',
+							);
+						});
+						return jsonResponse({ success: true });
 					}
 
 					const outputFilename = await finalizeJobFile(job, metadata, {

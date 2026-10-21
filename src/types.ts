@@ -84,6 +84,8 @@ export type JobStage =
 	| 'handling_gates'
 	| 'downloading'
 	| 'processing_audio'
+	/** An unattended job with `reviewTags` waits for `/api/job/:id/metadata`. */
+	| 'waiting_metadata'
 	| 'ready'
 	| 'error'
 	| 'cancelling'
@@ -131,6 +133,8 @@ export interface Job {
 	destination: JobDestination | null;
 	/** File name inside the library folder once a `library` job is ready. */
 	libraryFilename: string | null;
+	/** An unattended job stops at `waiting_metadata` instead of tagging itself. */
+	reviewTags: boolean;
 	/** Set when the user cancels; download loop should stop and close the browser. */
 	cancelled: boolean;
 	track: {

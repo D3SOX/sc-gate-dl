@@ -189,6 +189,16 @@ replaces an existing file. A second copy gets a ` (2)` suffix instead. A job
 created with `"destination": "client"` runs the same way but keeps the file
 for `GET /api/job/:id/file`. Web UI jobs work as before.
 
+These jobs also accept `"browserMode"` (`headless`, `xvfb`, or `headed`, as
+listed by `GET /api/capabilities`) to pick the gate browser, for example a
+headed one to watch through `BROWSER_VIEW_URL`. With `"reviewTags": true`, a
+job stops at the `waiting_metadata` stage once the file is downloaded.
+`GET /api/job/:id` then lists the SoundCloud and file tags like it does for the
+Web UI. Send the tags to `POST /api/job/:id/metadata` in the same format the
+Web UI uses. It answers `{ "success": true }` right away and the job continues
+through `processing_audio` to `ready` or `error`. A second submit gets `409`.
+`POST /api/job/:id/cancel` drops the waiting file.
+
 `GET /api/search?q=…&limit=…&offset=…` searches SoundCloud tracks with the
 configured account. Each result has a `source` hint: `download` for a
 creator-enabled download, `gate` when the listing links a supported gate, and

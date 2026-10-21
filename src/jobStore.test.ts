@@ -1,6 +1,18 @@
 import { describe, expect, test } from 'bun:test';
 import { jobStore } from './jobStore';
 
+describe('jobStore progress', () => {
+	test('reports whole percents', () => {
+		const job = jobStore.create('https://soundcloud.com/a/b', 'mp3-320');
+		try {
+			jobStore.updateProgress(job.id, 'downloading', 'Downloading...', 42.6);
+			expect(job.progress.percent).toBe(43);
+		} finally {
+			jobStore.delete(job.id);
+		}
+	});
+});
+
 describe('jobStore Bandcamp track selection', () => {
 	test('manual waits keep a stable alert id until ordinary progress resumes', () => {
 		const job = jobStore.create('https://soundcloud.com/a/b', 'original');
