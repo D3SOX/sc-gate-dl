@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { existsSync } from 'node:fs';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { libraryDirFromEnv, moveIntoLibrary } from './libraryDestination';
@@ -29,6 +29,7 @@ describe('moveIntoLibrary', () => {
 	});
 
 	afterEach(async () => {
+		await chmod(downloads, 0o755);
 		await rm(root, { recursive: true, force: true });
 	});
 
@@ -58,5 +59,15 @@ describe('moveIntoLibrary', () => {
 		expect(
 			await readFile(join(library, 'Artist - Title (3).mp3'), 'utf8'),
 		).toBe('third');
+	});
+
+	test('keeps no library copy when the source cannot be removed', async () => {
+		const source = join(downloads, 'Artist - Title.mp3');
+		await writeFile(source, 'audio');
+		await chmod(downloads, 0o555);
+
+		await expect(moveIntoLibrary(source, library)).rejects.toThrow();
+		expect(existsSync(join(library, 'Artist - Title.mp3'))).toBe(false);
+		expect(existsSync(source)).toBe(true);
 	});
 });

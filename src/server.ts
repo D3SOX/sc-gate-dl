@@ -199,35 +199,52 @@ async function finalizeJobFile(
 
 /** Tag an unattended job with SoundCloud metadata and deliver the file. */
 async function finishUnattendedJob(job: Job): Promise<void> {
-	const filename = await finalizeJobFile(job, job.defaultMetadata ?? {}, {
-		preserveMetadata: false,
-		nameAsArtistTitle: true,
-		artwork: jobArtwork(job) ?? existingJobArtwork(job),
-	});
+	try {
+		const filename = await finalizeJobFile(job, job.defaultMetadata ?? {}, {
+			preserveMetadata: false,
+			nameAsArtistTitle: true,
+			artwork: jobArtwork(job) ?? existingJobArtwork(job),
+		});
+		if (jobStore.isCancelled(job.id)) {
+			throw new Error('Download cancelled');
+		}
 
-	if (job.destination !== 'library') {
-		jobStore.updateProgress(job.id, 'ready', 'File ready', 100);
-		return;
+		if (job.destination !== 'library') {
+			jobStore.updateProgress(job.id, 'ready', 'File ready', 100);
+			return;
+		}
+		if (!LIBRARY_DIR) {
+			throw new Error('SC_GATE_DL_LIBRARY_DIR is not set');
+		}
+		jobStore.updateProgress(
+			job.id,
+			'processing_audio',
+			'Saving to library...',
+			98,
+		);
+		const libraryFilename = await moveIntoLibrary(
+			join('./downloads', filename),
+			LIBRARY_DIR,
+		);
+		if (jobStore.isCancelled(job.id)) {
+			await rm(join(LIBRARY_DIR, libraryFilename), { force: true });
+			throw new Error('Download cancelled');
+		}
+		jobStore.update(job.id, {
+			libraryFilename,
+			outputFilename: null,
+			downloadFilename: null,
+		});
+		jobStore.updateProgress(job.id, 'ready', 'Saved to library', 100);
+	} catch (error) {
+		// Nobody finishes a failed unattended job by hand, so drop its files.
+		await cleanupCancelledDownloadArtifacts({
+			filenames: [job.downloadFilename, job.outputFilename],
+			sweepIncomplete: false,
+		});
+		jobStore.update(job.id, { downloadFilename: null, outputFilename: null });
+		throw error;
 	}
-	if (!LIBRARY_DIR) {
-		throw new Error('SC_GATE_DL_LIBRARY_DIR is not set');
-	}
-	jobStore.updateProgress(
-		job.id,
-		'processing_audio',
-		'Saving to library...',
-		98,
-	);
-	const libraryFilename = await moveIntoLibrary(
-		join('./downloads', filename),
-		LIBRARY_DIR,
-	);
-	jobStore.update(job.id, {
-		libraryFilename,
-		outputFilename: null,
-		downloadFilename: null,
-	});
-	jobStore.updateProgress(job.id, 'ready', 'Saved to library', 100);
 }
 
 type AnyDownloader = {

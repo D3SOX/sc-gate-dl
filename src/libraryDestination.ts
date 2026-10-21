@@ -43,7 +43,13 @@ export async function moveIntoLibrary(
 				throw copyError;
 			}
 		}
-		await rm(sourcePath, { force: true });
+		try {
+			await rm(sourcePath, { force: true });
+		} catch (removeError) {
+			// Keep one copy so a retry cannot add a suffixed duplicate.
+			await rm(target, { force: true }).catch(() => {});
+			throw removeError;
+		}
 		return candidate;
 	}
 }
