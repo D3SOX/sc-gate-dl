@@ -658,6 +658,122 @@
 	color: var(--text-secondary);
 }
 
+/* Search results */
+.search-results {
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-md);
+	margin-top: var(--space-xl);
+}
+
+.search-results-heading {
+	font-size: 0.85rem;
+	color: var(--text-secondary);
+	overflow-wrap: anywhere;
+}
+
+.search-result-list {
+	list-style: none;
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-sm);
+}
+
+.search-result {
+	display: flex;
+	align-items: center;
+	gap: var(--space-md);
+	width: 100%;
+	padding: var(--space-sm);
+	text-align: left;
+	background: var(--bg-surface);
+	border: 1px solid var(--border-subtle);
+	border-radius: 8px;
+	color: var(--text-primary);
+	font-family: var(--font-display);
+	cursor: pointer;
+	transition:
+		border-color var(--transition-normal),
+		background var(--transition-normal);
+}
+
+.search-result:hover:not(:disabled) {
+	border-color: var(--neon-orange);
+	background: var(--bg-elevated);
+}
+
+.search-result:focus-visible {
+	outline: none;
+	border-color: var(--neon-cyan);
+	box-shadow: 0 0 0 3px rgba(0, 217, 255, 0.1);
+}
+
+.search-result:disabled {
+	opacity: 0.6;
+	cursor: not-allowed;
+}
+
+.search-result-artwork {
+	flex-shrink: 0;
+	width: 56px;
+	height: 56px;
+	border-radius: 6px;
+	object-fit: cover;
+	background: var(--bg-elevated);
+}
+
+.search-result-info {
+	display: flex;
+	flex-direction: column;
+	flex: 1;
+	min-width: 0;
+}
+
+.search-result-title {
+	display: -webkit-box;
+	-webkit-box-orient: vertical;
+	-webkit-line-clamp: 2;
+	line-clamp: 2;
+	overflow: hidden;
+	font-weight: 500;
+	line-height: 1.3;
+	overflow-wrap: anywhere;
+}
+
+.search-result-artist {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	font-size: 0.85rem;
+	color: var(--text-secondary);
+}
+
+.search-result-meta {
+	display: flex;
+	flex-direction: column;
+	align-items: flex-end;
+	gap: var(--space-xs);
+	flex-shrink: 0;
+	font-family: var(--font-mono);
+	font-size: 0.75rem;
+	color: var(--text-secondary);
+}
+
+.search-result-source {
+	padding: 0 var(--space-sm);
+	border: 1px solid currentColor;
+	border-radius: 4px;
+	white-space: nowrap;
+}
+
+.search-result-source-download {
+	color: var(--neon-green);
+}
+
+.search-result-source-gate {
+	color: var(--neon-cyan);
+}
+
 /* Metadata form */
 .metadata-form {
 	padding: var(--space-xl);

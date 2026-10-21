@@ -1,37 +1,15 @@
 import type { SoundcloudTrack, SoundcloudTrackSearch } from 'soundcloud.ts';
 import { isSoundcloudDownloadEnabled } from './soundcloudDownload';
+import type { SearchResponse, SearchResult, SearchSource } from './types';
 import { extractGateUrl, getDefaultMetadata } from './utils';
 
 export const DEFAULT_SEARCH_LIMIT = 20;
 export const MAX_SEARCH_LIMIT = 50;
 
-/**
- * Where a download would most likely come from, judged only from the search
- * listing. `none` does not rule out a gate behind a short link.
- */
-export type SearchSource = 'download' | 'gate' | 'none';
-
 export interface SearchQuery {
 	q: string;
 	limit: number;
 	offset: number;
-}
-
-export interface SearchResult {
-	id: number;
-	url: string;
-	title: string;
-	artist: string;
-	uploader: string;
-	artworkUrl: string | null;
-	durationMs: number;
-	genre: string | null;
-	source: SearchSource;
-}
-
-export interface SearchResponse {
-	results: SearchResult[];
-	nextOffset: number | null;
 }
 
 /** Returns the parsed query, or an error message for a 400 response. */

@@ -1,6 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Toaster, toast } from 'sonner';
-import type { BrowserMode, OutputFormat } from '../../../src/types';
+import type {
+	BrowserMode,
+	OutputFormat,
+	SearchResponse,
+	SearchResult,
+} from '../../../src/types';
 import './App.css';
 import { resolveApiBase } from './apiBase';
 import {
@@ -16,6 +21,13 @@ import {
 import { GateAttentionMessage } from './GateAttentionMessage';
 import { RemoteBrowserPanel } from './RemoteBrowserPanel';
 import { REMOTE_POINTER_RELEASE_EVENT } from './remoteBrowser';
+import {
+	appendSearchResults,
+	formatDuration,
+	isTrackUrlInput,
+	SEARCH_SOURCE_LABELS,
+	searchThumbnailUrl,
+} from './trackSearch';
 
 type Step = 'url' | 'gate' | 'download' | 'metadata' | 'complete';
 
@@ -72,6 +84,12 @@ interface BandcampAlbumTrackChoice {
 	title: string;
 	url: string;
 	score: number;
+}
+
+interface SearchState {
+	query: string;
+	results: SearchResult[];
+	nextOffset: number | null;
 }
 
 interface JobState {
@@ -432,6 +450,10 @@ export default function App() {
 	const [customArtwork, setCustomArtwork] = useState<File | null>(null);
 	const [nameAsArtistTitle, setNameAsArtistTitle] = useState(false);
 	const [isLoading, setIsLoading] = useState(false);
+	const [search, setSearch] = useState<SearchState | null>(null);
+	const [searchLoading, setSearchLoading] = useState<'new' | 'more' | null>(
+		null,
+	);
 	const artworkInputRef = useRef<HTMLInputElement>(null);
 	const cleanupToastShownRef = useRef(false);
 	const browserViewAutoClosedRef = useRef(false);
@@ -830,10 +852,59 @@ export default function App() {
 		[skipAutomaticHypedditFetch, outputFormat, startDownload],
 	);
 
-	// Create job with SoundCloud URL
+	const runSearch = async (query: string, offset = 0) => {
+		setSearchLoading(offset > 0 ? 'more' : 'new');
+		setJob((prev) => ({ ...prev, error: null }));
+
+		try {
+			const params = new URLSearchParams({ q: query, offset: String(offset) });
+			const response = await fetch(`${API_BASE}/api/search?${params}`);
+			const data = await response.json();
+
+			if (!response.ok) {
+				throw new Error(data.error || 'Search failed');
+			}
+
+			const page = data as SearchResponse;
+			setSearch((prev) => ({
+				query,
+				results:
+					offset > 0 && prev
+						? appendSearchResults(prev.results, page.results)
+						: page.results,
+				nextOffset: page.nextOffset,
+			}));
+		} catch (err) {
+			setJob((prev) => ({
+				...prev,
+				error: err instanceof Error ? err.message : 'Unknown error',
+			}));
+		} finally {
+			setSearchLoading(null);
+		}
+	};
+
+	// Fetch a SoundCloud URL, or search for anything else
 	const handleSoundcloudSubmit = (e: React.FormEvent) => {
 		e.preventDefault();
-		void createJob(soundcloudUrl);
+		const value = soundcloudUrl.trim();
+		if (isTrackUrlInput(value)) {
+			void createJob(value);
+		} else if (value) {
+			void runSearch(value);
+		}
+	};
+
+	const loadMoreSearchResults = () => {
+		if (search && search.nextOffset !== null) {
+			void runSearch(search.query, search.nextOffset);
+		}
+	};
+
+	const handleSearchResultSelect = (result: SearchResult) => {
+		// The gate step's yt-dlp fallback downloads this URL.
+		setSoundcloudUrl(result.url);
+		void createJob(result.url);
 	};
 
 	// Userscript / deep-link: ?url=&outputFormat= pre-fills and starts a job
@@ -1069,6 +1140,7 @@ export default function App() {
 		.filter(({ existingValue }) => existingValue);
 	const hasExistingMetadata =
 		existingTagRows.length > 0 || job.hasExistingArtwork;
+	const inputIsTrackUrl = isTrackUrlInput(soundcloudUrl);
 
 	const copyExistingArtwork = async () => {
 		if (!job.jobId || !job.hasExistingArtwork) return;
@@ -1097,7 +1169,8 @@ export default function App() {
 	const handleReset = () => {
 		cancelRequestedRef.current = false;
 		notifyParent('new-download');
-		setSoundcloudUrl('');
+		// Return to the last search so another result can be picked.
+		setSoundcloudUrl(search?.query ?? '');
 		setHypedditUrlInput('');
 		setSkipAutomaticHypedditFetch(false);
 		setJob({
@@ -1317,21 +1390,23 @@ export default function App() {
 
 			{/* Step content */}
 			<div className="content">
-				{/* Step 1: SoundCloud URL */}
+				{/* Step 1: SoundCloud URL or search */}
 				{step === 'url' && (
 					<form
 						onSubmit={handleSoundcloudSubmit}
 						className="form animate-slide-up"
 					>
 						<div className="form-group">
-							<label htmlFor="soundcloud-url">SoundCloud Track URL</label>
+							<label htmlFor="soundcloud-url">
+								SoundCloud Track URL or Search
+							</label>
 							<input
 								id="soundcloud-url"
-								type="url"
+								type="text"
 								name="soundcloud-track-url"
 								value={soundcloudUrl}
 								onChange={(e) => setSoundcloudUrl(e.target.value)}
-								placeholder="https://soundcloud.com/artist/track"
+								placeholder="https://soundcloud.com/artist/track or artist - title"
 								autoComplete="off"
 								required
 								disabled={isLoading}
@@ -1385,17 +1460,100 @@ export default function App() {
 								</label>
 							</div>
 						</div>
-						<button type="submit" className="btn-primary" disabled={isLoading}>
+						<button
+							type="submit"
+							className="btn-primary"
+							disabled={isLoading || searchLoading !== null}
+						>
 							{isLoading ? (
 								<>
 									<span className="spinner" />
 									Fetching...
 								</>
-							) : (
+							) : searchLoading === 'new' ? (
+								<>
+									<span className="spinner" />
+									Searching...
+								</>
+							) : inputIsTrackUrl ? (
 								'Fetch Track'
+							) : (
+								'Search'
 							)}
 						</button>
 					</form>
+				)}
+				{step === 'url' && search && (
+					<section
+						className="search-results animate-slide-up"
+						aria-label="Search results"
+					>
+						<p className="search-results-heading">
+							{search.results.length > 0
+								? `Results for “${search.query}”`
+								: `No tracks found for “${search.query}”`}
+						</p>
+						<ul className="search-result-list">
+							{search.results.map((result) => (
+								<li key={result.id}>
+									<button
+										type="button"
+										className="search-result"
+										disabled={isLoading}
+										onClick={() => handleSearchResultSelect(result)}
+									>
+										{result.artworkUrl ? (
+											<img
+												src={searchThumbnailUrl(API_BASE, result.artworkUrl)}
+												alt=""
+												className="search-result-artwork"
+												loading="lazy"
+											/>
+										) : (
+											<span className="search-result-artwork" />
+										)}
+										<span className="search-result-info">
+											<span className="search-result-title">
+												{result.title}
+											</span>
+											<span className="search-result-artist">
+												{result.artist}
+											</span>
+										</span>
+										<span className="search-result-meta">
+											{SEARCH_SOURCE_LABELS[result.source] ? (
+												<span
+													className={`search-result-source search-result-source-${result.source}`}
+												>
+													{SEARCH_SOURCE_LABELS[result.source]}
+												</span>
+											) : null}
+											<span className="search-result-duration">
+												{formatDuration(result.durationMs)}
+											</span>
+										</span>
+									</button>
+								</li>
+							))}
+						</ul>
+						{search.nextOffset !== null ? (
+							<button
+								type="button"
+								className="btn-secondary btn-full"
+								disabled={isLoading || searchLoading !== null}
+								onClick={loadMoreSearchResults}
+							>
+								{searchLoading === 'more' ? (
+									<>
+										<span className="spinner" />
+										Loading...
+									</>
+								) : (
+									'Load More'
+								)}
+							</button>
+						) : null}
+					</section>
 				)}
 
 				{/* Step 2: Gate URL (if needed) */}

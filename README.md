@@ -12,6 +12,7 @@ Download and tag SoundCloud tracks unlocked via Hypeddit, Droploud, GateRush, Do
 - 🎧 Extracts audio from ZIP downloads, prefers lossless files, and converts them to the selected format
 - 🏷️ Tags MP3 files with metadata and artwork from SoundCloud
 - 🧹 Optional cleanup of the SoundCloud account (unfollow, unlike, delete comments/reposts)
+- 🔎 Search SoundCloud tracks in the Web UI and download one from the results
 - 🧩 Userscript (Violentmonkey) that opens the Web UI in a floating panel next to SoundCloud store/buy links
 
 ## Prerequisites
@@ -165,6 +166,13 @@ port `3000` of the same host. For example, a Web UI opened at
 `PUBLIC_API_BASE_URL` when the public API uses a different host or port. If a
 reverse proxy gives the Web UI a different origin, add it to the comma-separated
 `SC_GATE_DL_ALLOWED_ORIGINS` environment variable.
+
+Type search terms instead of a URL in the first step to search SoundCloud
+tracks with the configured account. Pick a result to start its download. A
+**Free download** badge marks a track the creator made downloadable on
+SoundCloud. A **Gate** badge marks a track whose listing links a supported
+gate. Tracks without a badge can still have a gate behind a short link, which
+sc-gate-dl looks for when the job starts.
 
 Set `SC_GATE_DL_DELETE_AFTER_DOWNLOAD=true` on the server to remove completed
 MP3, FLAC, and original files after their HTTP response has been transferred in
