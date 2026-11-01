@@ -23,7 +23,7 @@
 		"lint:fix": "biome check --fix ./src"
 	},
 	"devDependencies": {
-		"@biomejs/biome": "^2.5.15",
+		"@biomejs/biome": "^2.6.3",
 		"@types/bun": "^1.4.3",
 		"@types/cli-progress": "^3.11.6",
 		"typescript": "^7.0.2"
