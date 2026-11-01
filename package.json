@@ -19,8 +19,11 @@
 		"dev:server": "bun --watch ./src/server.ts",
 		"dev:webui": "cd webui && bun run dev",
 		"webui": "bun run --parallel dev:server dev:webui",
-		"lint": "biome check ./src",
-		"lint:fix": "biome check --fix ./src"
+		"lint": "biome check .",
+		"lint:fix": "biome check --fix .",
+		"typecheck": "tsc --noEmit && tsc --noEmit -p webui",
+		"test": "bun test --path-ignore-patterns='**/*.browser.test.ts'",
+		"test:browser": "bun test browser.test"
 	},
 	"devDependencies": {
 		"@biomejs/biome": "^2.6.3",
