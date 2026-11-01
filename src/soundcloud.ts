@@ -1,4 +1,3 @@
-import { join } from 'node:path';
 import { confirm } from '@inquirer/prompts';
 import { lookpath } from 'find-bin';
 import Soundcloud, {
@@ -13,6 +12,8 @@ import {
 	type GateProvider,
 	loadCookies,
 } from './utils';
+
+const MAX_ARTWORK_BYTES = 20 * 1024 * 1024;
 
 const GATE_PROVIDER_LABELS: Record<GateProvider, string> = {
 	droploud: 'Droploud',
@@ -605,18 +606,22 @@ export class SoundcloudClient {
 	): Promise<{ buffer: ArrayBuffer; fileName: string }> {
 		const originalArtworkUrl = artworkUrl.replace('large', 'original');
 		const fileName = originalArtworkUrl.split('/').pop() || 'artwork.jpg';
-		if (await Bun.file(join('./downloads', fileName)).exists()) {
-			console.log(`✓ Found artwork in downloads folder: ${fileName}`);
-			return {
-				buffer: await Bun.file(join('./downloads', fileName)).arrayBuffer(),
-				fileName,
-			};
-		}
-		const response = await fetch(originalArtworkUrl);
+		// The serial job queue waits on this, so a stalled CDN must not hold it.
+		const response = await fetch(originalArtworkUrl, {
+			signal: AbortSignal.timeout(15_000),
+		});
 		if (!response.ok) {
 			throw new Error(`Failed to fetch artwork: ${response.statusText}`);
 		}
+		const declaredSize = Number(response.headers.get('content-length'));
+		if (declaredSize > MAX_ARTWORK_BYTES) {
+			await response.body?.cancel();
+			throw new Error(`Artwork is larger than ${MAX_ARTWORK_BYTES} bytes`);
+		}
 		const buffer = await response.arrayBuffer();
+		if (buffer.byteLength > MAX_ARTWORK_BYTES) {
+			throw new Error(`Artwork is larger than ${MAX_ARTWORK_BYTES} bytes`);
+		}
 		return { buffer, fileName };
 	}
 
