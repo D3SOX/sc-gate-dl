@@ -668,10 +668,8 @@ export class SoundcloudClient {
 	}
 
 	private async unfollowAllUsers(meId: string): Promise<number> {
-		const { collection: following } = await this.soundcloud.api.getV2(
-			`users/${meId}/followings`,
-		);
-		if (!following?.length) {
+		const following = await this.getAllFollowedUsers(meId);
+		if (!following.length) {
 			console.log('No users to unfollow');
 			return 0;
 		}
@@ -694,26 +692,24 @@ export class SoundcloudClient {
 	}
 
 	private async unlikeAllTracks(meId: string): Promise<number> {
-		const { collection: likes } = await this.soundcloud.api.getV2(
-			`users/${meId}/likes`,
-		);
-		if (!likes?.length) {
+		const likes = await this.getAllLikedTracks(meId);
+		if (!likes.length) {
 			console.log('No tracks to unlike');
 			return 0;
 		}
 		console.log(`Found ${likes.length} tracks to unlike`);
 
 		let count = 0;
-		for (const like of likes) {
+		for (const track of likes) {
 			try {
 				await this.soundcloud.api.deleteV2(
-					`users/${meId}/track_likes/${like.track.id}`,
+					`users/${meId}/track_likes/${track.id}`,
 				);
-				console.log(`✓ Unliked ${like.track.title} (${like.track.id})`);
+				console.log(`✓ Unliked ${track.title} (${track.id})`);
 				count++;
 			} catch (error) {
 				console.error(
-					`✗ Failed to unlike ${like.track.title} (${like.track.id}):`,
+					`✗ Failed to unlike ${track.title} (${track.id}):`,
 					error,
 				);
 			}
@@ -722,10 +718,11 @@ export class SoundcloudClient {
 	}
 
 	private async deleteAllComments(meId: string): Promise<number> {
-		const { collection: comments } = await this.soundcloud.api.getV2(
+		const comments = await this.paginateCollection<{ id: number }>(
 			`users/${meId}/comments`,
+			{ limit: 200, offset: 0 },
 		);
-		if (!comments?.length) {
+		if (!comments.length) {
 			console.log('No comments to delete');
 			return 0;
 		}
@@ -745,11 +742,11 @@ export class SoundcloudClient {
 	}
 
 	private async deleteAllReposts(): Promise<number> {
-		const { collection: reposts } = await this.soundcloud.api.getV2(
-			`me/track_reposts/ids`,
-			{ limit: 200 },
+		const reposts = await this.paginateCollection<number>(
+			'me/track_reposts/ids',
+			{ limit: 200, offset: 0 },
 		);
-		if (!reposts?.length) {
+		if (!reposts.length) {
 			console.log('No reposts to delete');
 			return 0;
 		}
