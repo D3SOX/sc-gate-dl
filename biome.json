@@ -26,6 +26,29 @@
 			"quoteStyle": "single"
 		}
 	},
+	"overrides": [
+		{
+			"includes": ["userscript/**/*.user.js"],
+			"linter": {
+				"rules": {
+					"suspicious": {
+						"noRedundantUseStrict": "off"
+					}
+				}
+			}
+		},
+		{
+			"includes": ["**/*.astro"],
+			"linter": {
+				"rules": {
+					"correctness": {
+						"noUnusedImports": "off",
+						"noUnusedVariables": "off"
+					}
+				}
+			}
+		}
+	],
 	"assist": {
 		"enabled": true,
 		"actions": {
