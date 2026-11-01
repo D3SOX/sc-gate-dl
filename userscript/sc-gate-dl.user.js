@@ -1171,9 +1171,7 @@
 	}
 
 	function setWebuiBases(value) {
-		const bases = value.trim()
-			? parseWebuiBases(value)
-			: [DEFAULT_WEBUI_BASE];
+		const bases = value.trim() ? parseWebuiBases(value) : [DEFAULT_WEBUI_BASE];
 		activeWebuiBase = null;
 		activeWebuiBaseAt = 0;
 		persistWebuiBases(bases);
@@ -1344,8 +1342,7 @@
 		dialog
 			.querySelector('.sc-gate-dl-format-save')
 			?.addEventListener('click', () => {
-				const value =
-					input instanceof HTMLTextAreaElement ? input.value : '';
+				const value = input instanceof HTMLTextAreaElement ? input.value : '';
 				try {
 					const bases = setWebuiBases(value);
 					close();
@@ -1756,10 +1753,7 @@
 		anchor.addEventListener('pointerleave', onLeave);
 		anchor.addEventListener('focusin', onEnter);
 		anchor.addEventListener('focusout', (e) => {
-			if (
-				e.relatedTarget instanceof Node &&
-				anchor.contains(e.relatedTarget)
-			) {
+			if (e.relatedTarget instanceof Node && anchor.contains(e.relatedTarget)) {
 				return;
 			}
 			onLeave();

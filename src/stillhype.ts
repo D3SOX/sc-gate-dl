@@ -3,12 +3,19 @@ import { basename, join } from 'node:path';
 import { Presets, SingleBar } from 'cli-progress';
 import type { Browser, HTTPResponse, Page } from 'puppeteer';
 import { CancellableBrowserLaunch } from './browserLaunch';
+import { filenameFromContentDisposition } from './contentDisposition';
+import { reserveDownloadFilename } from './downloadRename';
 import type { ProgressCallback } from './hypeddit';
 import { safeFetch } from './safeOutboundUrl';
 import Selectors from './selectors';
 import { waitForSoundcloudLogin } from './soundcloudLogin';
 import type { HypedditConfig } from './types';
-import { loadCookies, sanitizeFilenamePart, timeout } from './utils';
+import {
+	loadCookies,
+	safeDecodeURIComponent,
+	sanitizeFilenamePart,
+	timeout,
+} from './utils';
 
 const STILLHYPE_ORIGIN_RE = /stillhype\.io/i;
 const SC_AUTHORIZE_RE = /secure\.soundcloud\.com\/authorize/i;
@@ -20,16 +27,6 @@ const SKIP_EMAIL_RE = /^Skip for now$/i;
 const USER_AGENT =
 	'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36';
 const MAX_DOWNLOAD_BYTES = 512 * 1024 * 1024;
-
-function filenameFromContentDisposition(value: string | null): string | null {
-	if (!value) return null;
-	const star = value.match(/filename\*=(?:UTF-8'')?([^;]+)/i)?.[1];
-	if (star) {
-		return decodeURIComponent(star.replace(/["']/g, ''));
-	}
-	const plain = value.match(/filename=["']?([^"';]+)["']?/i)?.[1];
-	return plain ? plain.trim() : null;
-}
 
 function isNavigationError(error: unknown): boolean {
 	const message = error instanceof Error ? error.message : String(error);
@@ -1106,12 +1103,13 @@ export class StillhypeDownloader {
 		let suggested =
 			sanitizeFilenamePart(basename(fromHeader || '')) ||
 			sanitizeFilenamePart(
-				decodeURIComponent(basename(new URL(finalUrl).pathname)),
+				safeDecodeURIComponent(basename(new URL(finalUrl).pathname)),
 			) ||
 			'stillhype-download';
 		if (!/\.[a-z0-9]{2,5}$/i.test(suggested)) {
 			suggested = `${suggested}.wav`;
 		}
+		suggested = await reserveDownloadFilename('./downloads', suggested);
 
 		const target = join('./downloads', suggested);
 		const totalBytes = Number(response.headers.get('content-length')) || 0;

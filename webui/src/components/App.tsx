@@ -845,6 +845,9 @@ export default function App() {
 				}));
 				return;
 			}
+			// 202: teardown is still running. The event stream shows `cancelling`
+			// and then delivers `cancelled`, which resets the UI.
+			if (response.status === 202 && eventSourceRef.current) return;
 		} catch (err) {
 			cancelRequestedRef.current = false;
 			setJob((prev) => ({

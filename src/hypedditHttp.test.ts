@@ -98,13 +98,13 @@ test('HTTP downloads confine remote filenames to downloads and preserve Unicode'
 				expect(
 					await readFile(join(root, 'downloads', fixture.expected)),
 				).toEqual(Buffer.from(bytes));
+				// Remove it so the next fixture with the same name is not uniquified.
+				await rm(join(root, 'downloads', fixture.expected));
 			} finally {
 				await downloader.close();
 			}
 		}
-		expect((await readdir(join(root, 'downloads'))).length).toBe(
-			new Set(fixtures.map((fixture) => fixture.expected)).size,
-		);
+		expect(await readdir(join(root, 'downloads'))).toEqual([]);
 	} finally {
 		process.chdir(originalDirectory);
 		fetch.mockRestore();

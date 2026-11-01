@@ -4,6 +4,7 @@ import { basename, extname, join } from 'node:path';
 import type { SoundcloudTrack } from 'soundcloud.ts';
 import { hasZipSignature, resolveDownloadedAudio } from './archiveAudio';
 import { AudioProcessor } from './audioProcessor';
+import type { BandcampGateOptions } from './bandcampGate';
 import { isXvfbSupported } from './browserLaunch';
 import { attachmentContentDisposition } from './contentDisposition';
 import { DirectDownloader } from './directDownload';
@@ -16,7 +17,7 @@ import {
 } from './downloadRetention';
 import { DroploudDownloader } from './droploud';
 import { GaterushDownloader } from './gaterush';
-import { HypedditDownloader } from './hypeddit';
+import { HypedditDownloader, type ProgressCallback } from './hypeddit';
 import { HypedditHttpDownloader } from './hypedditHttp';
 import { parseBrowserMode, parseUnattendedJobOptions } from './jobOptions';
 import { JobQueue } from './jobQueue';
@@ -25,12 +26,16 @@ import { libraryDirFromEnv, moveIntoLibrary } from './libraryDestination';
 import { MypresskitDownloader } from './mypresskit';
 import { PumpyoursoundDownloader } from './pumpyoursound';
 import { parseArtworkUrl, parseSearchQuery, toSearchResponse } from './search';
-import { isAllowedCorsOrigin } from './serverCors';
+import {
+	isAllowedCorsOrigin,
+	isForbiddenCrossOriginRequest,
+} from './serverCors';
 import { SoundcloudClient } from './soundcloud';
 import { isSoundcloudDownloadEnabled } from './soundcloudDownload';
 import { StillhypeDownloader } from './stillhype';
 import {
 	type BrowserMode,
+	type HypedditConfig,
 	isBrowserMode,
 	isJobDestination,
 	type Job,
@@ -58,6 +63,8 @@ const ffmpegBin = await getFfmpegBin();
 const ffprobeBin = await getFfprobeBin();
 
 const SHARED_BROWSER_DATA = './browser-data';
+// Job profiles are copies of the logged-in session; drop any a crash left behind.
+await rm(join(SHARED_BROWSER_DATA, 'jobs'), { recursive: true, force: true });
 
 function getRequiredEnv(name: string): string {
 	const value = process.env[name];
@@ -178,6 +185,12 @@ async function finalizeJobFile(
 			job.outputFormat,
 		);
 		outputFilename = basename(outputPath);
+		// Conversion may have deleted the source, so point the job at the new
+		// file before the rename that can still fail.
+		jobStore.update(job.id, {
+			outputFilename,
+			downloadFilename: outputFilename,
+		});
 		if (options.nameAsArtistTitle) {
 			outputFilename = await renameDownloadFile(
 				job.id,
@@ -267,6 +280,34 @@ async function finishOrReviewUnattendedJob(job: Job): Promise<void> {
 type AnyDownloader = {
 	close(): Promise<void>;
 };
+
+type BrowserGateDownloader = AnyDownloader & {
+	setProgressCallback(callback: ProgressCallback): void;
+	initialize(): Promise<void>;
+	downloadAudio(
+		url: string,
+		options?: BandcampGateOptions,
+	): Promise<string | null>;
+};
+
+/** Gates that run in a browser: display label and downloader class. */
+const BROWSER_GATES = {
+	droploud: ['Droploud', DroploudDownloader],
+	gaterush: ['GateRush', GaterushDownloader],
+	downloadgater: ['DownloadGater', DownloadgaterDownloader],
+	stillhype: ['StillHype', StillhypeDownloader],
+	pumpyoursound: ['PumpYourSound', PumpyoursoundDownloader],
+	mypresskit: ['MyPressKit', MypresskitDownloader],
+} satisfies Record<
+	string,
+	[string, new (config: HypedditConfig) => BrowserGateDownloader]
+>;
+
+function isBrowserGateProvider(
+	provider: string,
+): provider is keyof typeof BROWSER_GATES {
+	return Object.hasOwn(BROWSER_GATES, provider);
+}
 
 /** Per-job browser handles so concurrent jobs cannot close each other. */
 const activeDownloaders = new Map<string, AnyDownloader>();
@@ -545,154 +586,30 @@ async function runDownloadProcess(jobId: string): Promise<void> {
 				},
 			);
 			throwIfCancelled();
-		} else if (provider === 'droploud') {
+		} else if (isBrowserGateProvider(provider)) {
+			const [label, Downloader] = BROWSER_GATES[provider];
 			jobStore.updateProgress(
 				jobId,
 				'initializing_browser',
-				'Launching browser for Droploud...',
+				`Launching browser for ${label}...`,
 				10,
 			);
-			const droploudDownloader = new DroploudDownloader(
-				await prepareBrowserConfig(),
-			);
-			activeDownloaders.set(jobId, droploudDownloader);
-			droploudDownloader.setProgressCallback(emitProgress);
-			await droploudDownloader.initialize();
+			const downloader = new Downloader(await prepareBrowserConfig());
+			activeDownloaders.set(jobId, downloader);
+			downloader.setProgressCallback(emitProgress);
+			await downloader.initialize();
 			throwIfCancelled();
 			jobStore.updateProgress(
 				jobId,
 				'handling_gates',
-				'Processing Droploud gates...',
+				`Processing ${label} gates...`,
 				25,
 				{ browserActive: job.browserMode === 'headed' },
 			);
-			downloadFilename =
-				await droploudDownloader.downloadAudio(downloadSourceUrl);
-			throwIfCancelled();
-		} else if (provider === 'gaterush') {
-			jobStore.updateProgress(
-				jobId,
-				'initializing_browser',
-				'Launching browser for GateRush...',
-				10,
-			);
-			const gaterushDownloader = new GaterushDownloader(
-				await prepareBrowserConfig(),
-			);
-			activeDownloaders.set(jobId, gaterushDownloader);
-			gaterushDownloader.setProgressCallback(emitProgress);
-			await gaterushDownloader.initialize();
-			throwIfCancelled();
-			jobStore.updateProgress(
-				jobId,
-				'handling_gates',
-				'Processing GateRush gates...',
-				25,
-				{ browserActive: job.browserMode === 'headed' },
-			);
-			downloadFilename =
-				await gaterushDownloader.downloadAudio(downloadSourceUrl);
-			throwIfCancelled();
-		} else if (provider === 'downloadgater') {
-			jobStore.updateProgress(
-				jobId,
-				'initializing_browser',
-				'Launching browser for DownloadGater...',
-				10,
-			);
-			const downloadgaterDownloader = new DownloadgaterDownloader(
-				await prepareBrowserConfig(),
-			);
-			activeDownloaders.set(jobId, downloadgaterDownloader);
-			downloadgaterDownloader.setProgressCallback(emitProgress);
-			await downloadgaterDownloader.initialize();
-			throwIfCancelled();
-			jobStore.updateProgress(
-				jobId,
-				'handling_gates',
-				'Processing DownloadGater gates...',
-				25,
-				{ browserActive: job.browserMode === 'headed' },
-			);
-			downloadFilename =
-				await downloadgaterDownloader.downloadAudio(downloadSourceUrl);
-			throwIfCancelled();
-		} else if (provider === 'stillhype') {
-			jobStore.updateProgress(
-				jobId,
-				'initializing_browser',
-				'Launching browser for StillHype...',
-				10,
-			);
-			const stillhypeDownloader = new StillhypeDownloader(
-				await prepareBrowserConfig(),
-			);
-			activeDownloaders.set(jobId, stillhypeDownloader);
-			stillhypeDownloader.setProgressCallback(emitProgress);
-			await stillhypeDownloader.initialize();
-			throwIfCancelled();
-			jobStore.updateProgress(
-				jobId,
-				'handling_gates',
-				'Processing StillHype gates...',
-				25,
-				{ browserActive: job.browserMode === 'headed' },
-			);
-			downloadFilename =
-				await stillhypeDownloader.downloadAudio(downloadSourceUrl);
-			throwIfCancelled();
-		} else if (provider === 'pumpyoursound') {
-			jobStore.updateProgress(
-				jobId,
-				'initializing_browser',
-				'Launching browser for PumpYourSound...',
-				10,
-			);
-			const pumpyoursoundDownloader = new PumpyoursoundDownloader(
-				await prepareBrowserConfig(),
-			);
-			activeDownloaders.set(jobId, pumpyoursoundDownloader);
-			pumpyoursoundDownloader.setProgressCallback(emitProgress);
-			await pumpyoursoundDownloader.initialize();
-			throwIfCancelled();
-			jobStore.updateProgress(
-				jobId,
-				'handling_gates',
-				'Processing PumpYourSound gates...',
-				25,
-				{ browserActive: job.browserMode === 'headed' },
-			);
-			downloadFilename = await pumpyoursoundDownloader.downloadAudio(
-				downloadSourceUrl,
-				{
-					matchTitle: job.track?.title,
-					onAlbumMatchFailed: selectBandcampTrack(false),
-				},
-			);
-			throwIfCancelled();
-		} else if (provider === 'mypresskit') {
-			jobStore.updateProgress(
-				jobId,
-				'initializing_browser',
-				'Launching browser for MyPressKit...',
-				10,
-			);
-			const mypresskitDownloader = new MypresskitDownloader(
-				await prepareBrowserConfig(),
-			);
-			activeDownloaders.set(jobId, mypresskitDownloader);
-			mypresskitDownloader.setProgressCallback(emitProgress);
-			await mypresskitDownloader.initialize();
-			throwIfCancelled();
-			jobStore.updateProgress(
-				jobId,
-				'handling_gates',
-				'Processing MyPressKit gates...',
-				25,
-				{ browserActive: job.browserMode === 'headed' },
-			);
-			downloadFilename =
-				await mypresskitDownloader.downloadAudio(downloadSourceUrl);
+			downloadFilename = await downloader.downloadAudio(downloadSourceUrl, {
+				matchTitle: job.track?.title,
+				onAlbumMatchFailed: selectBandcampTrack(false),
+			});
 			throwIfCancelled();
 		} else if (provider === 'direct') {
 			jobStore.updateProgress(
@@ -772,7 +689,11 @@ async function runDownloadProcess(jobId: string): Promise<void> {
 		}
 
 		// A retry must not finalize the output of an earlier failed attempt.
-		jobStore.update(jobId, { downloadFilename, outputFilename: null });
+		jobStore.update(jobId, {
+			downloadFilename,
+			outputFilename: null,
+			tagsSubmitted: false,
+		});
 		const downloadedPath = join('./downloads', downloadFilename);
 		const signature = new Uint8Array(
 			await Bun.file(downloadedPath).slice(0, 4).arrayBuffer(),
@@ -874,6 +795,10 @@ async function runDownloadProcess(jobId: string): Promise<void> {
 	}
 }
 
+// Finished jobs hold artwork buffers; forget them after a day of inactivity.
+const JOB_RETENTION_MS = 24 * 60 * 60 * 1000;
+setInterval(() => jobStore.cleanup(JOB_RETENTION_MS), 60 * 60 * 1000).unref();
+
 const requestAls = new AsyncLocalStorage<Request>();
 
 function corsHeaders(): Record<string, string> {
@@ -920,10 +845,33 @@ function sseResponse(stream: ReadableStream): Response {
 	});
 }
 
+/** Parse a JSON object body, or return a 400 response. */
+async function readJsonObject(
+	req: Request,
+): Promise<Record<string, unknown> | Response> {
+	try {
+		const body: unknown = await req.json();
+		if (body && typeof body === 'object' && !Array.isArray(body)) {
+			return body as Record<string, unknown>;
+		}
+	} catch {
+		// Fall through to the 400 response.
+	}
+	return jsonResponse(
+		{ error: 'Request body must be a JSON object' },
+		{ status: 400 },
+	);
+}
+
 type RouteHandler = (req: Request) => Response | Promise<Response>;
 
 function wrapRouteHandler(handler: RouteHandler): RouteHandler {
-	return (req) => requestAls.run(req, () => handler(req));
+	return (req) =>
+		requestAls.run(req, () =>
+			isForbiddenCrossOriginRequest(req)
+				? jsonResponse({ error: 'Origin not allowed' }, { status: 403 })
+				: handler(req),
+		);
 }
 
 function wrapRoutes<Path extends string>(
@@ -1092,7 +1040,8 @@ const server = Bun.serve({
 		'/api/job': {
 			POST: async (req) => {
 				try {
-					const body = await req.json();
+					const body = await readJsonObject(req);
+					if (body instanceof Response) return body;
 					const {
 						soundcloudUrl,
 						skipAutomaticHypedditFetch,
@@ -1109,7 +1058,7 @@ const server = Bun.serve({
 						reviewTags?: unknown;
 					};
 
-					if (!soundcloudUrl) {
+					if (!soundcloudUrl || typeof soundcloudUrl !== 'string') {
 						return jsonResponse(
 							{ error: 'soundcloudUrl is required' },
 							{ status: 400 },
@@ -1271,10 +1220,11 @@ const server = Bun.serve({
 						return jsonResponse({ error: 'Job not found' }, { status: 404 });
 					}
 
-					const body = await req.json();
-					const { hypedditUrl } = body as { hypedditUrl?: string };
+					const body = await readJsonObject(req);
+					if (body instanceof Response) return body;
+					const { hypedditUrl } = body;
 
-					if (!hypedditUrl) {
+					if (!hypedditUrl || typeof hypedditUrl !== 'string') {
 						return jsonResponse(
 							{ error: 'Gate URL (hypedditUrl) is required' },
 							{ status: 400 },
@@ -1325,8 +1275,9 @@ const server = Bun.serve({
 						);
 					}
 
-					const body = await req.json();
-					const { trackUrl } = body as { trackUrl?: string };
+					const body = await readJsonObject(req);
+					if (body instanceof Response) return body;
+					const { trackUrl } = body;
 
 					if (!trackUrl || typeof trackUrl !== 'string') {
 						return jsonResponse(
@@ -1711,10 +1662,12 @@ const server = Bun.serve({
 						return jsonResponse({ error: 'Job not found' }, { status: 404 });
 					}
 
-					// Unattended jobs accept tags once, while they wait for them.
+					// Jobs accept tags once: unattended jobs while they wait for them,
+					// Web UI jobs once their download is ready.
 					const notWaiting = () =>
-						job.destination !== null &&
-						job.progress.stage !== 'waiting_metadata';
+						job.tagsSubmitted ||
+						job.progress.stage !==
+							(job.destination ? 'waiting_metadata' : 'ready');
 					if (notWaiting()) {
 						return jsonResponse(
 							{ error: 'Job is not waiting for tags' },
@@ -1757,15 +1710,15 @@ const server = Bun.serve({
 							};
 						}
 					} else {
-						const body = (await req.json()) as Metadata & {
-							preserveMetadata?: boolean;
-							nameAsArtistTitle?: boolean;
-						};
+						const body = await readJsonObject(req);
+						if (body instanceof Response) return body;
+						const text = (value: unknown) =>
+							typeof value === 'string' ? value : undefined;
 						metadata = {
-							title: body.title,
-							artist: body.artist,
-							album: body.album,
-							genre: body.genre,
+							title: text(body.title),
+							artist: text(body.artist),
+							album: text(body.album),
+							genre: text(body.genre),
 						};
 						preserveMetadata = body.preserveMetadata === true;
 						if (typeof body.nameAsArtistTitle === 'boolean') {
@@ -1803,14 +1756,16 @@ const server = Bun.serve({
 						);
 					}
 
+					// A concurrent submit or cancel may have won while the body was read.
+					if (notWaiting()) {
+						return jsonResponse(
+							{ error: 'Job is not waiting for tags' },
+							{ status: 409 },
+						);
+					}
+					jobStore.update(jobId, { tagsSubmitted: true });
+
 					if (job.destination) {
-						// A concurrent submit or cancel may have won while the body was read.
-						if (notWaiting()) {
-							return jsonResponse(
-								{ error: 'Job is not waiting for tags' },
-								{ status: 409 },
-							);
-						}
 						jobStore.updateProgress(
 							jobId,
 							'processing_audio',
@@ -1831,11 +1786,26 @@ const server = Bun.serve({
 						return jsonResponse({ success: true });
 					}
 
-					const outputFilename = await finalizeJobFile(job, metadata, {
-						preserveMetadata,
-						nameAsArtistTitle,
-						artwork,
-					});
+					let outputFilename: string;
+					try {
+						outputFilename = await finalizeJobFile(job, metadata, {
+							preserveMetadata,
+							nameAsArtistTitle,
+							artwork,
+						});
+					} catch (error) {
+						// Let the Web UI retry after a failed conversion.
+						if (!jobStore.isCancelled(jobId)) {
+							jobStore.update(jobId, { tagsSubmitted: false });
+							jobStore.updateProgress(
+								jobId,
+								'ready',
+								'Ready for metadata editing',
+								100,
+							);
+						}
+						throw error;
+					}
 
 					jobStore.updateProgress(
 						jobId,

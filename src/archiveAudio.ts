@@ -1,11 +1,7 @@
-import { existsSync } from 'node:fs';
 import { basename, extname, join } from 'node:path';
 import { lookpath } from 'find-bin';
 import { safeDownloadBasename } from './downloadCleanup';
-import {
-	pickUniqueDownloadFilename,
-	withDownloadRenameLock,
-} from './downloadRename';
+import { reserveDownloadFilename } from './downloadRename';
 
 const MAX_EXTRACTED_AUDIO_BYTES = 512 * 1024 * 1024;
 const AUDIO_EXTENSION_PRIORITY = [
@@ -99,34 +95,15 @@ async function runForText(bin: string, args: string[]): Promise<string> {
 	return stdout;
 }
 
-async function allocateExtractedPath(
-	downloadsDir: string,
-	member: string,
-): Promise<string> {
-	return withDownloadRenameLock(async () => {
-		const allocationId = crypto.randomUUID();
-		const outputFilename = pickUniqueDownloadFilename({
-			desiredFilename: safeExtractedFilename(member),
-			// Extraction must never reuse the archive path, even when a ZIP is
-			// misleadingly named with the same extension as its audio member.
-			currentFilename: '',
-			jobId: allocationId,
-			exists: (name) => existsSync(join(downloadsDir, name)),
-			isOwnedByOtherJob: () => false,
-		});
-		const outputPath = join(downloadsDir, outputFilename);
-		await Bun.write(outputPath, new Uint8Array());
-		return outputPath;
-	});
-}
-
 async function extractMember(
 	unzipBin: string,
 	archivePath: string,
 	member: string,
 	outputPath: string,
 ): Promise<void> {
-	const process = Bun.spawn([unzipBin, '-p', archivePath, member], {
+	// unzip treats member names as wildcard patterns, so escape `[`, `*` and `?`.
+	const pattern = member.replace(/[[\]*?\\]/g, '\\$&');
+	const process = Bun.spawn([unzipBin, '-p', archivePath, pattern], {
 		stdin: 'ignore',
 		stdout: 'pipe',
 		stderr: 'pipe',
@@ -200,9 +177,17 @@ export async function resolveDownloadedAudio(
 		);
 	}
 
-	const outputPath = await allocateExtractedPath(downloadsDir, member);
-	await extractMember(unzipBin, archivePath, member, outputPath);
+	const outputFilename = await reserveDownloadFilename(
+		downloadsDir,
+		safeExtractedFilename(member),
+	);
+	await extractMember(
+		unzipBin,
+		archivePath,
+		member,
+		join(downloadsDir, outputFilename),
+	);
 	await Bun.file(archivePath).delete();
 	console.log(`Extracted ${member} from ${archiveFilename}`);
-	return basename(outputPath);
+	return outputFilename;
 }

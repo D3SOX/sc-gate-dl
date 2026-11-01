@@ -1,4 +1,3 @@
-import { join } from 'node:path';
 import { confirm } from '@inquirer/prompts';
 import { lookpath } from 'find-bin';
 import Soundcloud, {
@@ -13,6 +12,8 @@ import {
 	type GateProvider,
 	loadCookies,
 } from './utils';
+
+const MAX_ARTWORK_BYTES = 20 * 1024 * 1024;
 
 const GATE_PROVIDER_LABELS: Record<GateProvider, string> = {
 	droploud: 'Droploud',
@@ -605,19 +606,24 @@ export class SoundcloudClient {
 	): Promise<{ buffer: ArrayBuffer; fileName: string }> {
 		const originalArtworkUrl = artworkUrl.replace('large', 'original');
 		const fileName = originalArtworkUrl.split('/').pop() || 'artwork.jpg';
-		if (await Bun.file(join('./downloads', fileName)).exists()) {
-			console.log(`✓ Found artwork in downloads folder: ${fileName}`);
-			return {
-				buffer: await Bun.file(join('./downloads', fileName)).arrayBuffer(),
-				fileName,
-			};
-		}
-		const response = await fetch(originalArtworkUrl);
+		// The serial job queue waits on this, so a stalled CDN must not hold it.
+		const response = await fetch(originalArtworkUrl, {
+			signal: AbortSignal.timeout(15_000),
+		});
 		if (!response.ok) {
 			throw new Error(`Failed to fetch artwork: ${response.statusText}`);
 		}
-		const buffer = await response.arrayBuffer();
-		return { buffer, fileName };
+		const chunks: Uint8Array[] = [];
+		let size = 0;
+		for await (const chunk of response.body ?? []) {
+			size += chunk.byteLength;
+			// Throwing exits the loop, which cancels the response stream.
+			if (size > MAX_ARTWORK_BYTES) {
+				throw new Error(`Artwork is larger than ${MAX_ARTWORK_BYTES} bytes`);
+			}
+			chunks.push(chunk);
+		}
+		return { buffer: Bun.concatArrayBuffers(chunks), fileName };
 	}
 
 	async cleanup(prompt = true): Promise<
@@ -663,10 +669,8 @@ export class SoundcloudClient {
 	}
 
 	private async unfollowAllUsers(meId: string): Promise<number> {
-		const { collection: following } = await this.soundcloud.api.getV2(
-			`users/${meId}/followings`,
-		);
-		if (!following?.length) {
+		const following = await this.getAllFollowedUsers(meId);
+		if (!following.length) {
 			console.log('No users to unfollow');
 			return 0;
 		}
@@ -689,26 +693,24 @@ export class SoundcloudClient {
 	}
 
 	private async unlikeAllTracks(meId: string): Promise<number> {
-		const { collection: likes } = await this.soundcloud.api.getV2(
-			`users/${meId}/likes`,
-		);
-		if (!likes?.length) {
+		const likes = await this.getAllLikedTracks(meId);
+		if (!likes.length) {
 			console.log('No tracks to unlike');
 			return 0;
 		}
 		console.log(`Found ${likes.length} tracks to unlike`);
 
 		let count = 0;
-		for (const like of likes) {
+		for (const track of likes) {
 			try {
 				await this.soundcloud.api.deleteV2(
-					`users/${meId}/track_likes/${like.track.id}`,
+					`users/${meId}/track_likes/${track.id}`,
 				);
-				console.log(`✓ Unliked ${like.track.title} (${like.track.id})`);
+				console.log(`✓ Unliked ${track.title} (${track.id})`);
 				count++;
 			} catch (error) {
 				console.error(
-					`✗ Failed to unlike ${like.track.title} (${like.track.id}):`,
+					`✗ Failed to unlike ${track.title} (${track.id}):`,
 					error,
 				);
 			}
@@ -717,10 +719,11 @@ export class SoundcloudClient {
 	}
 
 	private async deleteAllComments(meId: string): Promise<number> {
-		const { collection: comments } = await this.soundcloud.api.getV2(
+		const comments = await this.paginateCollection<{ id: number }>(
 			`users/${meId}/comments`,
+			{ limit: 200, offset: 0 },
 		);
-		if (!comments?.length) {
+		if (!comments.length) {
 			console.log('No comments to delete');
 			return 0;
 		}
@@ -740,11 +743,11 @@ export class SoundcloudClient {
 	}
 
 	private async deleteAllReposts(): Promise<number> {
-		const { collection: reposts } = await this.soundcloud.api.getV2(
-			`me/track_reposts/ids`,
-			{ limit: 200 },
+		const reposts = await this.paginateCollection<number>(
+			'me/track_reposts/ids',
+			{ limit: 200, offset: 0 },
 		);
-		if (!reposts?.length) {
+		if (!reposts.length) {
 			console.log('No reposts to delete');
 			return 0;
 		}

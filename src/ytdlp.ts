@@ -1,6 +1,7 @@
-import { mkdir } from 'node:fs/promises';
+import { mkdir, rename, rm } from 'node:fs/promises';
 import { basename, join } from 'node:path';
 import { lookpath } from 'find-bin';
+import { reserveDownloadFilename } from './downloadRename';
 import type { BandcampAlbumTrackChoice, JobProgress } from './types';
 import {
 	isBandcampAlbumUrl,
@@ -358,113 +359,127 @@ export class YtDlpDownloader {
 		);
 		console.log(`${this.sourceLabel}: downloading via yt-dlp → ${downloadUrl}`);
 
-		await mkdir(DOWNLOADS_DIR, { recursive: true });
-
-		const outputTemplate = join(DOWNLOADS_DIR, '%(title)s [%(id)s].%(ext)s');
-		const bandcamp = isBandcampUrl(downloadUrl);
-		const soundcloud = isSoundcloudUrl(downloadUrl);
-		// Prefer SoundCloud's original upload (`download`) when the track allows it.
-		// That format is only listed for registered users — pass cookies when available.
-		const format = soundcloud ? 'download/bestaudio/best' : 'bestaudio/best';
-		const args = [
-			...(bandcamp ? BANDCAMP_IMPERSONATION_ARGS : []),
-			'--no-mtime',
-			'--no-playlist',
-			'--newline',
-			'--progress',
-			'--progress-delta',
-			'0.5',
-			'--progress-template',
-			`${PROGRESS_PREFIX}%(progress.downloaded_bytes)s:%(progress.total_bytes)s:%(progress.total_bytes_estimate)s:%(progress.fragment_index)s:%(progress.fragment_count)s`,
-			'-f',
-			format,
-			'-o',
-			outputTemplate,
-			'--print',
-			'after_move:filepath',
-			'--no-warnings',
-		];
-
-		let cookiesPath: string | null = null;
-		if (soundcloud) {
-			cookiesPath = await writeSoundcloudNetscapeCookies();
-			if (cookiesPath) {
-				args.push('--cookies', cookiesPath);
-				console.log(
-					`${this.sourceLabel}: using soundcloud-cookies.json for yt-dlp (original download if available)`,
-				);
-			} else {
-				console.warn(
-					`${this.sourceLabel}: no soundcloud-cookies.json — original SoundCloud downloads may be unavailable`,
-				);
-			}
-		}
-
-		args.push(downloadUrl);
-
-		let stdout: string;
+		// A private output directory keeps yt-dlp from reusing or overwriting a
+		// file another job downloaded from the same track.
+		const runDir = join(DOWNLOADS_DIR, `.yt-dlp-${crypto.randomUUID()}`);
+		await mkdir(runDir, { recursive: true });
+		let filename: string;
 		try {
-			stdout = await this.runYtDlp(
-				ytDlpBin,
-				args,
-				YTDLP_DOWNLOAD_TIMEOUT_MS,
-				(line) => {
-					const progress = parseYtDlpProgressLine(line);
-					if (!progress) return true;
+			const outputTemplate = join(runDir, '%(title)s [%(id)s].%(ext)s');
+			const bandcamp = isBandcampUrl(downloadUrl);
+			const soundcloud = isSoundcloudUrl(downloadUrl);
+			// Prefer SoundCloud's original upload (`download`) when the track allows it.
+			// That format is only listed for registered users — pass cookies when available.
+			const format = soundcloud ? 'download/bestaudio/best' : 'bestaudio/best';
+			const args = [
+				...(bandcamp ? BANDCAMP_IMPERSONATION_ARGS : []),
+				'--no-mtime',
+				'--no-playlist',
+				'--newline',
+				'--progress',
+				'--progress-delta',
+				'0.5',
+				'--progress-template',
+				`${PROGRESS_PREFIX}%(progress.downloaded_bytes)s:%(progress.total_bytes)s:%(progress.total_bytes_estimate)s:%(progress.fragment_index)s:%(progress.fragment_count)s`,
+				'-f',
+				format,
+				'-o',
+				outputTemplate,
+				'--print',
+				'after_move:filepath',
+				'--no-warnings',
+			];
 
-					this.progressCallback?.(
-						'downloading',
-						`Downloading from ${this.sourceLabel} via yt-dlp...`,
-						progress.percent,
-						{
-							downloadBytes: progress.downloadBytes,
-							totalBytes: progress.totalBytes,
-							browserless: true,
-						},
+			let cookiesPath: string | null = null;
+			if (soundcloud) {
+				cookiesPath = await writeSoundcloudNetscapeCookies();
+				if (cookiesPath) {
+					args.push('--cookies', cookiesPath);
+					console.log(
+						`${this.sourceLabel}: using soundcloud-cookies.json for yt-dlp (original download if available)`,
 					);
-					return false;
-				},
-			);
-		} finally {
-			if (cookiesPath) await deleteTemporaryFile(cookiesPath);
-		}
+				} else {
+					console.warn(
+						`${this.sourceLabel}: no soundcloud-cookies.json — original SoundCloud downloads may be unavailable`,
+					);
+				}
+			}
 
-		const filepaths = stdout
-			.trim()
-			.split('\n')
-			.map((line) => line.trim())
-			.filter(Boolean);
+			args.push(downloadUrl);
 
-		if (filepaths.length === 0) {
-			throw new Error('yt-dlp finished but did not report an output filepath');
-		}
+			let stdout: string;
+			try {
+				stdout = await this.runYtDlp(
+					ytDlpBin,
+					args,
+					YTDLP_DOWNLOAD_TIMEOUT_MS,
+					(line) => {
+						const progress = parseYtDlpProgressLine(line);
+						if (!progress) return true;
 
-		const matchTitle = options.matchTitle;
-		let filepath = filepaths[filepaths.length - 1] ?? '';
-		if (filepaths.length > 1 && matchTitle) {
-			const ranked = filepaths
-				.map((path) => ({
-					path,
-					score: titleMatchScore(basename(path), matchTitle),
-				}))
-				.sort((a, b) => b.score - a.score);
-			const bestPath = ranked[0]?.path;
-			if (bestPath) {
-				filepath = bestPath;
-				console.log(
-					`${this.sourceLabel}: yt-dlp wrote ${filepaths.length} files; picked ${basename(filepath)} (score ${ranked[0]?.score.toFixed(2)})`,
+						this.progressCallback?.(
+							'downloading',
+							`Downloading from ${this.sourceLabel} via yt-dlp...`,
+							progress.percent,
+							{
+								downloadBytes: progress.downloadBytes,
+								totalBytes: progress.totalBytes,
+								browserless: true,
+							},
+						);
+						return false;
+					},
+				);
+			} finally {
+				if (cookiesPath) await deleteTemporaryFile(cookiesPath);
+			}
+
+			const filepaths = stdout
+				.trim()
+				.split('\n')
+				.map((line) => line.trim())
+				.filter(Boolean);
+
+			if (filepaths.length === 0) {
+				throw new Error(
+					'yt-dlp finished but did not report an output filepath',
 				);
 			}
-		} else if (filepaths.length > 1) {
-			console.warn(
-				`${this.sourceLabel}: yt-dlp wrote ${filepaths.length} files; using last: ${basename(filepath)}`,
-			);
-		}
 
-		const filename = basename(filepath);
-		const dest = join(DOWNLOADS_DIR, filename);
-		if (!(await Bun.file(dest).exists())) {
-			throw new Error(`yt-dlp reported ${filename} but file is missing`);
+			const matchTitle = options.matchTitle;
+			let filepath = filepaths[filepaths.length - 1] ?? '';
+			if (filepaths.length > 1 && matchTitle) {
+				const ranked = filepaths
+					.map((path) => ({
+						path,
+						score: titleMatchScore(basename(path), matchTitle),
+					}))
+					.sort((a, b) => b.score - a.score);
+				const bestPath = ranked[0]?.path;
+				if (bestPath) {
+					filepath = bestPath;
+					console.log(
+						`${this.sourceLabel}: yt-dlp wrote ${filepaths.length} files; picked ${basename(filepath)} (score ${ranked[0]?.score.toFixed(2)})`,
+					);
+				}
+			} else if (filepaths.length > 1) {
+				console.warn(
+					`${this.sourceLabel}: yt-dlp wrote ${filepaths.length} files; using last: ${basename(filepath)}`,
+				);
+			}
+
+			if (!(await Bun.file(filepath).exists())) {
+				throw new Error(
+					`yt-dlp reported ${basename(filepath)} but file is missing`,
+				);
+			}
+			filename = await reserveDownloadFilename(
+				DOWNLOADS_DIR,
+				basename(filepath),
+			);
+			await rename(filepath, join(DOWNLOADS_DIR, filename));
+		} finally {
+			await rm(runDir, { recursive: true, force: true });
 		}
 
 		console.log(`${this.sourceLabel}: downloaded ${filename}`);

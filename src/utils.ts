@@ -7,6 +7,7 @@ import type { Cookie, CookieData } from 'puppeteer';
 import type { SoundcloudTrack } from 'soundcloud.ts';
 import packageJson from '../package.json' with { type: 'json' };
 import {
+	isKnownDirectDownloadHost,
 	normalizeDirectDownloadParsedUrl,
 	urlLooksLikeDirectDownload,
 } from './directLinkRules';
@@ -299,10 +300,6 @@ export function trimExtractedUrl(url: string): string {
 	return base.replace(/[)\]}>.,;:!?'"…]+$/g, '');
 }
 
-export function isHypedditUrl(value: string): boolean {
-	return value.startsWith('https://hypeddit.com/');
-}
-
 export function isDroploudUrl(value: string): boolean {
 	return DROPLOUD_URL_RE.test(value);
 }
@@ -362,17 +359,6 @@ export function resolveGateProviderUrl(
 	return null;
 }
 
-export function getGateProvider(value: string): GateProvider | null {
-	return resolveGateProviderUrl(value)?.provider ?? null;
-}
-
-export function validateHypedditUrl(value: string): true | string {
-	if (!isHypedditUrl(value)) {
-		return 'A valid Hypeddit URL is required';
-	}
-	return true;
-}
-
 export function validateGateUrl(value: string): true | string {
 	if (resolveGateProviderUrl(value)) {
 		return true;
@@ -394,8 +380,7 @@ function normalizeGateUrl(
 		provider === 'stillhype' ||
 		provider === 'pumpyoursound' ||
 		provider === 'mypresskit' ||
-		provider === 'bandcamp' ||
-		provider === 'direct'
+		provider === 'bandcamp'
 	) {
 		return {
 			url: url.replace(/^http:\/\//i, 'https://'),
@@ -560,7 +545,9 @@ function matchDirectDownloadUrl(
 	if (!httpMatch) return null;
 	const trimmed = trimExtractedUrl(httpMatch);
 	try {
-		const url = new URL(trimmed.replace(/^http:\/\//i, 'https://'));
+		const url = new URL(trimmed);
+		// Dropbox and Drive serve HTTPS; arbitrary file hosts keep their scheme.
+		if (isKnownDirectDownloadHost(url.hostname)) url.protocol = 'https:';
 		if (!urlLooksLikeDirectDownload(url)) return null;
 		return {
 			url: normalizeDirectDownloadParsedUrl(url),
@@ -826,25 +813,7 @@ export async function extractAndResolveGateUrl(
 export async function resolveGateUrlOrFollow(
 	value: string,
 ): Promise<{ url: string; provider: GateProvider } | null> {
-	const direct = resolveGateProviderUrl(value);
-	if (direct && direct.provider !== 'soundcloud') {
-		return direct;
-	}
-	if (direct?.provider === 'soundcloud') {
-		return direct;
-	}
-	return resolveUnknownGateUrl(value);
-}
-
-/** @deprecated Prefer extractGateUrl */
-export function extractHypedditUrl(
-	track: SoundcloudTrack,
-): { url: string; type: 'purchase_url' | 'description' } | null {
-	const gate = extractGateUrl(track);
-	if (gate?.provider !== 'hypeddit') {
-		return null;
-	}
-	return { url: gate.url, type: gate.type };
+	return resolveGateProviderUrl(value) ?? resolveUnknownGateUrl(value);
 }
 
 export function getDefaultMetadata(track: SoundcloudTrack): Metadata {
@@ -917,11 +886,6 @@ export function toFlacFilename(filename: string): string {
 	return filename.replace(/\.[^.]+$/i, '.flac');
 }
 
-/** @deprecated Prefer toMp3Filename */
-export function losslessToMp3Filename(filename: string): string {
-	return toMp3Filename(filename);
-}
-
 /** Strip characters that are unsafe or awkward in filenames. */
 export function sanitizeFilenamePart(value: string): string {
 	return value
@@ -963,4 +927,12 @@ export function previewProcessedFilename(
 		return toMp3Filename(downloadFilename);
 	}
 	return downloadFilename;
+}
+
+export function safeDecodeURIComponent(value: string): string {
+	try {
+		return decodeURIComponent(value);
+	} catch {
+		return value;
+	}
 }

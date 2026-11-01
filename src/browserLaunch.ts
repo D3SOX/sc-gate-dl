@@ -60,8 +60,11 @@ export function browserModeToLaunchOptions(
 	};
 }
 
-export function isXvfbSupported(platform = process.platform): boolean {
-	return platform === 'linux';
+export function isXvfbSupported(
+	platform = process.platform,
+	which: (bin: string) => string | null = Bun.which,
+): boolean {
+	return platform === 'linux' && which('Xvfb') !== null;
 }
 
 export function launchConfiguredBrowser(
@@ -227,7 +230,11 @@ export async function launchAppBrowser(
 	const geoip = Boolean(proxy) && process.env.CLOAKBROWSER_GEOIP !== 'false';
 	const useXvfb = options.xvfb ?? false;
 	if (useXvfb && !isXvfbSupported()) {
-		throw new Error('Xvfb browser mode is only available on Linux');
+		throw new Error(
+			process.platform === 'linux'
+				? 'Xvfb is not installed. Install it or pick another browser mode.'
+				: 'Xvfb browser mode is only available on Linux',
+		);
 	}
 	const xvfb = useXvfb ? await acquireXvfb() : null;
 

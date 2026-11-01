@@ -51,6 +51,27 @@ export function pickUniqueDownloadFilename(options: {
 }
 
 /**
+ * Claim a free downloads/ filename by creating it empty, so concurrent
+ * downloads that suggest the same name never write into each other's file.
+ */
+export function reserveDownloadFilename(
+	downloadsDir: string,
+	desiredFilename: string,
+): Promise<string> {
+	return withDownloadRenameLock(async () => {
+		const filename = pickUniqueDownloadFilename({
+			desiredFilename,
+			currentFilename: '',
+			jobId: crypto.randomUUID(),
+			exists: (name) => existsSync(join(downloadsDir, name)),
+			isOwnedByOtherJob: () => false,
+		});
+		await Bun.write(join(downloadsDir, filename), new Uint8Array());
+		return filename;
+	});
+}
+
+/**
  * Atomically allocate a destination, rename the file, and claim it on the job.
  * Concurrent callers are serialized so two jobs cannot race onto the same name.
  */

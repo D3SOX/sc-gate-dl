@@ -68,12 +68,12 @@ function extractWebuiHelpers(): {
 	apiOriginFromWebui: ApiOriginFromWebui;
 } {
 	const normalizeStart = source.indexOf('\tfunction normalizeWebuiBase(');
-	const parseEnd = source.indexOf('\n\n\tfunction getWebuiBases(', normalizeStart);
-	const apiStart = source.indexOf('\tfunction apiOriginFromWebui(');
-	const apiEnd = source.indexOf(
-		'\n\n\tfunction abortSignalTimeout(',
-		apiStart,
+	const parseEnd = source.indexOf(
+		'\n\n\tfunction getWebuiBases(',
+		normalizeStart,
 	);
+	const apiStart = source.indexOf('\tfunction apiOriginFromWebui(');
+	const apiEnd = source.indexOf('\n\n\tfunction abortSignalTimeout(', apiStart);
 	if (normalizeStart < 0 || parseEnd < 0 || apiStart < 0 || apiEnd < 0) {
 		throw new Error('webui helpers not found');
 	}
@@ -152,26 +152,22 @@ describe('Web UI preferences', () => {
 
 	test('parses multiple server addresses in order', () => {
 		expect(
-			parseWebuiBases(
-				'http://192.168.178.57:4321\nhttp://100.64.0.1:8123/',
-			),
-		).toEqual([
-			'http://192.168.178.57:4321',
-			'http://100.64.0.1:8123',
-		]);
+			parseWebuiBases('http://192.168.178.57:4321\nhttp://100.64.0.1:8123/'),
+		).toEqual(['http://192.168.178.57:4321', 'http://100.64.0.1:8123']);
 		expect(
 			parseWebuiBases(
 				'http://192.168.178.57:4321, http://192.168.178.57:4321, http://100.64.0.1:8123',
 			),
-		).toEqual([
-			'http://192.168.178.57:4321',
-			'http://100.64.0.1:8123',
-		]);
+		).toEqual(['http://192.168.178.57:4321', 'http://100.64.0.1:8123']);
 		expect(parseWebuiBases('')).toEqual(['http://localhost:4321']);
 		expect(
-			parseWebuiBases('http://ok:4321\nftp://bad\nhttp://also:8123', undefined, {
-				strict: false,
-			}),
+			parseWebuiBases(
+				'http://ok:4321\nftp://bad\nhttp://also:8123',
+				undefined,
+				{
+					strict: false,
+				},
+			),
 		).toEqual(['http://ok:4321', 'http://also:8123']);
 		expect(() =>
 			parseWebuiBases('http://ok:4321\nftp://bad', undefined, { strict: true }),
@@ -258,7 +254,9 @@ describe('MUI track header inject', () => {
 
 	test('hides stuck tooltips on scroll and pointer move away', () => {
 		expect(source).toContain('function startTooltipTracking()');
-		expect(source).toContain("document.addEventListener('scroll', hideTooltip, true)");
+		expect(source).toContain(
+			"document.addEventListener('scroll', hideTooltip, true)",
+		);
 		expect(source).toContain(
 			"document.addEventListener('pointermove', onTooltipPointerMove, true)",
 		);

@@ -225,6 +225,21 @@ describe('resolveGateProviderUrl', () => {
 		});
 	});
 
+	test('keeps the scheme of arbitrary direct file hosts', () => {
+		expect(
+			resolveGateProviderUrl('http://files.example.test/song.mp3'),
+		).toEqual({
+			url: 'http://files.example.test/song.mp3',
+			provider: 'direct',
+		});
+		expect(
+			resolveGateProviderUrl('http://www.dropbox.com/s/abc123/track.wav'),
+		).toEqual({
+			url: 'https://www.dropbox.com/s/abc123/track.wav?dl=1',
+			provider: 'direct',
+		});
+	});
+
 	test('matches raw audio file URLs as direct downloads', () => {
 		expect(
 			resolveGateProviderUrl(

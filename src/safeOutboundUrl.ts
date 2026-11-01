@@ -1,33 +1,45 @@
 import { lookup } from 'node:dns/promises';
 import http from 'node:http';
 import https from 'node:https';
-import { isIP } from 'node:net';
+import { BlockList, isIP } from 'node:net';
+
+const BLOCKED_IPV4_SUBNETS: [string, number][] = [
+	['0.0.0.0', 8],
+	['10.0.0.0', 8],
+	['100.64.0.0', 10], // CGNAT
+	['127.0.0.0', 8],
+	['169.254.0.0', 16],
+	['172.16.0.0', 12],
+	['192.0.0.0', 24],
+	['192.168.0.0', 16],
+	['198.18.0.0', 15], // benchmarking
+	['224.0.0.0', 4], // multicast
+	['240.0.0.0', 4], // reserved and broadcast
+];
+
+const blockedAddresses = new BlockList();
+blockedAddresses.addAddress('::', 'ipv6');
+blockedAddresses.addAddress('::1', 'ipv6');
+blockedAddresses.addSubnet('fc00::', 7, 'ipv6'); // ULA
+blockedAddresses.addSubnet('fe80::', 10, 'ipv6'); // link-local
+blockedAddresses.addSubnet('ff00::', 8, 'ipv6'); // multicast
+blockedAddresses.addSubnet('64:ff9b:1::', 48, 'ipv6'); // local-use NAT64
+for (const [network, prefix] of BLOCKED_IPV4_SUBNETS) {
+	blockedAddresses.addSubnet(network, prefix, 'ipv4');
+	// URL parsing rewrites embedded IPv4 to hex (`::ffff:7f00:1`), so block the
+	// IPv4-mapped, IPv4-compatible and NAT64 forms of each range as well.
+	const [a = 0, b = 0, c = 0, d = 0] = network.split('.').map(Number);
+	const hex = `${((a << 8) | b).toString(16)}:${((c << 8) | d).toString(16)}`;
+	for (const embedPrefix of ['::ffff:', '::', '64:ff9b::']) {
+		blockedAddresses.addSubnet(`${embedPrefix}${hex}`, 96 + prefix, 'ipv6');
+	}
+}
 
 function isPrivateOrLocalIp(ip: string): boolean {
 	const normalized = ip.toLowerCase().replace(/^\[|\]$/g, '');
-
-	if (isIP(normalized) === 4) {
-		const parts = normalized.split('.').map(Number);
-		const a = parts[0] ?? 0;
-		const b = parts[1] ?? 0;
-		if (a === 0 || a === 10 || a === 127) return true;
-		if (a === 169 && b === 254) return true;
-		if (a === 172 && b >= 16 && b <= 31) return true;
-		if (a === 192 && b === 168) return true;
-		if (a === 100 && b >= 64 && b <= 127) return true; // CGNAT
-		return false;
-	}
-
-	if (isIP(normalized) === 6) {
-		if (normalized === '::1' || normalized === '::') return true;
-		if (normalized.startsWith('fe80:')) return true; // link-local
-		if (normalized.startsWith('fc') || normalized.startsWith('fd')) return true; // ULA
-		const v4mapped = normalized.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/);
-		if (v4mapped?.[1]) return isPrivateOrLocalIp(v4mapped[1]);
-		return false;
-	}
-
-	return true;
+	const family = isIP(normalized);
+	if (family === 0) return true;
+	return blockedAddresses.check(normalized, family === 4 ? 'ipv4' : 'ipv6');
 }
 
 function isBlockedHostname(hostname: string): boolean {
@@ -97,11 +109,6 @@ export async function resolveSafeConnectTarget(
 		);
 	}
 	return { url, address: chosen.address };
-}
-
-/** @deprecated Prefer resolveSafeConnectTarget / safeFetch */
-export async function assertSafeOutboundUrl(urlString: string): Promise<void> {
-	await resolveSafeConnectTarget(urlString);
 }
 
 export type SafeFetchInit = {

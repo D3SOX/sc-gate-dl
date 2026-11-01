@@ -1,7 +1,7 @@
 {
-  "headless": true,
-  "xvfb": false,
-  "initializeLogins": true,
-  "deleteLosslessAfterConversion": true,
-  "cleanupSoundCloudAccount": true
+	"headless": true,
+	"xvfb": false,
+	"initializeLogins": true,
+	"deleteLosslessAfterConversion": true,
+	"cleanupSoundCloudAccount": true
 }

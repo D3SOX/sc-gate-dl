@@ -18,6 +18,13 @@ import {
 	toMp3Filename,
 } from './utils';
 
+const ARTWORK_EXTENSIONS = new Set(['jpg', 'jpeg', 'png', 'webp', 'gif']);
+
+export function artworkExtension(fileName: string): string {
+	const extension = extname(fileName).slice(1).toLowerCase();
+	return ARTWORK_EXTENSIONS.has(extension) ? extension : 'jpg';
+}
+
 type FfprobeResult = {
 	format?: { tags?: Record<string, string>; bit_rate?: string };
 	streams?: Array<{
@@ -235,14 +242,13 @@ export class AudioProcessor {
 	): Promise<string> {
 		const inputPath = join('./downloads', filename);
 
-		// save artwork to temporary file
-		const artworkPath = join('./downloads', artwork.fileName);
-		const artworkExists = await Bun.file(artworkPath).exists();
-		if (!artworkExists) {
-			await Bun.write(artworkPath, artwork.buffer);
-		}
-
+		// The artwork name may come from a client upload, so never use it as a path.
+		const artworkPath = join(
+			'./downloads',
+			`.artwork-${crypto.randomUUID()}.${artworkExtension(artwork.fileName)}`,
+		);
 		try {
+			await Bun.write(artworkPath, artwork.buffer);
 			if (outputFormat === 'flac') {
 				const outputPath = await this.convertToFlac(
 					inputPath,
