@@ -6,12 +6,19 @@ import {
 	browserModeToLaunchOptions,
 	CancellableBrowserLaunch,
 } from './browserLaunch';
+import { filenameFromContentDisposition } from './contentDisposition';
+import { reserveDownloadFilename } from './downloadRename';
 import type { ProgressCallback } from './hypeddit';
 import { safeFetch } from './safeOutboundUrl';
 import Selectors from './selectors';
 import { waitForSoundcloudLogin } from './soundcloudLogin';
 import type { HypedditConfig } from './types';
-import { loadCookies, sanitizeFilenamePart, timeout } from './utils';
+import {
+	loadCookies,
+	safeDecodeURIComponent,
+	sanitizeFilenamePart,
+	timeout,
+} from './utils';
 
 const SC_AUTHORIZE_RE = /secure\.soundcloud\.com\/authorize/i;
 const MAX_DOWNLOAD_BYTES = 512 * 1024 * 1024;
@@ -31,29 +38,6 @@ type VerifyBody = {
 	downloadToken?: string | null;
 	capturedEmail?: string | null;
 };
-
-function filenameFromContentDisposition(value: string | null): string | null {
-	if (!value) return null;
-	const star = value.match(/filename\*=(?:UTF-8'')?([^;]+)/i)?.[1];
-	if (star) {
-		const raw = star.replace(/["']/g, '');
-		try {
-			return decodeURIComponent(raw);
-		} catch {
-			return raw;
-		}
-	}
-	const plain = value.match(/filename=["']?([^"';]+)["']?/i)?.[1];
-	return plain ? plain.trim() : null;
-}
-
-function safeDecodeURIComponent(value: string): string {
-	try {
-		return decodeURIComponent(value);
-	} catch {
-		return value;
-	}
-}
 
 function safePageUrl(page: Page): string {
 	try {
@@ -655,6 +639,7 @@ export class MypresskitDownloader {
 		if (!/\.[a-z0-9]{2,5}$/i.test(suggested)) {
 			suggested = `${suggested}.wav`;
 		}
+		suggested = await reserveDownloadFilename('./downloads', suggested);
 
 		const target = join('./downloads', suggested);
 		const totalBytes = Number(response.headers.get('content-length')) || 0;

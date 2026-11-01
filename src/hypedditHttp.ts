@@ -1,6 +1,7 @@
 import { rename, rm } from 'node:fs/promises';
 import { basename, join } from 'node:path';
 import { filenameFromContentDisposition } from './contentDisposition';
+import { reserveDownloadFilename } from './downloadRename';
 import type { ProgressCallback } from './hypeddit';
 import { inspectHypedditPage, NoHypedditDownloadError } from './hypedditLinks';
 import type { HypedditConfig } from './types';
@@ -263,7 +264,11 @@ export class HypedditHttpDownloader {
 			sanitizeFilenamePart(basename(suggestedFilename)) || 'download';
 
 		const totalBytes = Number(response.headers.get('content-length')) || 0;
-		const destPath = join('./downloads', filename);
+		const reservedFilename = await reserveDownloadFilename(
+			'./downloads',
+			filename,
+		);
+		const destPath = join('./downloads', reservedFilename);
 		const tempPath = `${destPath}.${crypto.randomUUID()}.part`;
 		const writer = Bun.file(tempPath).writer();
 		let receivedBytes = 0;
@@ -308,12 +313,13 @@ export class HypedditHttpDownloader {
 					// Writer may already be closed or never flushed.
 				}
 				await rm(tempPath, { force: true }).catch(() => {});
+				await rm(destPath, { force: true }).catch(() => {});
 			}
 		}
 
-		console.log(`Browserless: downloaded ${filename}`);
+		console.log(`Browserless: downloaded ${reservedFilename}`);
 		this.progressCallback?.('downloading', 'Download complete', 100);
-		return filename;
+		return reservedFilename;
 	}
 
 	private async fetchGatePage(

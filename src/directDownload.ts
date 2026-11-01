@@ -5,9 +5,14 @@ import {
 	normalizeDirectDownloadParsedUrl,
 	urlLooksLikeDirectDownload,
 } from './directLinkRules';
+import { reserveDownloadFilename } from './downloadRename';
 import type { ProgressCallback } from './hypeddit';
 import { safeFetch } from './safeOutboundUrl';
-import { sanitizeFilenamePart, trimExtractedUrl } from './utils';
+import {
+	safeDecodeURIComponent,
+	sanitizeFilenamePart,
+	trimExtractedUrl,
+} from './utils';
 
 const USER_AGENT =
 	'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36';
@@ -175,7 +180,7 @@ export class DirectDownloader {
 			),
 		);
 		const urlName = safeDownloadFilename(
-			decodeURIComponent(basename(new URL(finalUrl).pathname)),
+			safeDecodeURIComponent(basename(new URL(finalUrl).pathname)),
 		);
 		const filename =
 			fromHeader ||
@@ -187,7 +192,11 @@ export class DirectDownloader {
 			throw new Error(`Direct download returned an empty body for ${finalUrl}`);
 		}
 
-		const target = join('./downloads', filename);
+		const reservedFilename = await reserveDownloadFilename(
+			'./downloads',
+			filename,
+		);
+		const target = join('./downloads', reservedFilename);
 		let lastProgressEmit = 0;
 		await writeBodyWithSizeLimit(
 			response.body,
@@ -209,8 +218,8 @@ export class DirectDownloader {
 		this.progressCallback?.('downloading', 'Download complete', 100, {
 			browserless: true,
 		});
-		console.log(`Saved ${filename}`);
-		return filename;
+		console.log(`Saved ${reservedFilename}`);
+		return reservedFilename;
 	}
 
 	async close(): Promise<void> {

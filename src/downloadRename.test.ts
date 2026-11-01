@@ -1,6 +1,10 @@
 import { describe, expect, test } from 'bun:test';
+import { mkdtemp, readdir, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import {
 	pickUniqueDownloadFilename,
+	reserveDownloadFilename,
 	withDownloadRenameLock,
 } from './downloadRename';
 
@@ -63,5 +67,29 @@ describe('withDownloadRenameLock', () => {
 		expect(new Set([first, second]).has('Artist - Title.mp3')).toBe(true);
 		expect(owned.has(first)).toBe(true);
 		expect(owned.has(second)).toBe(true);
+	});
+});
+
+describe('reserveDownloadFilename', () => {
+	test('gives concurrent downloads with the same name separate files', async () => {
+		const dir = await mkdtemp(join(tmpdir(), 'sc-gate-dl-reserve-'));
+		try {
+			await Bun.write(join(dir, 'track.mp3'), 'earlier job');
+			const names = await Promise.all([
+				reserveDownloadFilename(dir, 'track.mp3'),
+				reserveDownloadFilename(dir, 'track.mp3'),
+			]);
+
+			expect(new Set(names).size).toBe(2);
+			expect(names).not.toContain('track.mp3');
+			expect(await Bun.file(join(dir, 'track.mp3')).text()).toBe(
+				'earlier job',
+			);
+			expect((await readdir(dir)).sort()).toEqual(
+				['track.mp3', ...names].sort(),
+			);
+		} finally {
+			await rm(dir, { recursive: true, force: true });
+		}
 	});
 });

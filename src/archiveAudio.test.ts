@@ -98,4 +98,30 @@ describe('ZIP audio resolution', () => {
 			await rm(directory, { recursive: true, force: true });
 		}
 	});
+
+	test('extracts a member whose name contains wildcard characters', async () => {
+		const zipBin = await lookpath('zip');
+		const unzipBin = await lookpath('unzip');
+		if (!zipBin || !unzipBin) return;
+
+		const directory = await mkdtemp(join(tmpdir(), 'sc-gate-dl-archive-test-'));
+		const sourceDirectory = join(directory, 'source');
+		try {
+			await mkdir(sourceDirectory);
+			const member = 'Track [Free DL] *?.wav';
+			await Bun.write(join(sourceDirectory, member), 'lossless');
+			const zip = Bun.spawnSync(
+				[zipBin, '-q', join(directory, 'download.zip'), member],
+				{ cwd: sourceDirectory },
+			);
+			expect(zip.exitCode).toBe(0);
+
+			const extracted = await resolveDownloadedAudio('download.zip', directory);
+			expect(await Bun.file(join(directory, extracted)).text()).toBe(
+				'lossless',
+			);
+		} finally {
+			await rm(directory, { recursive: true, force: true });
+		}
+	});
 });
