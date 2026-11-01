@@ -1789,13 +1789,15 @@ const server = Bun.serve({
 						});
 					} catch (error) {
 						// Let the Web UI retry after a failed conversion.
-						jobStore.update(jobId, { tagsSubmitted: false });
-						jobStore.updateProgress(
-							jobId,
-							'ready',
-							'Ready for metadata editing',
-							100,
-						);
+						if (!jobStore.isCancelled(jobId)) {
+							jobStore.update(jobId, { tagsSubmitted: false });
+							jobStore.updateProgress(
+								jobId,
+								'ready',
+								'Ready for metadata editing',
+								100,
+							);
+						}
 						throw error;
 					}
 

@@ -16,6 +16,7 @@ describe('resolveSafeConnectTarget', () => {
 		'http://[::127.0.0.1]/',
 		'http://[64:ff9b::127.0.0.1]/',
 		'http://[64:ff9b::10.0.0.1]/',
+		'http://[64:ff9b:1::1]/x.mp3',
 	])('rejects %s', async (url) => {
 		await expect(resolveSafeConnectTarget(url)).rejects.toThrow(
 			/^Refusing to fetch/,

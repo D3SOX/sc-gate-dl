@@ -34,7 +34,8 @@ describe('SoundcloudClient.cleanup', () => {
 		const api = {
 			getV2: async (endpoint: string) =>
 				endpoint === 'me' ? { id: 1 } : firstPages[endpoint],
-			getURL: async (url: string) => secondPages[new URL(url).pathname],
+			getURL: async (url: string, params: Record<string, string>) =>
+				params.cursor === '2' ? secondPages[new URL(url).pathname] : undefined,
 			deleteV2: async (endpoint: string) => {
 				deleted.push(endpoint);
 				return {};

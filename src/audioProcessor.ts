@@ -247,9 +247,8 @@ export class AudioProcessor {
 			'./downloads',
 			`.artwork-${crypto.randomUUID()}.${artworkExtension(artwork.fileName)}`,
 		);
-		await Bun.write(artworkPath, artwork.buffer);
-
 		try {
+			await Bun.write(artworkPath, artwork.buffer);
 			if (outputFormat === 'flac') {
 				const outputPath = await this.convertToFlac(
 					inputPath,

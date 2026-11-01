@@ -23,6 +23,7 @@ blockedAddresses.addAddress('::1', 'ipv6');
 blockedAddresses.addSubnet('fc00::', 7, 'ipv6'); // ULA
 blockedAddresses.addSubnet('fe80::', 10, 'ipv6'); // link-local
 blockedAddresses.addSubnet('ff00::', 8, 'ipv6'); // multicast
+blockedAddresses.addSubnet('64:ff9b:1::', 48, 'ipv6'); // local-use NAT64
 for (const [network, prefix] of BLOCKED_IPV4_SUBNETS) {
 	blockedAddresses.addSubnet(network, prefix, 'ipv4');
 	// URL parsing rewrites embedded IPv4 to hex (`::ffff:7f00:1`), so block the
