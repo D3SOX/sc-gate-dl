@@ -60,8 +60,11 @@ export function browserModeToLaunchOptions(
 	};
 }
 
-export function isXvfbSupported(platform = process.platform): boolean {
-	return platform === 'linux';
+export function isXvfbSupported(
+	platform = process.platform,
+	which: (bin: string) => string | null = Bun.which,
+): boolean {
+	return platform === 'linux' && which('Xvfb') !== null;
 }
 
 export function launchConfiguredBrowser(

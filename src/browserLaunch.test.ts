@@ -113,10 +113,12 @@ describe('getGpuWorkaroundArgs', () => {
 });
 
 describe('isXvfbSupported', () => {
-	test('only enables Xvfb on Linux', () => {
-		expect(isXvfbSupported('linux')).toBeTrue();
-		expect(isXvfbSupported('darwin')).toBeFalse();
-		expect(isXvfbSupported('win32')).toBeFalse();
+	test('only enables Xvfb on Linux with the Xvfb binary installed', () => {
+		const installed = () => '/usr/bin/Xvfb';
+		expect(isXvfbSupported('linux', installed)).toBeTrue();
+		expect(isXvfbSupported('linux', () => null)).toBeFalse();
+		expect(isXvfbSupported('darwin', installed)).toBeFalse();
+		expect(isXvfbSupported('win32', installed)).toBeFalse();
 	});
 });
 
