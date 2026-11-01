@@ -300,10 +300,6 @@ export function trimExtractedUrl(url: string): string {
 	return base.replace(/[)\]}>.,;:!?'"…]+$/g, '');
 }
 
-export function isHypedditUrl(value: string): boolean {
-	return value.startsWith('https://hypeddit.com/');
-}
-
 export function isDroploudUrl(value: string): boolean {
 	return DROPLOUD_URL_RE.test(value);
 }
@@ -361,17 +357,6 @@ export function resolveGateProviderUrl(
 		};
 	}
 	return null;
-}
-
-export function getGateProvider(value: string): GateProvider | null {
-	return resolveGateProviderUrl(value)?.provider ?? null;
-}
-
-export function validateHypedditUrl(value: string): true | string {
-	if (!isHypedditUrl(value)) {
-		return 'A valid Hypeddit URL is required';
-	}
-	return true;
 }
 
 export function validateGateUrl(value: string): true | string {
@@ -828,25 +813,7 @@ export async function extractAndResolveGateUrl(
 export async function resolveGateUrlOrFollow(
 	value: string,
 ): Promise<{ url: string; provider: GateProvider } | null> {
-	const direct = resolveGateProviderUrl(value);
-	if (direct && direct.provider !== 'soundcloud') {
-		return direct;
-	}
-	if (direct?.provider === 'soundcloud') {
-		return direct;
-	}
-	return resolveUnknownGateUrl(value);
-}
-
-/** @deprecated Prefer extractGateUrl */
-export function extractHypedditUrl(
-	track: SoundcloudTrack,
-): { url: string; type: 'purchase_url' | 'description' } | null {
-	const gate = extractGateUrl(track);
-	if (gate?.provider !== 'hypeddit') {
-		return null;
-	}
-	return { url: gate.url, type: gate.type };
+	return resolveGateProviderUrl(value) ?? resolveUnknownGateUrl(value);
 }
 
 export function getDefaultMetadata(track: SoundcloudTrack): Metadata {
@@ -917,11 +884,6 @@ export function toMp3Filename(filename: string): string {
 
 export function toFlacFilename(filename: string): string {
 	return filename.replace(/\.[^.]+$/i, '.flac');
-}
-
-/** @deprecated Prefer toMp3Filename */
-export function losslessToMp3Filename(filename: string): string {
-	return toMp3Filename(filename);
 }
 
 /** Strip characters that are unsafe or awkward in filenames. */
