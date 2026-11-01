@@ -185,6 +185,12 @@ async function finalizeJobFile(
 			job.outputFormat,
 		);
 		outputFilename = basename(outputPath);
+		// Conversion may have deleted the source, so point the job at the new
+		// file before the rename that can still fail.
+		jobStore.update(job.id, {
+			outputFilename,
+			downloadFilename: outputFilename,
+		});
 		if (options.nameAsArtistTitle) {
 			outputFilename = await renameDownloadFile(
 				job.id,
