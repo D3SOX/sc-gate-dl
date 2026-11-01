@@ -82,9 +82,7 @@ describe('reserveDownloadFilename', () => {
 
 			expect(new Set(names).size).toBe(2);
 			expect(names).not.toContain('track.mp3');
-			expect(await Bun.file(join(dir, 'track.mp3')).text()).toBe(
-				'earlier job',
-			);
+			expect(await Bun.file(join(dir, 'track.mp3')).text()).toBe('earlier job');
 			expect((await readdir(dir)).sort()).toEqual(
 				['track.mp3', ...names].sort(),
 			);
