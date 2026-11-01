@@ -7,7 +7,7 @@
       "dependencies": {
         "@inquirer/prompts": "^8.7.3",
         "cli-progress": "^3.12.0",
-        "cloakbrowser": "^0.6.3",
+        "cloakbrowser": "^0.6.4",
         "find-bin": "^1.1.1",
         "mmdb-lib": "^3.0.3",
         "puppeteer": "^25.16.0",
@@ -145,7 +145,7 @@
 
     "cliui": ["cliui@9.0.1", "", { "dependencies": { "string-width": "^7.2.0", "strip-ansi": "^7.1.0", "wrap-ansi": "^9.0.0" } }, "sha512-k7ndgKhwoQveBL+/1tqGJYNz097I7WOvwbmmU2AR5+magtbjPWQTS1C5vzGkBC8Ym8UWRzfKUzUUqFLypY4Q+w=="],
 
-    "cloakbrowser": ["cloakbrowser@0.6.3", "", { "dependencies": { "tar": "^7.0.0" }, "peerDependencies": { "mmdb-lib": ">=2.0.0", "playwright-core": ">=1.53.0", "puppeteer-core": ">=21.0.0", "socks-proxy-agent": ">=10.0.0" }, "optionalPeers": ["mmdb-lib", "playwright-core", "puppeteer-core", "socks-proxy-agent"], "bin": { "cloakbrowser": "dist/cli.js" } }, "sha512-mkogz/HHYPsd01rhRyLfU5raXeGbZVv2m5bmVr+6qAqlN8zK6gA5NOaNcaGhj2wCPeJc/xT/Rxglu9MCF8ZqQw=="],
+    "cloakbrowser": ["cloakbrowser@0.6.4", "", { "dependencies": { "tar": "^7.0.0" }, "peerDependencies": { "mmdb-lib": ">=2.0.0", "playwright-core": ">=1.53.0", "puppeteer-core": ">=21.0.0", "socks-proxy-agent": ">=10.0.0" }, "optionalPeers": ["mmdb-lib", "playwright-core", "puppeteer-core", "socks-proxy-agent"], "bin": { "cloakbrowser": "dist/cli.js" } }, "sha512-0dYorA9UdbDvfYgRuNfvri/46GFcS9Aipqzniv55ijolweFC6gaoZe/g/wROYZSJuv8oovX54hMr++K6W3aYjw=="],
 
     "devtools-protocol": ["devtools-protocol@0.0.1704951", "", {}, "sha512-GQhQOs9u/Mvm1zMtJIH872JS4AskuZdUSsPNPk4ChahtWAUqgz6atEtIsMt+nO7MqF1Ic4HxII/k8Cu36JivNg=="],
 
