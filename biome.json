@@ -26,6 +26,11 @@
 			"quoteStyle": "single"
 		}
 	},
+	"markdown": {
+		"formatter": {
+			"enabled": false
+		}
+	},
 	"overrides": [
 		{
 			"includes": ["userscript/**/*.user.js"],
