@@ -41,3 +41,20 @@ export function isAllowedCorsOrigin(
 		return false;
 	}
 }
+
+const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
+
+/**
+ * CORS only hides responses; browsers still deliver simple cross-site POSTs.
+ * Reject state-changing requests from browser origins outside the allowlist.
+ * Requests without an Origin header come from non-browser clients.
+ */
+export function isForbiddenCrossOriginRequest(req: Request): boolean {
+	const origin = req.headers.get('Origin');
+	return (
+		!SAFE_METHODS.has(req.method) &&
+		origin !== null &&
+		origin !== new URL(req.url).origin &&
+		!isAllowedCorsOrigin(req.url, origin)
+	);
+}

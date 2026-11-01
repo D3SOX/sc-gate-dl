@@ -25,7 +25,10 @@ import { libraryDirFromEnv, moveIntoLibrary } from './libraryDestination';
 import { MypresskitDownloader } from './mypresskit';
 import { PumpyoursoundDownloader } from './pumpyoursound';
 import { parseArtworkUrl, parseSearchQuery, toSearchResponse } from './search';
-import { isAllowedCorsOrigin } from './serverCors';
+import {
+	isAllowedCorsOrigin,
+	isForbiddenCrossOriginRequest,
+} from './serverCors';
 import { SoundcloudClient } from './soundcloud';
 import { isSoundcloudDownloadEnabled } from './soundcloudDownload';
 import { StillhypeDownloader } from './stillhype';
@@ -923,7 +926,12 @@ function sseResponse(stream: ReadableStream): Response {
 type RouteHandler = (req: Request) => Response | Promise<Response>;
 
 function wrapRouteHandler(handler: RouteHandler): RouteHandler {
-	return (req) => requestAls.run(req, () => handler(req));
+	return (req) =>
+		requestAls.run(req, () =>
+			isForbiddenCrossOriginRequest(req)
+				? jsonResponse({ error: 'Origin not allowed' }, { status: 403 })
+				: handler(req),
+		);
 }
 
 function wrapRoutes<Path extends string>(
