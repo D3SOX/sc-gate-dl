@@ -165,7 +165,10 @@ port `3000` of the same host. For example, a Web UI opened at
 `http://192.168.1.50:4321` uses `http://192.168.1.50:3000`. Set
 `PUBLIC_API_BASE_URL` when the public API uses a different host or port. If a
 reverse proxy gives the Web UI a different origin, add it to the comma-separated
-`SC_GATE_DL_ALLOWED_ORIGINS` environment variable.
+`SC_GATE_DL_ALLOWED_ORIGINS` environment variable. The API rejects `POST`
+requests from browser pages on any other origin with `403`, so a website you
+visit cannot start downloads or clean up your SoundCloud account. Clients that
+send no `Origin` header, such as scripts, are not affected.
 
 Type search terms instead of a URL in the first step to search SoundCloud
 tracks with the configured account. Pick a result to start its download. A
