@@ -613,16 +613,17 @@ export class SoundcloudClient {
 		if (!response.ok) {
 			throw new Error(`Failed to fetch artwork: ${response.statusText}`);
 		}
-		const declaredSize = Number(response.headers.get('content-length'));
-		if (declaredSize > MAX_ARTWORK_BYTES) {
-			await response.body?.cancel();
-			throw new Error(`Artwork is larger than ${MAX_ARTWORK_BYTES} bytes`);
+		const chunks: Uint8Array[] = [];
+		let size = 0;
+		for await (const chunk of response.body ?? []) {
+			size += chunk.byteLength;
+			// Throwing exits the loop, which cancels the response stream.
+			if (size > MAX_ARTWORK_BYTES) {
+				throw new Error(`Artwork is larger than ${MAX_ARTWORK_BYTES} bytes`);
+			}
+			chunks.push(chunk);
 		}
-		const buffer = await response.arrayBuffer();
-		if (buffer.byteLength > MAX_ARTWORK_BYTES) {
-			throw new Error(`Artwork is larger than ${MAX_ARTWORK_BYTES} bytes`);
-		}
-		return { buffer, fileName };
+		return { buffer: Bun.concatArrayBuffers(chunks), fileName };
 	}
 
 	async cleanup(prompt = true): Promise<

@@ -683,7 +683,11 @@ async function runDownloadProcess(jobId: string): Promise<void> {
 		}
 
 		// A retry must not finalize the output of an earlier failed attempt.
-		jobStore.update(jobId, { downloadFilename, outputFilename: null });
+		jobStore.update(jobId, {
+			downloadFilename,
+			outputFilename: null,
+			tagsSubmitted: false,
+		});
 		const downloadedPath = join('./downloads', downloadFilename);
 		const signature = new Uint8Array(
 			await Bun.file(downloadedPath).slice(0, 4).arrayBuffer(),
