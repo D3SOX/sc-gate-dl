@@ -165,6 +165,8 @@ export interface Job {
 	/** Cover art embedded in the downloaded MP3, when present. */
 	existingArtworkBuffer: ArrayBuffer | null;
 	existingArtworkFileName: string | null;
+	/** Set once `/api/job/:id/metadata` started finalizing the file. */
+	tagsSubmitted: boolean;
 	error: string | null;
 	createdAt: Date;
 	updatedAt: Date;

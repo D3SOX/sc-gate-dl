@@ -877,6 +877,10 @@ async function runDownloadProcess(jobId: string): Promise<void> {
 	}
 }
 
+// Finished jobs hold artwork buffers; forget them after a day of inactivity.
+const JOB_RETENTION_MS = 24 * 60 * 60 * 1000;
+setInterval(() => jobStore.cleanup(JOB_RETENTION_MS), 60 * 60 * 1000).unref();
+
 const requestAls = new AsyncLocalStorage<Request>();
 
 function corsHeaders(): Record<string, string> {
@@ -1719,10 +1723,12 @@ const server = Bun.serve({
 						return jsonResponse({ error: 'Job not found' }, { status: 404 });
 					}
 
-					// Unattended jobs accept tags once, while they wait for them.
+					// Jobs accept tags once: unattended jobs while they wait for them,
+					// Web UI jobs once their download is ready.
 					const notWaiting = () =>
-						job.destination !== null &&
-						job.progress.stage !== 'waiting_metadata';
+						job.tagsSubmitted ||
+						job.progress.stage !==
+							(job.destination ? 'waiting_metadata' : 'ready');
 					if (notWaiting()) {
 						return jsonResponse(
 							{ error: 'Job is not waiting for tags' },
@@ -1811,14 +1817,16 @@ const server = Bun.serve({
 						);
 					}
 
+					// A concurrent submit or cancel may have won while the body was read.
+					if (notWaiting()) {
+						return jsonResponse(
+							{ error: 'Job is not waiting for tags' },
+							{ status: 409 },
+						);
+					}
+					jobStore.update(jobId, { tagsSubmitted: true });
+
 					if (job.destination) {
-						// A concurrent submit or cancel may have won while the body was read.
-						if (notWaiting()) {
-							return jsonResponse(
-								{ error: 'Job is not waiting for tags' },
-								{ status: 409 },
-							);
-						}
 						jobStore.updateProgress(
 							jobId,
 							'processing_audio',
@@ -1839,11 +1847,24 @@ const server = Bun.serve({
 						return jsonResponse({ success: true });
 					}
 
-					const outputFilename = await finalizeJobFile(job, metadata, {
-						preserveMetadata,
-						nameAsArtistTitle,
-						artwork,
-					});
+					let outputFilename: string;
+					try {
+						outputFilename = await finalizeJobFile(job, metadata, {
+							preserveMetadata,
+							nameAsArtistTitle,
+							artwork,
+						});
+					} catch (error) {
+						// Let the Web UI retry after a failed conversion.
+						jobStore.update(jobId, { tagsSubmitted: false });
+						jobStore.updateProgress(
+							jobId,
+							'ready',
+							'Ready for metadata editing',
+							100,
+						);
+						throw error;
+					}
 
 					jobStore.updateProgress(
 						jobId,

@@ -6,6 +6,8 @@ import type {
 	OutputFormat,
 } from './types';
 
+const FINISHED_STAGES = new Set<JobStage>(['ready', 'error', 'cancelled']);
+
 type ProgressListener = (progress: JobProgress) => void;
 type BandcampTrackResolver = (url: string | null) => void;
 
@@ -56,6 +58,7 @@ class JobStore {
 			artworkFileName: null,
 			existingArtworkBuffer: null,
 			existingArtworkFileName: null,
+			tagsSubmitted: false,
 			error: null,
 			createdAt: now,
 			updatedAt: now,
@@ -271,13 +274,16 @@ class JobStore {
 	}
 
 	/**
-	 * Clean up old jobs (older than specified milliseconds)
+	 * Forget finished jobs idle for longer than `maxIdleMs`, releasing their
+	 * artwork buffers. Their files stay in downloads/.
 	 */
-	cleanup(maxAgeMs: number = 60 * 60 * 1000): number {
-		const now = Date.now();
+	cleanup(maxIdleMs: number, now = Date.now()): number {
 		let deleted = 0;
 		for (const [id, job] of this.jobs) {
-			if (now - job.createdAt.getTime() > maxAgeMs) {
+			if (
+				FINISHED_STAGES.has(job.progress.stage) &&
+				now - job.updatedAt.getTime() > maxIdleMs
+			) {
 				this.delete(id);
 				deleted++;
 			}

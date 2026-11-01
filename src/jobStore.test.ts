@@ -120,3 +120,23 @@ describe('jobStore Bandcamp track selection', () => {
 		}
 	});
 });
+
+describe('jobStore cleanup', () => {
+	test('forgets idle finished jobs and keeps active ones', () => {
+		const finished = jobStore.create('https://soundcloud.com/a/b', 'mp3-320');
+		const active = jobStore.create('https://soundcloud.com/a/c', 'mp3-320');
+		try {
+			jobStore.updateProgress(finished.id, 'ready', 'Ready', 100);
+			jobStore.updateProgress(active.id, 'downloading', 'Downloading', 50);
+			const later = Date.now() + 2 * 60 * 60 * 1000;
+
+			expect(jobStore.cleanup(60 * 60 * 1000, Date.now())).toBe(0);
+			expect(jobStore.cleanup(60 * 60 * 1000, later)).toBe(1);
+			expect(jobStore.get(finished.id)).toBeUndefined();
+			expect(jobStore.get(active.id)).toBe(active);
+		} finally {
+			jobStore.delete(finished.id);
+			jobStore.delete(active.id);
+		}
+	});
+});
