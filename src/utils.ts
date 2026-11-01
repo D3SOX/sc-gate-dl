@@ -7,6 +7,7 @@ import type { Cookie, CookieData } from 'puppeteer';
 import type { SoundcloudTrack } from 'soundcloud.ts';
 import packageJson from '../package.json' with { type: 'json' };
 import {
+	isKnownDirectDownloadHost,
 	normalizeDirectDownloadParsedUrl,
 	urlLooksLikeDirectDownload,
 } from './directLinkRules';
@@ -394,8 +395,7 @@ function normalizeGateUrl(
 		provider === 'stillhype' ||
 		provider === 'pumpyoursound' ||
 		provider === 'mypresskit' ||
-		provider === 'bandcamp' ||
-		provider === 'direct'
+		provider === 'bandcamp'
 	) {
 		return {
 			url: url.replace(/^http:\/\//i, 'https://'),
@@ -560,7 +560,9 @@ function matchDirectDownloadUrl(
 	if (!httpMatch) return null;
 	const trimmed = trimExtractedUrl(httpMatch);
 	try {
-		const url = new URL(trimmed.replace(/^http:\/\//i, 'https://'));
+		const url = new URL(trimmed);
+		// Dropbox and Drive serve HTTPS; arbitrary file hosts keep their scheme.
+		if (isKnownDirectDownloadHost(url.hostname)) url.protocol = 'https:';
 		if (!urlLooksLikeDirectDownload(url)) return null;
 		return {
 			url: normalizeDirectDownloadParsedUrl(url),
