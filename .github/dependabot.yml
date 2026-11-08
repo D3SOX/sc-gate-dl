@@ -6,6 +6,9 @@ updates:
       interval: "weekly"
     cooldown:
       default-days: 7
+    ignore:
+      - dependency-name: "cloakbrowser"
+        versions: [">=0.7.0"]
   - package-ecosystem: "bun"
     directory: "/webui"
     schedule:
