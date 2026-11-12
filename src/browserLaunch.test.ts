@@ -3,6 +3,7 @@ import {
 	buildXvfbBrowserEnv,
 	CancellableBrowserLaunch,
 	createXvfbManager,
+	getBrowserTempEnv,
 	getGpuWorkaroundArgs,
 	isXvfbSupported,
 	readXvfbDisplay,
@@ -157,5 +158,15 @@ describe('CancellableBrowserLaunch', () => {
 		});
 		await session.close();
 		await expect(session.launch()).rejects.toThrow('Download cancelled');
+	});
+});
+
+describe('getBrowserTempEnv', () => {
+	test('moves Chromium off a TMPDIR too long for its profile socket', () => {
+		expect(getBrowserTempEnv({ TMPDIR: `/home/${'x'.repeat(70)}` })).toEqual({
+			TMPDIR: '/tmp',
+		});
+		expect(getBrowserTempEnv({ TMPDIR: '/home/user/tmp' })).toEqual({});
+		expect(getBrowserTempEnv({})).toEqual({});
 	});
 });

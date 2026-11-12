@@ -76,6 +76,21 @@ export function launchConfiguredBrowser(
 	});
 }
 
+/** Chromium's SingletonSocket lives in TMPDIR; Unix socket paths stop at 107 bytes. */
+const CHROMIUM_SOCKET_SUFFIX = '/org.chromium.Chromium.XXXXXX/SingletonSocket';
+
+/** Environment overrides that keep Chromium's profile socket under the Unix path limit. */
+export function getBrowserTempEnv(
+	env: Record<string, string | undefined> = process.env,
+): Record<string, string> {
+	const temp = env.TMPDIR?.trim();
+	return temp &&
+		Buffer.byteLength(temp + CHROMIUM_SOCKET_SUFFIX) > 107 &&
+		process.platform !== 'win32'
+		? { TMPDIR: '/tmp' }
+		: {};
+}
+
 export function buildXvfbBrowserEnv(
 	display: string,
 	env: Record<string, string | undefined> = process.env,
@@ -237,6 +252,7 @@ export async function launchAppBrowser(
 		);
 	}
 	const xvfb = useXvfb ? await acquireXvfb() : null;
+	const tempEnv = getBrowserTempEnv();
 
 	const args = [
 		...DEFAULT_BROWSER_ARGS,
@@ -254,9 +270,12 @@ export async function launchAppBrowser(
 		...(proxy ? { proxy, ...(geoip ? { geoip: true } : {}) } : {}),
 		args,
 		launchOptions: {
-			...(xvfb
+			...(xvfb || Object.keys(tempEnv).length
 				? {
-						env: buildXvfbBrowserEnv(xvfb.display),
+						env: {
+							...(xvfb ? buildXvfbBrowserEnv(xvfb.display) : process.env),
+							...tempEnv,
+						},
 					}
 				: {}),
 			...(options.defaultViewport !== undefined
