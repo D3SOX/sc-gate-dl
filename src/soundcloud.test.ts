@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'bun:test';
+import { describe, expect, spyOn, test } from 'bun:test';
 import { SoundcloudClient } from './soundcloud';
 
 type Page = { collection: unknown[]; next_href?: string | null };
@@ -70,5 +70,38 @@ describe('SoundcloudClient.cleanup', () => {
 			'me/track_reposts/40',
 			'me/track_reposts/41',
 		]);
+	});
+});
+
+describe('SoundcloudClient.searchTracks', () => {
+	test('sends only the client ID, so an expired login cannot break search', async () => {
+		let request: Request | undefined;
+		const fetch = spyOn(globalThis, 'fetch').mockImplementation(
+			Object.assign(
+				async (input: string | URL | Request, init?: RequestInit) => {
+					request = new Request(input, init);
+					return Response.json({ collection: [], next_href: null });
+				},
+				{ preconnect: globalThis.fetch.preconnect },
+			),
+		);
+		try {
+			const client = new SoundcloudClient({
+				credentials: { clientId: 'client', oauthToken: 'expired' },
+			});
+			await client.searchTracks('flickermood', 5, 10);
+		} finally {
+			fetch.mockRestore();
+		}
+
+		const url = new URL(request?.url ?? '');
+		expect(url.pathname).toBe('/search/tracks');
+		expect(Object.fromEntries(url.searchParams)).toEqual({
+			q: 'flickermood',
+			limit: '5',
+			offset: '10',
+			client_id: 'client',
+		});
+		expect(request?.headers.get('Authorization')).toBeNull();
 	});
 });

@@ -3,6 +3,7 @@ import { lookpath } from 'find-bin';
 import Soundcloud, {
 	type SoundcloudPlaylist,
 	type SoundcloudTrack,
+	type SoundcloudTrackSearch,
 	type SoundcloudUser,
 } from 'soundcloud.ts';
 import { SoundcloudReadQueue } from './soundcloudReadQueue';
@@ -49,6 +50,7 @@ interface ManagedAccountExport {
 
 export class SoundcloudClient {
 	private soundcloud: Soundcloud;
+	private readonly clientId: string;
 	private readonly readQueue: SoundcloudReadQueue;
 
 	constructor(options?: SoundcloudClientOptions) {
@@ -63,6 +65,7 @@ export class SoundcloudClient {
 			);
 		}
 
+		this.clientId = clientId;
 		this.soundcloud = new Soundcloud(clientId, oauthToken);
 	}
 
@@ -106,10 +109,30 @@ export class SoundcloudClient {
 		);
 	}
 
-	async searchTracks(query: string, limit: number, offset: number) {
-		return this.readQueue.run(() =>
-			this.soundcloud.tracks.search({ q: query, limit, offset }),
-		);
+	/**
+	 * Search is public, so it sends only the client ID. SoundCloud rejects the
+	 * whole request with 401 when the account token has expired.
+	 */
+	async searchTracks(
+		query: string,
+		limit: number,
+		offset: number,
+	): Promise<SoundcloudTrackSearch> {
+		return this.readQueue.run(async () => {
+			const params = new URLSearchParams({
+				q: query,
+				limit: String(limit),
+				offset: String(offset),
+				client_id: this.clientId,
+			});
+			const { Authorization: _, ...headers } = this.soundcloud.api.headers;
+			const response = await fetch(
+				`https://api-v2.soundcloud.com/search/tracks?${params}`,
+				{ headers, signal: AbortSignal.timeout(15_000) },
+			);
+			if (!response.ok) throw new Error(`Status code ${response.status}`);
+			return (await response.json()) as SoundcloudTrackSearch;
+		});
 	}
 
 	/**
