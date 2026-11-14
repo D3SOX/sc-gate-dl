@@ -37,8 +37,9 @@ report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 browser-data
 browser-data*
 downloads
-# soundcloud cookies
+# soundcloud cookies and renewed login tokens
 soundcloud-cookies.json
+soundcloud-token.json
 # spotify cookies
 spotify-cookies.json
 # config file

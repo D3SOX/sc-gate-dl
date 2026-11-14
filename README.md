@@ -66,6 +66,10 @@ For `HYPEDDIT_EMAIL` you can enter any valid email address (For example grab one
 5. Go to the **Payload** tab
 6. You should see your client id in the **Query String Parameters** section, and your oauth token (`access_token`) in the **Request Payload** section
 7. Copy these values to your `.env` file as `SC_CLIENT_ID` and `SC_OAUTH_TOKEN`
+8. Go to the **Application** tab (**Storage** in Firefox), open **Cookies** → `https://soundcloud.com`, and copy the value of `oauth_refresh_token` to your `.env` file as `SC_REFRESH_TOKEN`
+9. Delete SoundCloud's cookies in this browser without logging out
+
+SoundCloud's access tokens expire after 24 hours. With `SC_REFRESH_TOKEN` set, sc-gate-dl renews them and keeps the current tokens in `soundcloud-token.json`. Each refresh also replaces the refresh token. If the browser you copied it from keeps using the old one, one of the two gets logged out. Logging out may end the session for sc-gate-dl too. If you run sc-gate-dl in several places, log in separately for each one. When you set a new `SC_REFRESH_TOKEN`, sc-gate-dl stops using the saved tokens and starts from the new one.
 
 If you want to export data from a separate SoundCloud account, add that account's credentials as `MANAGED_SC_CLIENT_ID` and `MANAGED_SC_OAUTH_TOKEN`.
 

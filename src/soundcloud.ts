@@ -6,6 +6,7 @@ import Soundcloud, {
 	type SoundcloudTrackSearch,
 	type SoundcloudUser,
 } from 'soundcloud.ts';
+import { SoundcloudTokenRefresher } from './soundcloudAuth';
 import { SoundcloudReadQueue } from './soundcloudReadQueue';
 import {
 	extractAndResolveGateUrl,
@@ -48,25 +49,50 @@ interface ManagedAccountExport {
 	repostedPlaylists: SoundcloudPlaylist[];
 }
 
+/** Shared so every client in this process uses the same rotating login. */
+let envTokenRefresher: SoundcloudTokenRefresher | undefined;
+
 export class SoundcloudClient {
 	private soundcloud: Soundcloud;
 	private readonly clientId: string;
 	private readonly readQueue: SoundcloudReadQueue;
+	private readonly tokenRefresher?: SoundcloudTokenRefresher;
 
 	constructor(options?: SoundcloudClientOptions) {
 		this.readQueue = options?.readQueue ?? new SoundcloudReadQueue();
 		const clientId = options?.credentials?.clientId ?? process.env.SC_CLIENT_ID;
 		const oauthToken =
 			options?.credentials?.oauthToken ?? process.env.SC_OAUTH_TOKEN;
+		const refreshToken = options?.credentials
+			? undefined
+			: process.env.SC_REFRESH_TOKEN?.trim();
 
-		if (!clientId || !oauthToken) {
+		if (!clientId || (!oauthToken && !refreshToken)) {
 			throw new Error(
-				'SC_CLIENT_ID and SC_OAUTH_TOKEN are required. Please set them in your .env file.',
+				'SC_CLIENT_ID and SC_REFRESH_TOKEN or SC_OAUTH_TOKEN are required. Please set them in your .env file.',
 			);
 		}
 
 		this.clientId = clientId;
 		this.soundcloud = new Soundcloud(clientId, oauthToken);
+		if (refreshToken) {
+			envTokenRefresher ??= new SoundcloudTokenRefresher({
+				clientId,
+				refreshToken,
+				accessToken: oauthToken,
+			});
+			this.tokenRefresher = envTokenRefresher;
+		}
+	}
+
+	/** Swaps in a renewed access token before calls that need the account. */
+	private async refreshLogin(): Promise<void> {
+		if (!this.tokenRefresher) return;
+		const token = await this.tokenRefresher.accessToken();
+		if (token === this.soundcloud.api.oauthToken) return;
+		// soundcloud.ts keeps the token in static fields, so rebuild the client.
+		this.soundcloud = new Soundcloud(this.clientId, token);
+		process.env.SC_OAUTH_TOKEN = token;
 	}
 
 	/** Chrome-TLS curl with argv + optional stdin; never throws on non-zero exit. */
@@ -103,6 +129,7 @@ export class SoundcloudClient {
 	}
 
 	async getTrack(url: string, onRateLimit?: (milliseconds: number) => void) {
+		await this.refreshLogin();
 		return this.readQueue.run(
 			() => this.soundcloud.tracks.get(url),
 			onRateLimit,
@@ -225,6 +252,7 @@ export class SoundcloudClient {
 	async repostTrackViaGraphql(
 		track: SoundcloudTrack | string,
 	): Promise<{ ok: boolean; status: number; reason: string; body: string }> {
+		await this.refreshLogin();
 		const resolved =
 			typeof track === 'string' ? await this.getTrack(track) : track;
 		const trackUrn = `soundcloud:tracks:${resolved.id}`;
@@ -592,6 +620,7 @@ export class SoundcloudClient {
 	}
 
 	async getMe(): Promise<Record<string, unknown>> {
+		await this.refreshLogin();
 		return await this.soundcloud.api.getV2('me');
 	}
 
