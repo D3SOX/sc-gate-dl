@@ -11,7 +11,7 @@
 		"name": "D3SOX",
 		"url": "https://github.com/D3SOX"
 	},
-	"license": "GPL-3.0-or-later",
+	"license": "AGPL-3.0-or-later",
 	"scripts": {
 		"start": "bun run .",
 		"manage-acc": "bun run ./manage-acc.ts",
