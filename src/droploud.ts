@@ -277,7 +277,7 @@ export class DroploudDownloader {
 
 				const connectBtn = Array.from(
 					document.querySelectorAll<HTMLButtonElement>('button'),
-				).find((btn) => /connect soundcloud/i.test(btn.textContent || ''));
+				).find((btn) => /connect (soundcloud|with)/i.test(btn.textContent || ''));
 				if (connectBtn || document.querySelector(selectors.commentInput)) {
 					return 'soundcloud_connect';
 				}
@@ -1787,16 +1787,19 @@ export class DroploudDownloader {
 				);
 			}
 
-			// React-controlled textarea: native setter + input event enables Connect.
+			// React-controlled field: native setter + input event enables Connect.
 			await page.focus(Selectors.DROPLOUD_SC_COMMENT_INPUT);
 			await page.evaluate(
 				(selector, value) => {
-					const el = document.querySelector<HTMLTextAreaElement>(selector);
+					const el = document.querySelector<
+						HTMLInputElement | HTMLTextAreaElement
+					>(selector);
 					if (!el) return;
-					const setter = Object.getOwnPropertyDescriptor(
-						window.HTMLTextAreaElement.prototype,
-						'value',
-					)?.set;
+					const proto =
+						el instanceof HTMLTextAreaElement
+							? window.HTMLTextAreaElement.prototype
+							: window.HTMLInputElement.prototype;
+					const setter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
 					setter?.call(el, value);
 					el.dispatchEvent(new Event('input', { bubbles: true }));
 					el.dispatchEvent(new Event('change', { bubbles: true }));
@@ -1811,7 +1814,7 @@ export class DroploudDownloader {
 			await page.waitForFunction(
 				() => {
 					const btn = Array.from(document.querySelectorAll('button')).find(
-						(el) => /connect soundcloud/i.test(el.textContent || ''),
+						(el) => /connect (soundcloud|with)/i.test(el.textContent || ''),
 					) as HTMLButtonElement | undefined;
 					return !!btn && !btn.disabled;
 				},
@@ -1827,7 +1830,7 @@ export class DroploudDownloader {
 
 		await page.evaluate(() => {
 			const btn = Array.from(document.querySelectorAll('button')).find((el) =>
-				/connect soundcloud/i.test(el.textContent || ''),
+				/connect (soundcloud|with)/i.test(el.textContent || ''),
 			);
 			(btn as HTMLButtonElement | undefined)?.click();
 		});
@@ -1909,7 +1912,7 @@ export class DroploudDownloader {
 					return true;
 				}
 				const connect = Array.from(document.querySelectorAll('button')).find(
-					(btn) => /connect soundcloud/i.test(btn.textContent || ''),
+					(btn) => /connect (soundcloud|with)/i.test(btn.textContent || ''),
 				);
 				const comment = document.querySelector('#dtr-sc-comment-input');
 				// Advanced past the SoundCloud connect pane
