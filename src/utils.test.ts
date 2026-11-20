@@ -13,6 +13,7 @@ import {
 	previewProcessedFilename,
 	resolveGateProviderUrl,
 	sanitizeFilenamePart,
+	toM4aFilename,
 	writeBrowserCookies,
 	writeSoundcloudNetscapeCookies,
 } from './utils';
@@ -494,6 +495,23 @@ describe('previewProcessedFilename', () => {
 		).toBe('song.mp3');
 	});
 
+	test('always previews an m4a extension for m4a-aac output', () => {
+		expect(
+			previewProcessedFilename('song.flac', {
+				nameAsArtistTitle: false,
+				outputFormat: 'm4a-aac',
+			}),
+		).toBe('song.m4a');
+		expect(
+			previewProcessedFilename('song.mp3', {
+				nameAsArtistTitle: true,
+				artist: 'Artist',
+				title: 'Title',
+				outputFormat: 'm4a-aac',
+			}),
+		).toBe('Artist - Title.m4a');
+	});
+
 	test('always previews a flac extension for flac output', () => {
 		expect(
 			previewProcessedFilename('song.mp3', {
@@ -509,6 +527,18 @@ describe('previewProcessedFilename', () => {
 				outputFormat: 'flac',
 			}),
 		).toBe('Artist - Title.flac');
+	});
+});
+
+describe('toM4aFilename', () => {
+	test('swaps any extension for .m4a', () => {
+		expect(toM4aFilename('song.flac')).toBe('song.m4a');
+		expect(toM4aFilename('song.WAV')).toBe('song.m4a');
+		expect(toM4aFilename('My.Song.aiff')).toBe('My.Song.m4a');
+	});
+
+	test('keeps a name that already ends in .m4a', () => {
+		expect(toM4aFilename('song.m4a')).toBe('song.m4a');
 	});
 });
 

@@ -891,6 +891,10 @@ export function toFlacFilename(filename: string): string {
 	return filename.replace(/\.[^.]+$/i, '.flac');
 }
 
+export function toM4aFilename(filename: string): string {
+	return filename.replace(/\.[^.]+$/i, '.m4a');
+}
+
 /** Strip characters that are unsafe or awkward in filenames. */
 export function sanitizeFilenamePart(value: string): string {
 	return value
@@ -912,21 +916,32 @@ export function artistTitleFilename(
 }
 
 /** Predicted output name for the metadata step (always ends as MP3). */
+function previewExtension(
+	outputFormat: 'mp3-320' | 'm4a-aac' | 'flac' | undefined,
+): string {
+	if (outputFormat === 'flac') return '.flac';
+	if (outputFormat === 'm4a-aac') return '.m4a';
+	return '.mp3';
+}
+
 export function previewProcessedFilename(
 	downloadFilename: string,
 	options: {
 		nameAsArtistTitle: boolean;
 		artist?: string;
 		title?: string;
-		outputFormat?: 'mp3-320' | 'flac';
+		outputFormat?: 'mp3-320' | 'm4a-aac' | 'flac';
 	},
 ): string {
-	const extension = options.outputFormat === 'flac' ? '.flac' : '.mp3';
+	const extension = previewExtension(options.outputFormat);
 	if (options.nameAsArtistTitle) {
 		return artistTitleFilename(options.artist, options.title, extension);
 	}
 	if (options.outputFormat === 'flac') {
 		return toFlacFilename(downloadFilename);
+	}
+	if (options.outputFormat === 'm4a-aac') {
+		return toM4aFilename(downloadFilename);
 	}
 	if (needsMp3Conversion(downloadFilename)) {
 		return toMp3Filename(downloadFilename);

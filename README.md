@@ -186,6 +186,10 @@ MP3, FLAC, and original files after their HTTP response has been transferred in
 full. This applies to headless, Xvfb, and visible-headed jobs. Interrupted or
 failed transfers retain the file so the download can be retried.
 
+Set `SC_GATE_DL_AAC_BITRATE` to change the AAC bitrate (kbps) for M4A/AAC
+output. It defaults to `320` and is clamped to `64`–`320`; non-numeric values
+fall back to `320`.
+
 Set `SC_GATE_DL_LIBRARY_DIR` to a folder inside your music server's library,
 for example `/home/YOUR_USER/Music/SoundCloud`, so API clients like
 [Nevumi](https://github.com/D3SOX/Nevumi) can save finished downloads there.
@@ -532,7 +536,7 @@ HTTPS so the embedded client connects over `wss://`.
 
 If it's the first time you're running it you will need to initialize the logins by clicking the button in the footer.
 
-You can deep-link a track with `?url=` (also accepted as `?soundcloudUrl=`), optional `outputFormat` (`mp3-320`, `flac`, or `original`), and optional `browserMode` (`headless`, `xvfb`, or `headed`), which pre-fills the form and starts the job. FLAC output preserves lossless sources; converting a lossy source to FLAC changes the container but cannot restore lost quality.
+You can deep-link a track with `?url=` (also accepted as `?soundcloudUrl=`), optional `outputFormat` (`mp3-320`, `m4a-aac`, `flac`, or `original`), and optional `browserMode` (`headless`, `xvfb`, or `headed`), which pre-fills the form and starts the job. FLAC output preserves lossless sources; converting a lossy source to FLAC changes the container but cannot restore lost quality.
 
 ```text
 http://localhost:4321/?url=https://soundcloud.com/artist/track&outputFormat=mp3-320
@@ -608,4 +612,5 @@ Droploud, GateRush, DownloadGater, StillHype, PumpYourSound, and MyPressKit gate
 **File Processing**:
 
 - **Lossless (WAV/AIFF/FLAC) files**: Converted to MP3 (320kbps) with metadata and artwork
+- **Lossless files with `m4a-aac` output**: Converted to M4A (AAC, `SC_GATE_DL_AAC_BITRATE` kbps, default 320) with metadata, artwork, and the source link in the comment tag
 - **MP3 files**: Retagged with metadata and artwork (no re-encoding)

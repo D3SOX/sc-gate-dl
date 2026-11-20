@@ -1,6 +1,26 @@
 import { describe, expect, test } from 'bun:test';
-import { parseBrowserMode, parseUnattendedJobOptions } from './jobOptions';
+import {
+	parseBrowserMode,
+	parseOutputFormat,
+	parseUnattendedJobOptions,
+} from './jobOptions';
 import type { BrowserMode } from './types';
+
+describe('parseOutputFormat', () => {
+	test('accepts every output format value, including m4a-aac', () => {
+		for (const value of ['original', 'mp3-320', 'm4a-aac', 'flac']) {
+			expect(parseOutputFormat(value)).toBe(value);
+		}
+	});
+
+	test('rejects unknown and non-string values', () => {
+		for (const value of ['m4a', 'aac', 'M4A-AAC', '', 1, null]) {
+			expect(parseOutputFormat(value)).toBe(
+				'outputFormat must be "original", "mp3-320", "m4a-aac", or "flac"',
+			);
+		}
+	});
+});
 
 const linuxModes: BrowserMode[] = ['headless', 'xvfb', 'headed'];
 

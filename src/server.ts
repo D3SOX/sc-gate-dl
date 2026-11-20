@@ -3,7 +3,7 @@ import { cp, mkdir, rm } from 'node:fs/promises';
 import { basename, extname, join } from 'node:path';
 import type { SoundcloudTrack } from 'soundcloud.ts';
 import { hasZipSignature, resolveDownloadedAudio } from './archiveAudio';
-import { AudioProcessor } from './audioProcessor';
+import { AudioProcessor, parseAacBitrateKbps } from './audioProcessor';
 import type { BandcampGateOptions } from './bandcampGate';
 import { isXvfbSupported } from './browserLaunch';
 import { attachmentContentDisposition } from './contentDisposition';
@@ -19,7 +19,11 @@ import { DroploudDownloader } from './droploud';
 import { GaterushDownloader } from './gaterush';
 import { HypedditDownloader, type ProgressCallback } from './hypeddit';
 import { HypedditHttpDownloader } from './hypedditHttp';
-import { parseBrowserMode, parseUnattendedJobOptions } from './jobOptions';
+import {
+	parseBrowserMode,
+	parseOutputFormat,
+	parseUnattendedJobOptions,
+} from './jobOptions';
 import { JobQueue } from './jobQueue';
 import { jobStore } from './jobStore';
 import { libraryDirFromEnv, moveIntoLibrary } from './libraryDestination';
@@ -40,7 +44,6 @@ import {
 	isJobDestination,
 	type Job,
 	type Metadata,
-	type OutputFormat,
 } from './types';
 import {
 	artistTitleFilename,
@@ -91,9 +94,16 @@ const DELETE_AFTER_DOWNLOAD = deleteAfterDownloadEnabled(
 	process.env.SC_GATE_DL_DELETE_AFTER_DOWNLOAD,
 );
 const LIBRARY_DIR = libraryDirFromEnv();
+const AAC_BITRATE_KBPS = parseAacBitrateKbps(
+	process.env.SC_GATE_DL_AAC_BITRATE,
+);
 
 const soundcloudClient = new SoundcloudClient();
-const audioProcessor = new AudioProcessor(ffmpegBin, ffprobeBin);
+const audioProcessor = new AudioProcessor(
+	ffmpegBin,
+	ffprobeBin,
+	AAC_BITRATE_KBPS,
+);
 const availableBrowserModes: BrowserMode[] = isXvfbSupported()
 	? ['headless', 'xvfb', 'headed']
 	: ['headless', 'headed'];
@@ -199,7 +209,7 @@ async function finalizeJobFile(
 				artistTitleFilename(
 					metadata.artist,
 					metadata.title,
-					job.outputFormat === 'flac' ? '.flac' : '.mp3',
+					extname(outputFilename),
 				),
 			);
 		}
@@ -710,7 +720,7 @@ async function runDownloadProcess(jobId: string): Promise<void> {
 		downloadFilename = await resolveDownloadedAudio(downloadFilename);
 		jobStore.update(jobId, { downloadFilename });
 		throwIfCancelled();
-		if (job.outputFormat === 'flac') {
+		if (job.outputFormat === 'flac' || job.outputFormat === 'm4a-aac') {
 			const sourceIsLossless = await audioProcessor.isLosslessAudio(
 				join('./downloads', downloadFilename),
 			);
@@ -1053,7 +1063,7 @@ const server = Bun.serve({
 					} = body as {
 						soundcloudUrl?: string;
 						skipAutomaticHypedditFetch?: boolean;
-						outputFormat?: OutputFormat;
+						outputFormat?: unknown;
 						destination?: unknown;
 						browserMode?: unknown;
 						reviewTags?: unknown;
@@ -1071,18 +1081,11 @@ const server = Bun.serve({
 						return jsonResponse({ error: validation }, { status: 400 });
 					}
 
-					if (
-						outputFormat !== undefined &&
-						outputFormat !== 'original' &&
-						outputFormat !== 'mp3-320' &&
-						outputFormat !== 'flac'
-					) {
-						return jsonResponse(
-							{
-								error: 'outputFormat must be "original", "mp3-320", or "flac"',
-							},
-							{ status: 400 },
-						);
+					const format = parseOutputFormat(
+						outputFormat === undefined ? 'mp3-320' : outputFormat,
+					);
+					if (typeof format === 'string') {
+						return jsonResponse({ error: format }, { status: 400 });
 					}
 
 					if (destination !== undefined && !isJobDestination(destination)) {
@@ -1111,7 +1114,7 @@ const server = Bun.serve({
 
 					const job = jobStore.create(
 						soundcloudUrl,
-						outputFormat ?? 'mp3-320',
+						format,
 						destination ?? null,
 					);
 					jobStore.update(job.id, {

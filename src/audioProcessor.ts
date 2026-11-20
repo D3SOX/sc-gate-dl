@@ -15,6 +15,7 @@ import {
 	needsMp3Conversion,
 	REPO_URL,
 	toFlacFilename,
+	toM4aFilename,
 	toMp3Filename,
 } from './utils';
 
@@ -50,13 +51,26 @@ export function isLosslessCodec(codecName: string): boolean {
 	);
 }
 
+/** Server `SC_GATE_DL_AAC_BITRATE` in kbps; unset or non-numeric means 320. */
+export function parseAacBitrateKbps(raw: string | undefined): number {
+	const value = Number(raw?.trim() || NaN);
+	if (!Number.isFinite(value)) return 320;
+	return Math.min(320, Math.max(64, Math.round(value)));
+}
+
 export class AudioProcessor {
 	private ffmpegBin: string;
 	private ffprobeBin: string;
+	private aacBitrateKbps: number;
 
-	constructor(ffmpegBin: string, ffprobeBin: string) {
+	constructor(
+		ffmpegBin: string,
+		ffprobeBin: string,
+		aacBitrateKbps: number = 320,
+	) {
 		this.ffmpegBin = ffmpegBin;
 		this.ffprobeBin = ffprobeBin;
+		this.aacBitrateKbps = aacBitrateKbps;
 	}
 
 	/** Run a binary with argv (no shell); throws on non-zero exit. */
@@ -270,6 +284,26 @@ export class AudioProcessor {
 					artworkPath,
 					metadata,
 					filename,
+				);
+				await this.maybeRemoveSource(
+					inputPath,
+					outputPath,
+					filename,
+					losslessHandling,
+				);
+				return outputPath;
+			}
+
+			if (
+				outputFormat === 'm4a-aac' &&
+				(await this.isLosslessAudio(inputPath)) === true
+			) {
+				const outputPath = await this.convertToM4a(
+					inputPath,
+					artworkPath,
+					metadata,
+					filename,
+					sourceUrl,
 				);
 				await this.maybeRemoveSource(
 					inputPath,
@@ -579,6 +613,85 @@ export class AudioProcessor {
 		try {
 			await this.run(this.ffmpegBin, args);
 			if (replacingFlac) {
+				await Bun.file(inputPath).unlink();
+				await rename(outputPath, inputPath);
+				console.log(`✓ Converted to ${inputPath}`);
+				return inputPath;
+			}
+		} catch (error) {
+			await Bun.file(outputPath)
+				.unlink()
+				.catch(() => {});
+			throw error;
+		}
+
+		console.log(`✓ Converted to ${outputPath}`);
+		return outputPath;
+	}
+
+	private async convertToM4a(
+		inputPath: string,
+		artworkPath: string,
+		metadata: Metadata,
+		filename: string,
+		sourceUrl?: string,
+	): Promise<string> {
+		const replacingM4a = extname(filename).toLowerCase() === '.m4a';
+		const outputPath = replacingM4a
+			? join('./downloads', `.converting-${crypto.randomUUID()}.m4a`)
+			: await withDownloadRenameLock(async () => {
+					const desiredFilename = toM4aFilename(filename);
+					const finalName = pickUniqueDownloadFilename({
+						desiredFilename,
+						currentFilename: basename(inputPath),
+						jobId: crypto.randomUUID(),
+						exists: (name) => existsSync(join('./downloads', name)),
+						isOwnedByOtherJob: () => false,
+					});
+					const path = join('./downloads', finalName);
+					if (!existsSync(path)) await Bun.write(path, new Uint8Array());
+					return path;
+				});
+
+		const coverCodec = /\.(webp|gif)$/i.test(artworkPath) ? 'mjpeg' : 'copy';
+		const args = [
+			'-i',
+			inputPath,
+			'-i',
+			artworkPath,
+			'-map',
+			'0:a',
+			'-map',
+			'1:v',
+			'-c:a',
+			'aac',
+			'-profile:a',
+			'aac_low',
+			'-b:a',
+			`${this.aacBitrateKbps}k`,
+			'-c:v',
+			coverCodec,
+			'-disposition:v',
+			'attached_pic',
+			'-metadata:s:v',
+			'title=Album cover',
+			'-metadata:s:v',
+			'comment=Cover (front)',
+			'-movflags',
+			'+faststart',
+		];
+
+		if (metadata.title) args.push('-metadata', `title=${metadata.title}`);
+		if (metadata.artist) args.push('-metadata', `artist=${metadata.artist}`);
+		if (metadata.album) args.push('-metadata', `album=${metadata.album}`);
+		if (metadata.genre) args.push('-metadata', `genre=${metadata.genre}`);
+		if (sourceUrl) args.push('-metadata', `comment=${sourceUrl}`);
+		args.push('-y', outputPath);
+
+		console.log(`Converting to M4A (AAC ${this.aacBitrateKbps}kbps)...`);
+		try {
+			await this.run(this.ffmpegBin, args);
+			if (replacingM4a) {
 				await Bun.file(inputPath).unlink();
 				await rename(outputPath, inputPath);
 				console.log(`✓ Converted to ${inputPath}`);

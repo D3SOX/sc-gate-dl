@@ -1,4 +1,10 @@
-import { type BrowserMode, isBrowserMode, type JobDestination } from './types';
+import {
+	type BrowserMode,
+	isBrowserMode,
+	isOutputFormat,
+	type JobDestination,
+	type OutputFormat,
+} from './types';
 
 /** A requested browser mode, or the error message for a 400 response. */
 export function parseBrowserMode(
@@ -8,6 +14,14 @@ export function parseBrowserMode(
 	if (!isBrowserMode(value)) return 'Invalid browser mode';
 	if (!availableModes.includes(value)) {
 		return 'Xvfb browser mode is only available on Linux';
+	}
+	return value;
+}
+
+/** A requested output format, or the error message for a 400 response. */
+export function parseOutputFormat(value: unknown): OutputFormat | string {
+	if (!isOutputFormat(value)) {
+		return 'outputFormat must be "original", "mp3-320", "m4a-aac", or "flac"';
 	}
 	return value;
 }

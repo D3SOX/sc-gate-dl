@@ -142,6 +142,11 @@ const OUTPUT_FORMAT_OPTIONS: {
 		hint: 'Converts to MP3 at 320 kbps, then lets you check the tags.',
 	},
 	{
+		value: 'm4a-aac',
+		label: 'M4A/AAC',
+		hint: 'Converts lossless sources to M4A/AAC at the server bitrate, then lets you check the tags. Lossy sources are not converted.',
+	},
+	{
 		value: 'flac',
 		label: 'FLAC',
 		hint: 'Converts to FLAC, then lets you check the tags. A lossy source stays lossy.',
@@ -368,12 +373,17 @@ function previewProcessedFilename(
 	},
 ): string {
 	if (!downloadFilename) return '';
-	const extension = options.outputFormat === 'flac' ? '.flac' : '.mp3';
+	const extension =
+		options.outputFormat === 'flac'
+			? '.flac'
+			: options.outputFormat === 'm4a-aac'
+				? '.m4a'
+				: '.mp3';
 	if (options.nameAsArtistTitle) {
 		return artistTitleFilename(options.artist, options.title, extension);
 	}
-	if (options.outputFormat === 'flac') {
-		return downloadFilename.replace(/\.[^.]+$/i, '.flac');
+	if (options.outputFormat === 'flac' || options.outputFormat === 'm4a-aac') {
+		return downloadFilename.replace(/\.[^.]+$/i, extension);
 	}
 	if (needsMp3Conversion(downloadFilename)) {
 		return downloadFilename.replace(
@@ -2201,7 +2211,9 @@ export default function App() {
 										? 'Download original'
 										: job.outputFormat === 'flac'
 											? 'Download FLAC'
-											: 'Download MP3'}
+											: job.outputFormat === 'm4a-aac'
+												? 'Download M4A'
+												: 'Download MP3'}
 								</a>
 								<button
 									type="button"
