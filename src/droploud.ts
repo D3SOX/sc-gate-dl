@@ -15,6 +15,7 @@ import { loadCookies, timeout } from './utils';
 type PaneKind =
 	| 'social_open'
 	| 'social_cards'
+	| 'repost_verify'
 	| 'soundcloud_connect'
 	| 'email'
 	| 'droploud_follow'
@@ -190,6 +191,17 @@ export class DroploudDownloader {
 				continue;
 			}
 
+			if (kind === 'repost_verify') {
+				this.emitProgress(
+					'handling_gates',
+					'Verifying SoundCloud repost...',
+					65,
+					{ currentGate: 'sc' },
+				);
+				await this.handleRepostVerify(page);
+				continue;
+			}
+
 			const title = await page.evaluate((selector) => {
 				return document.querySelector(selector)?.textContent?.trim() || '';
 			}, Selectors.DROPLOUD_UNLOCKED_TITLE);
@@ -273,6 +285,18 @@ export class DroploudDownloader {
 				);
 				if (hasDownload || /your download is ready/i.test(title)) {
 					return 'unlocked';
+				}
+
+				const pane = document.querySelector('.ds-gate-pane');
+				const gateTitle =
+					pane?.querySelector('.ds-gate-t')?.textContent?.trim() ?? '';
+				if (
+					/repost/i.test(gateTitle) &&
+					Array.from(pane?.querySelectorAll('button') ?? []).some((button) =>
+						/^verify(?: again)?$/i.test((button.textContent ?? '').trim()),
+					)
+				) {
+					return 'repost_verify';
 				}
 
 				if (document.querySelector(selectors.emailWrap)) {
@@ -484,6 +508,59 @@ export class DroploudDownloader {
 			beforeTitle,
 		);
 		await timeout(400);
+	}
+
+	private async handleRepostVerify(page: Page): Promise<void> {
+		const previousTitle = await page.$eval(
+			'.ds-gate-pane .ds-gate-t',
+			(element) => element.textContent?.trim() ?? '',
+		);
+		const clicked = await page.evaluate(() => {
+			const pane = document.querySelector('.ds-gate-pane');
+			const button = Array.from(
+				pane?.querySelectorAll<HTMLButtonElement>('button') ?? [],
+			).find(
+				(candidate) =>
+					/^verify(?: again)?$/i.test((candidate.textContent ?? '').trim()) &&
+					!candidate.disabled,
+			);
+			if (!button) return false;
+			button.click();
+			return true;
+		});
+		if (!clicked)
+			throw new Error('Droploud repost verification button is not available.');
+		let result: 'advanced' | 'rejected';
+		try {
+			const state = await page.waitForFunction(
+				(previous) => {
+					const pane = document.querySelector('.ds-gate-pane');
+					const title =
+						pane?.querySelector('.ds-gate-t')?.textContent?.trim() ?? '';
+					if (title && title !== previous) return 'advanced';
+					const rejected = Array.from(
+						pane?.querySelectorAll('button') ?? [],
+					).some(
+						(button) =>
+							/^verify again$/i.test((button.textContent ?? '').trim()) &&
+							!button.disabled,
+					);
+					return rejected ? 'rejected' : false;
+				},
+				{ timeout: 30_000 },
+				previousTitle,
+			);
+			result = (await state.jsonValue()) as 'advanced' | 'rejected';
+			await state.dispose();
+		} catch {
+			throw new Error(
+				'Droploud repost verification timed out without a response.',
+			);
+		}
+		if (result === 'rejected')
+			throw new Error(
+				'Droploud could not verify the SoundCloud repost. Confirm the connected account and repost the track before retrying.',
+			);
 	}
 
 	private async handleSocialCards(page: Page) {
