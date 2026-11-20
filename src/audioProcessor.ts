@@ -19,6 +19,7 @@ import {
 } from './utils';
 
 const ARTWORK_EXTENSIONS = new Set(['jpg', 'jpeg', 'png', 'webp', 'gif']);
+const PASSTHROUGH_TAG_EXTENSIONS = new Set(['.m4a', '.ogg', '.aac']);
 
 export function artworkExtension(fileName: string): string {
 	const extension = extname(fileName).slice(1).toLowerCase();
@@ -278,7 +279,8 @@ export class AudioProcessor {
 		try {
 			await Bun.write(artworkPath, artwork.buffer);
 			// Only a probed lossless codec is converted; lossy and unknown (null) are never re-encoded.
-			if ((await this.isLosslessAudio(inputPath)) === true) {
+			const lossless = await this.isLosslessAudio(inputPath);
+			if (lossless === true) {
 				if (outputFormat === 'flac') {
 					const outputPath = await this.convertToFlac(
 						inputPath,
@@ -329,15 +331,26 @@ export class AudioProcessor {
 				return outputPath;
 			}
 
-			// Lossy m4a/ogg/aac tagging in place is added by a later step; other lossy or unknown audio stays untouched.
 			// otherwise if it is an MP3, we retag it with the correct metadata
+			// if metadata is empty, skip retagging
+			const hasMetadata =
+				metadata.title || metadata.artist || metadata.album || metadata.genre;
 			if (isMp3Format(filename)) {
-				// if metadata is empty, skip retagging
-				const hasMetadata =
-					metadata.title || metadata.artist || metadata.album || metadata.genre;
-
 				if (hasMetadata) {
 					await this.retagMp3(inputPath, artworkPath, metadata, sourceUrl);
+				}
+			} else if (
+				lossless === false &&
+				PASSTHROUGH_TAG_EXTENSIONS.has(extname(filename).toLowerCase())
+			) {
+				if (hasMetadata) {
+					await this.retagLossy(
+						inputPath,
+						artworkPath,
+						metadata,
+						artwork.buffer.byteLength > 0,
+						sourceUrl,
+					);
 				}
 			} else {
 				console.warn(
@@ -715,6 +728,63 @@ export class AudioProcessor {
 		// replace the original file with the retagged one
 		await Bun.write(inputPath, Bun.file(outputPath));
 		await Bun.file(outputPath).unlink();
+		console.log(`✓ Retagged ${inputPath}`);
+	}
+
+	/** Copy the audio of a lossy m4a/ogg/aac and rewrite its tags; only m4a carries a cover. */
+	private async retagLossy(
+		inputPath: string,
+		artworkPath: string,
+		metadata: Metadata,
+		hasArtwork: boolean,
+		sourceUrl?: string,
+	): Promise<void> {
+		const extension = extname(inputPath).toLowerCase();
+		const outputPath = join(
+			'./downloads',
+			`.retagging-${crypto.randomUUID()}${extension}`,
+		);
+		const withCover = extension === '.m4a' && hasArtwork;
+		const coverCodec = /\.(webp|gif)$/i.test(artworkPath) ? 'mjpeg' : 'copy';
+
+		const args: string[] = ['-i', inputPath];
+		if (withCover) args.push('-i', artworkPath);
+		args.push('-map', '0:a', '-c:a', 'copy', '-map_metadata', '-1');
+		if (withCover) {
+			args.push(
+				'-map',
+				'1:v',
+				'-c:v',
+				coverCodec,
+				'-disposition:v',
+				'attached_pic',
+				'-metadata:s:v',
+				'title=Album cover',
+				'-metadata:s:v',
+				'comment=Cover (front)',
+			);
+		}
+		if (extension === '.m4a') args.push('-movflags', '+faststart');
+		// ADTS drops ID3 tags unless the muxer writes them
+		if (extension === '.aac') args.push('-write_id3v2', '1', '-f', 'adts');
+
+		if (metadata.title) args.push('-metadata', `title=${metadata.title}`);
+		if (metadata.artist) args.push('-metadata', `artist=${metadata.artist}`);
+		if (metadata.album) args.push('-metadata', `album=${metadata.album}`);
+		if (metadata.genre) args.push('-metadata', `genre=${metadata.genre}`);
+		if (sourceUrl) args.push('-metadata', `comment=${sourceUrl}`);
+		args.push('-y', outputPath);
+
+		console.log(`Retagging ${extension.slice(1).toUpperCase()}...`);
+		try {
+			await this.run(this.ffmpegBin, args);
+			await rename(outputPath, inputPath);
+		} catch (error) {
+			await Bun.file(outputPath)
+				.unlink()
+				.catch(() => {});
+			throw error;
+		}
 		console.log(`✓ Retagged ${inputPath}`);
 	}
 }

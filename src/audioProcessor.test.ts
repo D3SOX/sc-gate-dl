@@ -666,33 +666,6 @@ describe('AudioProcessor lossy passthrough and lossless gate', () => {
 	}
 
 	for (const outputFormat of outputFormats) {
-		test(`leaves a lossy m4a byte-identical under ${outputFormat}`, async () => {
-			await inTempDir('sc-gate-dl-lossy-m4a-', async () => {
-				await makeFixture('song.m4a', ['-c:a', 'aac', '-b:a', '128k']);
-				const before = new Uint8Array(
-					await Bun.file('downloads/song.m4a').arrayBuffer(),
-				);
-
-				const outputPath = await new AudioProcessor(
-					'ffmpeg',
-					'ffprobe',
-				).processAudio(
-					'song.m4a',
-					{ title: 'Song' },
-					await makeCover(),
-					'never',
-					outputFormat,
-					sourceUrl,
-				);
-
-				expect(outputPath).toBe(join('downloads', 'song.m4a'));
-				expect(await readdir('downloads')).toEqual(['song.m4a']);
-				expect(
-					new Uint8Array(await Bun.file(outputPath).arrayBuffer()),
-				).toEqual(before);
-			});
-		});
-
 		test(`tags a lossy mp3 in place, keeping its audio, under ${outputFormat}`, async () => {
 			await inTempDir('sc-gate-dl-lossy-mp3-', async () => {
 				await makeFixture('song.mp3', ['-c:a', 'libmp3lame', '-b:a', '128k']);
@@ -871,6 +844,266 @@ describe('AudioProcessor lossy passthrough and lossless gate', () => {
 
 			expect(basename(outputPath)).toBe('song.mp3');
 			expect(await audioCodec(outputPath)).toBe('mp3');
+		});
+	});
+});
+
+describe('AudioProcessor lossy m4a, ogg and aac tagging', () => {
+	const sourceUrl = 'https://soundcloud.com/artist/track';
+	const metadata = {
+		title: 'Song',
+		artist: 'Artist',
+		album: 'Album',
+		genre: 'Genre',
+	};
+
+	async function runFfmpeg(args: string[]): Promise<void> {
+		const proc = Bun.spawn(
+			['ffmpeg', '-hide_banner', '-loglevel', 'error', ...args],
+			{ stderr: 'ignore' },
+		);
+		expect(await proc.exited).toBe(0);
+	}
+
+	async function probeFile(path: string): Promise<{
+		format: { format_name: string; tags?: Record<string, string> };
+		streams: Array<{
+			codec_type?: string;
+			codec_name?: string;
+			tags?: Record<string, string>;
+			disposition?: { attached_pic?: number };
+		}>;
+	}> {
+		const proc = Bun.spawn(
+			[
+				'ffprobe',
+				'-v',
+				'quiet',
+				'-print_format',
+				'json',
+				'-show_format',
+				'-show_streams',
+				path,
+			],
+			{ stdout: 'pipe' },
+		);
+		const data = JSON.parse(await new Response(proc.stdout).text());
+		expect(await proc.exited).toBe(0);
+		return data;
+	}
+
+	async function makeCover(): Promise<{
+		buffer: ArrayBuffer;
+		fileName: string;
+	}> {
+		await runFfmpeg([
+			'-f',
+			'lavfi',
+			'-i',
+			'color=c=red:s=16x16',
+			'-frames:v',
+			'1',
+			'-y',
+			'cover.png',
+		]);
+		return {
+			buffer: await Bun.file('cover.png').arrayBuffer(),
+			fileName: 'cover.png',
+		};
+	}
+
+	async function inTempDir(
+		prefix: string,
+		fn: () => Promise<void>,
+	): Promise<void> {
+		const dir = await mkdtemp(join(tmpdir(), prefix));
+		const previousCwd = process.cwd();
+		try {
+			process.chdir(dir);
+			await mkdir('downloads');
+			await fn();
+		} finally {
+			process.chdir(previousCwd);
+			await rm(dir, { recursive: true, force: true });
+		}
+	}
+
+	async function makeLossy(name: string, codecArgs: string[]): Promise<void> {
+		await runFfmpeg([
+			'-f',
+			'lavfi',
+			'-i',
+			'sine=frequency=440:duration=0.5',
+			...codecArgs,
+			'-y',
+			join('downloads', name),
+		]);
+	}
+
+	test('tags a lossy m4a with copied audio, tags, comment and cover', async () => {
+		await inTempDir('sc-gate-dl-tag-m4a-', async () => {
+			await makeLossy('song.m4a', ['-c:a', 'aac', '-b:a', '128k']);
+
+			const outputPath = await new AudioProcessor(
+				'ffmpeg',
+				'ffprobe',
+			).processAudio(
+				'song.m4a',
+				metadata,
+				await makeCover(),
+				'never',
+				'mp3-320',
+				sourceUrl,
+			);
+
+			expect(outputPath).toBe(join('downloads', 'song.m4a'));
+			expect(await readdir('downloads')).toEqual(['song.m4a']);
+			const data = await probeFile(outputPath);
+			expect(data.format.format_name).toContain('m4a');
+			const audio = data.streams.find(
+				(stream) => stream.codec_type === 'audio',
+			);
+			expect(audio?.codec_name).toBe('aac');
+			expect(data.format.tags).toMatchObject({
+				...metadata,
+				comment: sourceUrl,
+			});
+			expect(
+				data.streams.some(
+					(stream) =>
+						stream.codec_type === 'video' &&
+						stream.disposition?.attached_pic === 1,
+				),
+			).toBe(true);
+		});
+	});
+
+	test('tags a lossy ogg at stream level with copied audio and no cover', async () => {
+		await inTempDir('sc-gate-dl-tag-ogg-', async () => {
+			await makeLossy('song.ogg', [
+				'-c:a',
+				'vorbis',
+				'-ac',
+				'2',
+				'-strict',
+				'experimental',
+			]);
+
+			const outputPath = await new AudioProcessor(
+				'ffmpeg',
+				'ffprobe',
+			).processAudio(
+				'song.ogg',
+				metadata,
+				await makeCover(),
+				'never',
+				'mp3-320',
+				sourceUrl,
+			);
+
+			expect(outputPath).toBe(join('downloads', 'song.ogg'));
+			expect(await readdir('downloads')).toEqual(['song.ogg']);
+			const data = await probeFile(outputPath);
+			expect(data.format.format_name).toBe('ogg');
+			const audio = data.streams.find(
+				(stream) => stream.codec_type === 'audio',
+			);
+			expect(audio?.codec_name).toBe('vorbis');
+			expect(audio?.tags).toMatchObject({ ...metadata, comment: sourceUrl });
+			expect(data.streams.some((stream) => stream.codec_type === 'video')).toBe(
+				false,
+			);
+		});
+	});
+
+	test('tags a lossy raw aac with copied audio and no cover', async () => {
+		await inTempDir('sc-gate-dl-tag-aac-', async () => {
+			await makeLossy('song.aac', [
+				'-c:a',
+				'aac',
+				'-b:a',
+				'128k',
+				'-f',
+				'adts',
+			]);
+
+			const outputPath = await new AudioProcessor(
+				'ffmpeg',
+				'ffprobe',
+			).processAudio(
+				'song.aac',
+				metadata,
+				await makeCover(),
+				'never',
+				'mp3-320',
+				sourceUrl,
+			);
+
+			expect(outputPath).toBe(join('downloads', 'song.aac'));
+			expect(await readdir('downloads')).toEqual(['song.aac']);
+			const data = await probeFile(outputPath);
+			expect(data.format.format_name).toBe('aac');
+			const audio = data.streams.find(
+				(stream) => stream.codec_type === 'audio',
+			);
+			expect(audio?.codec_name).toBe('aac');
+			expect(data.format.tags).toMatchObject({
+				...metadata,
+				comment: sourceUrl,
+			});
+			expect(data.streams.some((stream) => stream.codec_type === 'video')).toBe(
+				false,
+			);
+		});
+	});
+
+	test('omits the comment for a lossy m4a without a source URL but still tags it', async () => {
+		await inTempDir('sc-gate-dl-tag-nourl-', async () => {
+			await makeLossy('song.m4a', ['-c:a', 'aac', '-b:a', '128k']);
+
+			const outputPath = await new AudioProcessor(
+				'ffmpeg',
+				'ffprobe',
+			).processAudio(
+				'song.m4a',
+				metadata,
+				await makeCover(),
+				'never',
+				'mp3-320',
+			);
+
+			const data = await probeFile(outputPath);
+			expect(data.format.tags?.title).toBe('Song');
+			expect(data.format.tags?.comment).toBeUndefined();
+		});
+	});
+
+	test('leaves a lossy opus or webm source byte-identical', async () => {
+		await inTempDir('sc-gate-dl-tag-untouched-', async () => {
+			await makeLossy('song.opus', ['-c:a', 'libopus', '-b:a', '96k']);
+			await makeLossy('song.webm', ['-c:a', 'libopus', '-b:a', '96k']);
+
+			for (const name of ['song.opus', 'song.webm']) {
+				const before = new Uint8Array(
+					await Bun.file(join('downloads', name)).arrayBuffer(),
+				);
+				const outputPath = await new AudioProcessor(
+					'ffmpeg',
+					'ffprobe',
+				).processAudio(
+					name,
+					metadata,
+					await makeCover(),
+					'never',
+					'mp3-320',
+					sourceUrl,
+				);
+
+				expect(outputPath).toBe(join('downloads', name));
+				expect(
+					new Uint8Array(await Bun.file(outputPath).arrayBuffer()),
+				).toEqual(before);
+			}
 		});
 	});
 });
