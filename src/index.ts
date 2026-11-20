@@ -353,6 +353,8 @@ try {
 			metadata,
 			artwork,
 			losslessHandling,
+			'mp3-320',
+			soundcloudUrl,
 		);
 	}
 } catch (error) {

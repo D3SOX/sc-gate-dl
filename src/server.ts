@@ -183,6 +183,7 @@ async function finalizeJobFile(
 			options.artwork,
 			'always',
 			job.outputFormat,
+			job.soundcloudUrl,
 		);
 		outputFilename = basename(outputPath);
 		// Conversion may have deleted the source, so point the job at the new

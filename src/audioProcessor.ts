@@ -253,6 +253,7 @@ export class AudioProcessor {
 		artwork: { buffer: ArrayBuffer; fileName: string },
 		losslessHandling: 'prompt' | 'always' | 'never' = 'prompt',
 		outputFormat: Exclude<OutputFormat, 'original'> = 'mp3-320',
+		sourceUrl?: string,
 	): Promise<string> {
 		const inputPath = join('./downloads', filename);
 
@@ -286,6 +287,7 @@ export class AudioProcessor {
 					artworkPath,
 					metadata,
 					filename,
+					sourceUrl,
 				);
 
 				await this.maybeRemoveSource(
@@ -303,7 +305,7 @@ export class AudioProcessor {
 					metadata.title || metadata.artist || metadata.album || metadata.genre;
 
 				if (hasMetadata) {
-					await this.retagMp3(inputPath, artworkPath, metadata);
+					await this.retagMp3(inputPath, artworkPath, metadata, sourceUrl);
 				}
 			} else {
 				console.warn(
@@ -451,6 +453,7 @@ export class AudioProcessor {
 		artworkPath: string,
 		metadata: Metadata,
 		filename: string,
+		sourceUrl?: string,
 	): Promise<string> {
 		const outputPath = await this.allocateMp3OutputPath(inputPath, filename);
 		const bitrateKbps = await this.resolveMp3BitrateKbps(inputPath, filename);
@@ -489,6 +492,9 @@ export class AudioProcessor {
 		}
 		if (metadata.genre) {
 			args.push('-metadata', `genre=${metadata.genre}`);
+		}
+		if (sourceUrl) {
+			args.push('-metadata', `comment=${sourceUrl}`);
 		}
 
 		args.push('-y', outputPath);
@@ -593,6 +599,7 @@ export class AudioProcessor {
 		inputPath: string,
 		artworkPath: string,
 		metadata: Metadata,
+		sourceUrl?: string,
 	): Promise<void> {
 		const filename = basename(inputPath);
 		const outputPath = join(
@@ -634,6 +641,9 @@ export class AudioProcessor {
 		}
 		if (metadata.genre) {
 			args.push('-metadata', `genre=${metadata.genre}`);
+		}
+		if (sourceUrl) {
+			args.push('-metadata', `comment=${sourceUrl}`);
 		}
 
 		args.push('-y', outputPath);

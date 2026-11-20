@@ -42,6 +42,160 @@ describe('AudioProcessor.processAudio', () => {
 	});
 });
 
+describe('AudioProcessor source comment tag', () => {
+	const sourceUrl = 'https://soundcloud.com/artist/track';
+
+	async function runFfmpeg(args: string[]): Promise<void> {
+		const proc = Bun.spawn(
+			['ffmpeg', '-hide_banner', '-loglevel', 'error', ...args],
+			{
+				stderr: 'ignore',
+			},
+		);
+		expect(await proc.exited).toBe(0);
+	}
+
+	async function readComment(path: string): Promise<string | undefined> {
+		const proc = Bun.spawn(
+			['ffprobe', '-v', 'quiet', '-print_format', 'json', '-show_format', path],
+			{ stdout: 'pipe' },
+		);
+		const probe = JSON.parse(await new Response(proc.stdout).text()) as {
+			format?: { tags?: Record<string, string> };
+		};
+		expect(await proc.exited).toBe(0);
+		return probe.format?.tags?.comment;
+	}
+
+	async function makeArtwork(): Promise<{
+		buffer: ArrayBuffer;
+		fileName: string;
+	}> {
+		await runFfmpeg([
+			'-f',
+			'lavfi',
+			'-i',
+			'color=c=red:s=16x16',
+			'-frames:v',
+			'1',
+			'-y',
+			'cover.png',
+		]);
+		return {
+			buffer: await Bun.file('cover.png').arrayBuffer(),
+			fileName: 'cover.png',
+		};
+	}
+
+	test('writes the source URL to the comment tag of a converted MP3', async () => {
+		const dir = await mkdtemp(join(tmpdir(), 'sc-gate-dl-comment-'));
+		const previousCwd = process.cwd();
+		try {
+			process.chdir(dir);
+			await mkdir('downloads');
+			await runFfmpeg([
+				'-f',
+				'lavfi',
+				'-i',
+				'sine=frequency=440:duration=0.2',
+				'-c:a',
+				'flac',
+				'-y',
+				'downloads/song.flac',
+			]);
+
+			const outputPath = await new AudioProcessor(
+				'ffmpeg',
+				'ffprobe',
+			).processAudio(
+				'song.flac',
+				{ title: 'Song' },
+				await makeArtwork(),
+				'never',
+				'mp3-320',
+				sourceUrl,
+			);
+
+			expect(await readComment(outputPath)).toBe(sourceUrl);
+		} finally {
+			process.chdir(previousCwd);
+			await rm(dir, { recursive: true, force: true });
+		}
+	});
+
+	test('replaces the comment tag of a retagged MP3 with the source URL', async () => {
+		const dir = await mkdtemp(join(tmpdir(), 'sc-gate-dl-retag-'));
+		const previousCwd = process.cwd();
+		try {
+			process.chdir(dir);
+			await mkdir('downloads');
+			await runFfmpeg([
+				'-f',
+				'lavfi',
+				'-i',
+				'sine=frequency=440:duration=0.2',
+				'-c:a',
+				'libmp3lame',
+				'-metadata',
+				'comment=old',
+				'-y',
+				'downloads/song.mp3',
+			]);
+
+			const outputPath = await new AudioProcessor(
+				'ffmpeg',
+				'ffprobe',
+			).processAudio(
+				'song.mp3',
+				{ title: 'Song' },
+				await makeArtwork(),
+				'never',
+				'mp3-320',
+				sourceUrl,
+			);
+
+			expect(await readComment(outputPath)).toBe(sourceUrl);
+		} finally {
+			process.chdir(previousCwd);
+			await rm(dir, { recursive: true, force: true });
+		}
+	});
+
+	test('writes no comment tag when no source URL is given', async () => {
+		const dir = await mkdtemp(join(tmpdir(), 'sc-gate-dl-nocomment-'));
+		const previousCwd = process.cwd();
+		try {
+			process.chdir(dir);
+			await mkdir('downloads');
+			await runFfmpeg([
+				'-f',
+				'lavfi',
+				'-i',
+				'sine=frequency=440:duration=0.2',
+				'-c:a',
+				'flac',
+				'-y',
+				'downloads/song.flac',
+			]);
+
+			const outputPath = await new AudioProcessor(
+				'ffmpeg',
+				'ffprobe',
+			).processAudio(
+				'song.flac',
+				{ title: 'Song' },
+				await makeArtwork(),
+				'never',
+			);
+
+			expect(await readComment(outputPath)).toBeUndefined();
+		} finally {
+			process.chdir(previousCwd);
+			await rm(dir, { recursive: true, force: true });
+		}
+	});
+});
+
 describe('isLosslessCodec', () => {
 	test('classifies lossless codec names, including tta and dsd', () => {
 		for (const codec of [
