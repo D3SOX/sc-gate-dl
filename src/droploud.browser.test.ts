@@ -79,6 +79,91 @@ test('does not mistake an unrelated email field for a Droploud email step', asyn
 	).toBe('unknown');
 });
 
+test('opens each Instagram link once before confirming a multi-account step', async () => {
+	await page.setContent(`
+		<div class="ds-gate-pane">
+			<h2 class="ds-gate-t">Follow 3 accounts on Instagram</h2>
+			<button data-open="0">Open Instagram, @one</button>
+			<button data-open="1">Open Instagram, @two</button>
+			<button data-open="2">Open Instagram, @three</button>
+			<button data-confirm class="ds-disabled" aria-disabled="true">I've done it</button>
+		</div>
+		<script>
+		(() => {
+			const seen = [];
+			window.openedAccounts = seen;
+			document.querySelectorAll('[data-open]').forEach(button => {
+				button.onclick = () => {
+					seen.push(button.dataset.open);
+					if (new Set(seen).size === 3) {
+						const confirm = document.querySelector('[data-confirm]');
+						confirm.classList.remove('ds-disabled');
+						confirm.setAttribute('aria-disabled', 'false');
+					}
+				};
+			});
+			document.querySelector('[data-confirm]').onclick = () => {
+				document.querySelector('.ds-gate-pane').innerHTML = '<h2 class="ds-gate-t">Next step</h2>';
+			};
+		})();
+		</script>
+	`);
+	const downloader = new DroploudDownloader({
+		comment: 'test',
+		browserMode: 'headless',
+	});
+	Object.assign(downloader, {
+		browser,
+		closeSocialPopup: async () => {},
+	});
+	await (
+		downloader as unknown as { handleSocialCards(page: Page): Promise<void> }
+	).handleSocialCards(page);
+	expect(
+		await page.evaluate(
+			() => (window as unknown as { openedAccounts: string[] }).openedAccounts,
+		),
+	).toEqual(['0', '1', '2']);
+	expect(await page.$eval('.ds-gate-t', (element) => element.textContent)).toBe(
+		'Next step',
+	);
+}, 15_000);
+
+test('waits for a delayed social confirmation after opening all links', async () => {
+	await page.setContent(`
+		<div class="ds-gate-pane">
+			<h2 class="ds-gate-t">Follow on Instagram</h2>
+			<button data-open>Open Instagram, @one</button>
+			<button data-confirm class="ds-disabled" aria-disabled="true">I've done it</button>
+		</div>
+		<script>
+		(() => {
+			document.querySelector('[data-open]').onclick = () => {
+				setTimeout(() => {
+					const confirm = document.querySelector('[data-confirm]');
+					confirm.classList.remove('ds-disabled');
+					confirm.setAttribute('aria-disabled', 'false');
+				}, 500);
+			};
+			document.querySelector('[data-confirm]').onclick = () => {
+				document.querySelector('.ds-gate-pane').innerHTML = '<h2 class="ds-gate-t">Next step</h2>';
+			};
+		})();
+		</script>
+	`);
+	const downloader = new DroploudDownloader({
+		comment: 'test',
+		browserMode: 'headless',
+	});
+	Object.assign(downloader, { browser, closeSocialPopup: async () => {} });
+	await (
+		downloader as unknown as { handleSocialCards(page: Page): Promise<void> }
+	).handleSocialCards(page);
+	expect(await page.$eval('.ds-gate-t', (element) => element.textContent)).toBe(
+		'Next step',
+	);
+}, 15_000);
+
 test('recognizes and verifies a repost step after SoundCloud authorization', async () => {
 	await page.setContent(`
 		<section class="ds-gate-card"><div class="ds-gate-pane">

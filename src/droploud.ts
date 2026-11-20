@@ -542,7 +542,9 @@ export class DroploudDownloader {
 	}
 
 	private async handleSocialCards(page: Page) {
-		for (let attempt = 0; attempt < 20; attempt++) {
+		const opened = new Set<string>();
+		let confirmationDeadline: number | null = null;
+		for (let attempt = 0; attempt < 40; attempt++) {
 			const cards = await page.evaluate(() => {
 				return Array.from(
 					document.querySelectorAll<HTMLButtonElement>('button'),
@@ -560,7 +562,10 @@ export class DroploudDownloader {
 							return {
 								kind: 'verify' as const,
 								label,
-								enabled: !btn.className.includes('ds-disabled'),
+								enabled:
+									!btn.disabled &&
+									btn.getAttribute('aria-disabled') !== 'true' &&
+									!btn.classList.contains('ds-disabled'),
 							};
 						}
 						return null;
@@ -568,8 +573,24 @@ export class DroploudDownloader {
 					.filter((card) => card !== null);
 			});
 
-			const action = nextDroploudSocialAction(cards);
-			if (action.type === 'done') return;
+			const action = nextDroploudSocialAction(
+				cards.map((card) =>
+					card.kind === 'open'
+						? { ...card, done: card.done || opened.has(card.label) }
+						: card,
+				),
+			);
+			if (action.type === 'done') {
+				if (!cards.some((card) => card.kind === 'verify')) return;
+				confirmationDeadline ??= Date.now() + 10_000;
+				if (Date.now() >= confirmationDeadline) {
+					throw new Error(
+						'Droploud social confirmation did not become available.',
+					);
+				}
+				await timeout(500);
+				continue;
+			}
 
 			if (action.type === 'verify') {
 				await page.evaluate(() => {
@@ -599,6 +620,7 @@ export class DroploudDownloader {
 				throw new Error('Droploud social card disappeared mid-step.');
 			}
 			await target.click({ delay: 40 });
+			opened.add(cards[action.index]?.label ?? '');
 			for (const h of openHandles) await h.dispose();
 
 			const stepTitle = await page
@@ -613,7 +635,7 @@ export class DroploudDownloader {
 				`${stepTitle} ${cards[action.index]?.label ?? ''}`,
 			);
 		}
-		throw new Error('Droploud social cards did not finish within 20 attempts.');
+		throw new Error('Droploud social cards did not finish within 40 attempts.');
 	}
 
 	private async closeSocialPopup(
