@@ -1,6 +1,7 @@
 import { Presets, SingleBar } from 'cli-progress';
 import type { Browser, Page } from 'puppeteer';
 import { CancellableBrowserLaunch } from './browserLaunch';
+import { nextDroploudSocialAction } from './droploudSocial';
 import type { ProgressCallback } from './hypeddit';
 import Selectors from './selectors';
 import { SoundcloudClient } from './soundcloud';
@@ -10,6 +11,7 @@ import { loadCookies, timeout } from './utils';
 
 type PaneKind =
 	| 'social_open'
+	| 'social_cards'
 	| 'soundcloud_connect'
 	| 'email'
 	| 'droploud_follow'
@@ -99,6 +101,16 @@ export class DroploudDownloader {
 
 		await this.dismissCookieBanner(page);
 		await this.startGateIfNeeded(page);
+		// Social cards render late; a timeout just means this track has none.
+		await page
+			.waitForFunction(
+				() =>
+					Array.from(document.querySelectorAll('button')).some((btn) =>
+						/^open\s|done it/i.test((btn.textContent || '').trim()),
+					),
+				{ timeout: 10_000 },
+			)
+			.catch(() => {});
 
 		const maxSteps = 12;
 		for (let i = 0; i < maxSteps; i++) {
@@ -159,6 +171,17 @@ export class DroploudDownloader {
 				continue;
 			}
 
+			if (kind === 'social_cards') {
+				this.emitProgress(
+					'handling_gates',
+					'Handling Droploud social cards...',
+					35 + i * 5,
+					{ currentGate: 'social' },
+				);
+				await this.handleSocialCards(page);
+				continue;
+			}
+
 			const title = await page.evaluate((selector) => {
 				return document.querySelector(selector)?.textContent?.trim() || '';
 			}, Selectors.DROPLOUD_UNLOCKED_TITLE);
@@ -202,22 +225,26 @@ export class DroploudDownloader {
 		const stepPane = await page.$(Selectors.DROPLOUD_STEP_PANE);
 		if (stepPane) return;
 
-		const started = await page.evaluate((selector) => {
+		const started = await page.evaluate(() => {
 			const buttons = Array.from(
-				document.querySelectorAll<HTMLButtonElement>(selector),
+				document.querySelectorAll<HTMLButtonElement>('button'),
 			);
 			const freeDownload = buttons.find((btn) =>
-				/free download/i.test(btn.textContent || ''),
+				/^free download$/i.test((btn.textContent || '').trim()),
 			);
 			if (!freeDownload || freeDownload.disabled) return false;
 			freeDownload.click();
 			return true;
-		}, Selectors.DROPLOUD_FREE_DOWNLOAD_BUTTON);
+		});
 
 		if (started) {
-			await page.waitForSelector(Selectors.DROPLOUD_STEP_PANE, {
-				timeout: 15_000,
-			});
+			// The gate pane class was renamed from .dtr-* to .ds-*; accept both.
+			await page
+				.waitForSelector(
+					`${Selectors.DROPLOUD_STEP_PANE}, .ds-gate-pane, .ds-gate-card, .ds-panel`,
+					{ timeout: 15_000 },
+				)
+				.catch(() => {});
 		}
 	}
 
@@ -264,6 +291,20 @@ export class DroploudDownloader {
 				).find((btn) => /^i confirm/i.test((btn.textContent || '').trim()));
 				if (confirmBtn && document.querySelector(selectors.disclaimerCheck)) {
 					return 'disclaimer';
+				}
+
+				const socialButtons = Array.from(
+					document.querySelectorAll<HTMLButtonElement>('button'),
+				);
+				if (
+					socialButtons.some((btn) =>
+						/^open\s/i.test((btn.textContent || '').trim()),
+					) ||
+					socialButtons.some((btn) =>
+						/done it/i.test((btn.textContent || '').trim()),
+					)
+				) {
+					return 'social_cards';
 				}
 
 				return 'unknown';
@@ -433,6 +474,90 @@ export class DroploudDownloader {
 			beforeTitle,
 		);
 		await timeout(400);
+	}
+
+	private async handleSocialCards(page: Page) {
+		for (let attempt = 0; attempt < 20; attempt++) {
+			const cards = await page.evaluate(() => {
+				return Array.from(
+					document.querySelectorAll<HTMLButtonElement>('button'),
+				)
+					.map((btn) => {
+						const label = (btn.textContent || '').trim();
+						if (/^open\s/i.test(label)) {
+							return {
+								kind: 'open' as const,
+								label,
+								done: /^\s*✓/.test(label),
+							};
+						}
+						if (/done it/i.test(label)) {
+							return {
+								kind: 'verify' as const,
+								label,
+								enabled: !btn.className.includes('ds-disabled'),
+							};
+						}
+						return null;
+					})
+					.filter((card) => card !== null);
+			});
+
+			const action = nextDroploudSocialAction(cards);
+			if (action.type === 'done') return;
+
+			if (action.type === 'verify') {
+				await page.evaluate(() => {
+					const btn = Array.from(
+						document.querySelectorAll<HTMLButtonElement>('button'),
+					).find((b) => /done it/i.test((b.textContent || '').trim()));
+					btn?.click();
+				});
+				await timeout(800);
+				continue;
+			}
+
+			const pagesBefore = new Set(await this.browser.pages(true));
+			const handles = await page.$$('button');
+			const openHandles = [];
+			for (const h of handles) {
+				const text = await h.evaluate((el) => (el.textContent || '').trim());
+				if (/^open\s/i.test(text)) openHandles.push(h);
+				else await h.dispose();
+			}
+			const target = openHandles[action.index];
+			if (!target) {
+				for (const h of openHandles) await h.dispose();
+				throw new Error('Droploud social card disappeared mid-step.');
+			}
+			await target.click({ delay: 40 });
+			for (const h of openHandles) await h.dispose();
+
+			await this.closeSocialPopup(pagesBefore, page);
+		}
+		throw new Error('Droploud social cards did not finish within 20 attempts.');
+	}
+
+	private async closeSocialPopup(
+		pagesBefore: Set<Page>,
+		page: Page,
+	): Promise<void> {
+		let popup: Page | undefined;
+		const started = Date.now();
+		while (!popup && Date.now() - started < 8_000) {
+			const pages = await this.browser.pages(true);
+			popup = pages.find(
+				(candidate) =>
+					candidate !== page &&
+					!pagesBefore.has(candidate) &&
+					candidate.url() !== 'about:blank',
+			);
+			if (!popup) await timeout(200);
+		}
+		if (popup && !popup.isClosed()) {
+			await timeout(1_200);
+			await popup.close().catch(() => {});
+		}
 	}
 
 	private async handleSocialOpenStep(page: Page) {
