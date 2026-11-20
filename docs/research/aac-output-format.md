@@ -395,10 +395,11 @@ sets `attached_pic`), **not** `convertToMp3` (which sets `-id3v2_version 3` and 
 
 1. Add `outputFormat` value e.g. `m4a-aac` alongside `mp3-320` and `flac`
    (`src/types.ts` `OutputFormat`, `isOutputFormat`).
-2. Only offer/route M4A when the source is lossless. Reuse the existing probe:
-   `AudioProcessor.isLosslessAudio()` already returns `true` for `alac/flac/wavpack/ape/pcm_*`;
-   **extend it** to include `tta` and `dsd_*` (and `shorten`/`als`/`tak` if desired), and extend
-   `LOSSLESS_EXTENSIONS` in `src/utils.ts` with `.tta`, `.dsf`, `.dff`, `.caf`, `.w64`.
+2. Convert M4A only from a lossless source; leave a lossy source unconverted (see §6 for the
+   tags-only path). Reuse the existing probe: `AudioProcessor.isLosslessAudio()` already returns
+   `true` for `alac/flac/wavpack/ape/pcm_*`; **extend it** to include `tta` and `dsd_*` (and
+   `shorten`/`als`/`tak` if desired), and extend `LOSSLESS_EXTENSIONS` in `src/utils.ts` with
+   `.tta`, `.dsf`, `.caf`, `.w64`. `.dff` is excluded: no DSDIFF demuxer in this build.
 3. Encoder: `-c:a aac -profile:a aac_low`, quality knob as **`-b:a <kbps>k`** (CBR), clamped
    `[64, 320]`. Do not use `-q:a` for a stable config value (version-dependent scale). Do not pass
    `-id3v2_version` on this path. Use `-movflags +faststart`.
@@ -407,6 +408,50 @@ sets `attached_pic`), **not** `convertToMp3` (which sets `-id3v2_version 3` and 
    comment="Cover (front)"`.
 5. `ffprobe` reads these back with the same lower-cased keys (`title/artist/album/genre`), so
    `readMp3Metadata()` can be reused to display/verify m4a tags unchanged.
+
+---
+
+## 6. Tagging a lossy source in place (no re-encode)
+
+When the audio is already lossy and must not be re-encoded, the same tag/cover
+argument blocks are applied with `-c:a copy`. Verified on the local 9.0.2 build
+against synthetic lossy sources, read back with `ffprobe -show_format -show_streams`.
+
+| Lossy container | Tags written | Cover | Comment key | Notes |
+|---|---|---|---|---|
+| `.mp3` | ID3v2 (`-id3v2_version 3`) | APIC ✔ | `comment` | repo's existing `retagMp3` path |
+| `.m4a` (AAC) | `©nam/©ART/©alb/©gen` | `covr` ✔ | `©cmt` | `-disposition:v attached_pic`, `-movflags +faststart` |
+| `.ogg` (Vorbis) | stream tags | ✘ | `comment` | cover impossible |
+| `.aac` (raw ADTS) | ID3v2.4 | ✘ | `comment` | needs `-write_id3v2 1` |
+
+Evidence (local 9.0.2):
+
+- **m4a, audio copy + cover + comment:** tags land in `format.tags`
+  (`title/artist/album/genre/comment`) and the cover is a mapped `mjpeg` stream
+  with `disposition.attached_pic == 1`:
+  ```
+  format.tags: {… title:T, artist:A, album:Al, genre:G, comment:https://…}
+  streams: [('audio','aac',0), ('video','mjpeg',1)]
+  ```
+- **ogg, audio copy + tags + comment:** tags are written at **stream** level, not
+  format level; `ffprobe` reports `format.tags: None` and
+  `streams[0].tags: {title, artist, album, genre, comment, encoder}`. A cover
+  **cannot** be attached: `[ogg] Unsupported codec id in stream 1` →
+  `Could not write header`. (Confirmed: `<https://ffmpeg.org/ffmpeg-formats.html#ogg>`
+  — the Ogg muxer takes audio/video codecs Theora/Vorbis/Opus/FLAC and has no
+  attached-picture stream support.)
+- **aac (raw ADTS), audio copy + tags:** tags are dropped **unless** the muxer
+  option `write_id3v2` is set:
+  ```
+  $ ffmpeg … -c:a copy -metadata title=T … out.aac          # ffprobe: no tags
+  $ ffmpeg … -c:a copy -write_id3v2 1 -metadata title=T … out2.aac
+  → format.tags {title:T, artist:A, album:Al, genre:G, comment:…}; file starts 49 44 33 ("ID3")
+  ```
+  A cover video stream is rejected (`[adts] adts muxer does not support any stream
+  of type video`), as in §4.
+
+Other lossy formats (`opus`, `webm`) are out of scope for tagging here and are
+left untouched.
 
 ---
 
