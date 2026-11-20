@@ -348,21 +348,6 @@ function artistTitleFilename(
 	return `${safeArtist} - ${safeTitle}${extension}`;
 }
 
-function needsMp3Conversion(filename: string): boolean {
-	const lower = filename.toLowerCase();
-	return (
-		lower.endsWith('.wav') ||
-		lower.endsWith('.aiff') ||
-		lower.endsWith('.aif') ||
-		lower.endsWith('.flac') ||
-		lower.endsWith('.m4a') ||
-		lower.endsWith('.aac') ||
-		lower.endsWith('.ogg') ||
-		lower.endsWith('.opus') ||
-		lower.endsWith('.webm')
-	);
-}
-
 function previewProcessedFilename(
 	downloadFilename: string | null,
 	options: {
@@ -370,11 +355,17 @@ function previewProcessedFilename(
 		artist?: string;
 		title?: string;
 		outputFormat: OutputFormat;
+		sourceIsLossless: boolean | null;
 	},
 ): string {
 	if (!downloadFilename) return '';
-	const extension =
-		options.outputFormat === 'flac'
+	const lossless =
+		options.sourceIsLossless ??
+		/\.(wav|aiff|aif|flac|ape|wv|tta|dsf|w64)$/i.test(downloadFilename);
+	const keepsSource = options.outputFormat === 'original' || !lossless;
+	const extension = keepsSource
+		? (downloadFilename.match(/\.[^.]+$/)?.[0] ?? '')
+		: options.outputFormat === 'flac'
 			? '.flac'
 			: options.outputFormat === 'm4a-aac'
 				? '.m4a'
@@ -382,16 +373,10 @@ function previewProcessedFilename(
 	if (options.nameAsArtistTitle) {
 		return artistTitleFilename(options.artist, options.title, extension);
 	}
-	if (options.outputFormat === 'flac' || options.outputFormat === 'm4a-aac') {
-		return downloadFilename.replace(/\.[^.]+$/i, extension);
+	if (keepsSource) {
+		return downloadFilename;
 	}
-	if (needsMp3Conversion(downloadFilename)) {
-		return downloadFilename.replace(
-			/\.(wav|aiff|aif|flac|m4a|aac|ogg|opus|webm)$/i,
-			'.mp3',
-		);
-	}
-	return downloadFilename;
+	return downloadFilename.replace(/\.[^.]+$/i, extension);
 }
 
 export default function App() {
@@ -1252,6 +1237,7 @@ export default function App() {
 		artist: metadata.artist,
 		title: metadata.title,
 		outputFormat: job.outputFormat,
+		sourceIsLossless: job.sourceIsLossless,
 	});
 	const isHandlingGate =
 		step === 'gate' && GATE_PROGRESS_STAGES.has(job.progress?.stage ?? '');

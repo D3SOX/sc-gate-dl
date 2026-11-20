@@ -1,7 +1,7 @@
 import crypto from 'node:crypto';
 import { rename, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { extname, join } from 'node:path';
 import { lookpath } from 'find-bin';
 import type { Cookie, CookieData } from 'puppeteer';
 import type { SoundcloudTrack } from 'soundcloud.ts';
@@ -842,21 +842,9 @@ const LOSSLESS_EXTENSIONS = [
 	'.caf',
 	'.w64',
 ] as const;
-/** Lossy containers we still re-encode to MP3 (bitrate chosen from the source). */
-const LOSSY_TO_MP3_EXTENSIONS = [
-	'.m4a',
-	'.aac',
-	'.ogg',
-	'.opus',
-	'.webm',
-] as const;
-const MP3_CONVERTIBLE_EXTENSIONS = [
-	...LOSSLESS_EXTENSIONS,
-	...LOSSY_TO_MP3_EXTENSIONS,
-] as const;
-const MP3_CONVERTIBLE_EXT_PATTERN = new RegExp(
-	`\\.(${MP3_CONVERTIBLE_EXTENSIONS.map((ext) => ext.slice(1)).join('|')})$`,
-	'i',
+/** Lossless extensions that always mean lossless; .caf and .m4a can hold lossy AAC, so they need the probe. */
+const PREVIEW_LOSSLESS_HINT = LOSSLESS_EXTENSIONS.filter(
+	(ext) => ext !== '.caf',
 );
 
 function hasExtension(
@@ -875,16 +863,8 @@ export function isMp3Format(filename: string): boolean {
 	return filename.toLowerCase().endsWith('.mp3');
 }
 
-/** True when the file must be re-encoded to MP3 for the MP3 output path. */
-export function needsMp3Conversion(filename: string): boolean {
-	return (
-		isLosslessFormat(filename) ||
-		hasExtension(filename, LOSSY_TO_MP3_EXTENSIONS)
-	);
-}
-
 export function toMp3Filename(filename: string): string {
-	return filename.replace(MP3_CONVERTIBLE_EXT_PATTERN, '.mp3');
+	return filename.replace(/\.[^.]+$/i, '.mp3');
 }
 
 export function toFlacFilename(filename: string): string {
@@ -930,12 +910,23 @@ export function previewProcessedFilename(
 		nameAsArtistTitle: boolean;
 		artist?: string;
 		title?: string;
-		outputFormat?: 'mp3-320' | 'm4a-aac' | 'flac';
+		outputFormat?: 'mp3-320' | 'm4a-aac' | 'flac' | 'original';
+		/** Probed lossless state; without a probe, an unambiguous lossless extension decides. */
+		sourceIsLossless?: boolean | null;
 	},
 ): string {
-	const extension = previewExtension(options.outputFormat);
+	const lossless =
+		options.sourceIsLossless ??
+		hasExtension(downloadFilename, PREVIEW_LOSSLESS_HINT);
+	const extension =
+		options.outputFormat === 'original' || !lossless
+			? extname(downloadFilename)
+			: previewExtension(options.outputFormat);
 	if (options.nameAsArtistTitle) {
 		return artistTitleFilename(options.artist, options.title, extension);
+	}
+	if (options.outputFormat === 'original' || !lossless) {
+		return downloadFilename;
 	}
 	if (options.outputFormat === 'flac') {
 		return toFlacFilename(downloadFilename);
@@ -943,10 +934,7 @@ export function previewProcessedFilename(
 	if (options.outputFormat === 'm4a-aac') {
 		return toM4aFilename(downloadFilename);
 	}
-	if (needsMp3Conversion(downloadFilename)) {
-		return toMp3Filename(downloadFilename);
-	}
-	return downloadFilename;
+	return toMp3Filename(downloadFilename);
 }
 
 export function safeDecodeURIComponent(value: string): string {

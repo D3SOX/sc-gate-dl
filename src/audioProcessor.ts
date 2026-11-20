@@ -12,7 +12,6 @@ import {
 	getDefaultMetadata,
 	isLosslessFormat,
 	isMp3Format,
-	needsMp3Conversion,
 	REPO_URL,
 	toFlacFilename,
 	toM4aFilename,
@@ -278,44 +277,41 @@ export class AudioProcessor {
 		);
 		try {
 			await Bun.write(artworkPath, artwork.buffer);
-			if (outputFormat === 'flac') {
-				const outputPath = await this.convertToFlac(
-					inputPath,
-					artworkPath,
-					metadata,
-					filename,
-				);
-				await this.maybeRemoveSource(
-					inputPath,
-					outputPath,
-					filename,
-					losslessHandling,
-				);
-				return outputPath;
-			}
+			// Only a probed lossless codec is converted; lossy and unknown (null) are never re-encoded.
+			if ((await this.isLosslessAudio(inputPath)) === true) {
+				if (outputFormat === 'flac') {
+					const outputPath = await this.convertToFlac(
+						inputPath,
+						artworkPath,
+						metadata,
+						filename,
+					);
+					await this.maybeRemoveSource(
+						inputPath,
+						outputPath,
+						filename,
+						losslessHandling,
+					);
+					return outputPath;
+				}
 
-			if (
-				outputFormat === 'm4a-aac' &&
-				(await this.isLosslessAudio(inputPath)) === true
-			) {
-				const outputPath = await this.convertToM4a(
-					inputPath,
-					artworkPath,
-					metadata,
-					filename,
-					sourceUrl,
-				);
-				await this.maybeRemoveSource(
-					inputPath,
-					outputPath,
-					filename,
-					losslessHandling,
-				);
-				return outputPath;
-			}
+				if (outputFormat === 'm4a-aac') {
+					const outputPath = await this.convertToM4a(
+						inputPath,
+						artworkPath,
+						metadata,
+						filename,
+						sourceUrl,
+					);
+					await this.maybeRemoveSource(
+						inputPath,
+						outputPath,
+						filename,
+						losslessHandling,
+					);
+					return outputPath;
+				}
 
-			// Convert non-MP3 audio (lossless or lossy containers like m4a) to MP3.
-			if (needsMp3Conversion(filename)) {
 				const outputPath = await this.convertToMp3(
 					inputPath,
 					artworkPath,
@@ -332,8 +328,10 @@ export class AudioProcessor {
 				);
 				return outputPath;
 			}
+
+			// Lossy m4a/ogg/aac tagging in place is added by a later step; other lossy or unknown audio stays untouched.
 			// otherwise if it is an MP3, we retag it with the correct metadata
-			else if (isMp3Format(filename)) {
+			if (isMp3Format(filename)) {
 				// if metadata is empty, skip retagging
 				const hasMetadata =
 					metadata.title || metadata.artist || metadata.album || metadata.genre;
@@ -398,62 +396,20 @@ export class AudioProcessor {
 		}
 	}
 
-	private parseBitrateKbps(raw: string | undefined): number | null {
-		if (!raw) return null;
-		const bps = Number(raw);
-		if (!Number.isFinite(bps) || bps <= 0) return null;
-		return Math.round(bps / 1000);
-	}
-
-	/** Probe audio bitrate (kbps) and codec; null bitrate when unknown. */
-	private async probeAudioStream(
-		inputPath: string,
-	): Promise<{ bitrateKbps: number | null; codecName: string | null }> {
+	/** Probed audio codec name; null when the probe fails or finds no audio stream. */
+	private async probeCodecName(inputPath: string): Promise<string | null> {
 		const probeData = await this.runFfprobe(inputPath);
-		if (!probeData) {
-			return { bitrateKbps: null, codecName: null };
-		}
-
-		const audioStream = probeData.streams?.find(
+		const audioStream = probeData?.streams?.find(
 			(stream) => stream.codec_type === 'audio',
 		);
-		const bitrateKbps =
-			this.parseBitrateKbps(audioStream?.bit_rate) ??
-			this.parseBitrateKbps(probeData.format?.bit_rate);
-
-		return {
-			bitrateKbps,
-			codecName: audioStream?.codec_name ?? null,
-		};
+		return audioStream?.codec_name ?? null;
 	}
 
 	/** Detect whether the downloaded audio codec is lossless. */
 	async isLosslessAudio(inputPath: string): Promise<boolean | null> {
-		const { codecName } = await this.probeAudioStream(inputPath);
+		const codecName = await this.probeCodecName(inputPath);
 		if (!codecName) return null;
 		return isLosslessCodec(codecName);
-	}
-
-	/**
-	 * Target MP3 bitrate: lossless → 320; lossy → source rate (capped at 320).
-	 * Never upscales a 128k stream to fake 320.
-	 */
-	private async resolveMp3BitrateKbps(
-		inputPath: string,
-		filename: string,
-	): Promise<number> {
-		const probed = await this.probeAudioStream(inputPath);
-		const lossless = probed.codecName
-			? isLosslessCodec(probed.codecName)
-			: isLosslessFormat(filename);
-		if (lossless) {
-			return 320;
-		}
-
-		if (probed.bitrateKbps == null) {
-			return 192;
-		}
-		return Math.min(320, Math.max(32, probed.bitrateKbps));
 	}
 
 	/** Pick a free MP3 destination and reserve it on disk before FFmpeg runs. */
@@ -490,7 +446,7 @@ export class AudioProcessor {
 		sourceUrl?: string,
 	): Promise<string> {
 		const outputPath = await this.allocateMp3OutputPath(inputPath, filename);
-		const bitrateKbps = await this.resolveMp3BitrateKbps(inputPath, filename);
+		const bitrateKbps = 320;
 
 		const args: string[] = [
 			'-i',
@@ -571,14 +527,6 @@ export class AudioProcessor {
 					if (!existsSync(path)) await Bun.write(path, new Uint8Array());
 					return path;
 				});
-
-		const losslessSource = await this.isLosslessAudio(inputPath);
-		if (losslessSource === false) {
-			const { codecName } = await this.probeAudioStream(inputPath);
-			console.warn(
-				`Source codec ${codecName ?? 'unknown'} is lossy; FLAC conversion cannot restore lost audio quality.`,
-			);
-		}
 
 		const args = [
 			'-i',

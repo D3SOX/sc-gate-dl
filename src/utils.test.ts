@@ -484,9 +484,81 @@ describe('previewProcessedFilename', () => {
 		expect(
 			previewProcessedFilename('song.aiff', { nameAsArtistTitle: false }),
 		).toBe('song.mp3');
+	});
+
+	test('keeps the source extension for a lossy source, whatever the target', () => {
+		for (const outputFormat of ['mp3-320', 'm4a-aac', 'flac'] as const) {
+			expect(
+				previewProcessedFilename('song.m4a', {
+					nameAsArtistTitle: false,
+					outputFormat,
+					sourceIsLossless: false,
+				}),
+			).toBe('song.m4a');
+			expect(
+				previewProcessedFilename('song.mp3', {
+					nameAsArtistTitle: true,
+					artist: 'Artist',
+					title: 'Title',
+					outputFormat,
+					sourceIsLossless: false,
+				}),
+			).toBe('Artist - Title.mp3');
+		}
+	});
+
+	test('uses the probed codec, not the extension, for an m4a container', () => {
 		expect(
-			previewProcessedFilename('song.m4a', { nameAsArtistTitle: false }),
+			previewProcessedFilename('song.m4a', {
+				nameAsArtistTitle: false,
+				outputFormat: 'mp3-320',
+				sourceIsLossless: true,
+			}),
 		).toBe('song.mp3');
+	});
+
+	test('falls back to the extension hint for an unprobed unambiguous lossless file', () => {
+		expect(
+			previewProcessedFilename('song.wav', {
+				nameAsArtistTitle: false,
+				outputFormat: 'flac',
+				sourceIsLossless: null,
+			}),
+		).toBe('song.flac');
+	});
+
+	test('keeps the source name for an unprobed .caf or m4a, which may be lossy', () => {
+		expect(
+			previewProcessedFilename('song.caf', {
+				nameAsArtistTitle: false,
+				outputFormat: 'flac',
+				sourceIsLossless: null,
+			}),
+		).toBe('song.caf');
+		expect(
+			previewProcessedFilename('song.m4a', {
+				nameAsArtistTitle: false,
+				outputFormat: 'flac',
+				sourceIsLossless: null,
+			}),
+		).toBe('song.m4a');
+	});
+
+	test('keeps the downloaded name for original output', () => {
+		expect(
+			previewProcessedFilename('song.flac', {
+				nameAsArtistTitle: false,
+				outputFormat: 'original',
+			}),
+		).toBe('song.flac');
+		expect(
+			previewProcessedFilename('song.flac', {
+				nameAsArtistTitle: true,
+				artist: 'Artist',
+				title: 'Title',
+				outputFormat: 'original',
+			}),
+		).toBe('Artist - Title.flac');
 	});
 
 	test('keeps mp3 filenames unchanged when not renaming', () => {
@@ -495,36 +567,40 @@ describe('previewProcessedFilename', () => {
 		).toBe('song.mp3');
 	});
 
-	test('always previews an m4a extension for m4a-aac output', () => {
+	test('always previews an m4a extension for lossless m4a-aac output', () => {
 		expect(
 			previewProcessedFilename('song.flac', {
 				nameAsArtistTitle: false,
 				outputFormat: 'm4a-aac',
+				sourceIsLossless: true,
 			}),
 		).toBe('song.m4a');
 		expect(
-			previewProcessedFilename('song.mp3', {
+			previewProcessedFilename('song.wav', {
 				nameAsArtistTitle: true,
 				artist: 'Artist',
 				title: 'Title',
 				outputFormat: 'm4a-aac',
+				sourceIsLossless: true,
 			}),
 		).toBe('Artist - Title.m4a');
 	});
 
-	test('always previews a flac extension for flac output', () => {
+	test('always previews a flac extension for lossless flac output', () => {
 		expect(
-			previewProcessedFilename('song.mp3', {
+			previewProcessedFilename('song.wav', {
 				nameAsArtistTitle: false,
 				outputFormat: 'flac',
+				sourceIsLossless: true,
 			}),
 		).toBe('song.flac');
 		expect(
-			previewProcessedFilename('song.m4a', {
+			previewProcessedFilename('song.aiff', {
 				nameAsArtistTitle: true,
 				artist: 'Artist',
 				title: 'Title',
 				outputFormat: 'flac',
+				sourceIsLossless: true,
 			}),
 		).toBe('Artist - Title.flac');
 	});

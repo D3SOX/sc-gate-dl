@@ -720,7 +720,7 @@ async function runDownloadProcess(jobId: string): Promise<void> {
 		downloadFilename = await resolveDownloadedAudio(downloadFilename);
 		jobStore.update(jobId, { downloadFilename });
 		throwIfCancelled();
-		if (job.outputFormat === 'flac' || job.outputFormat === 'm4a-aac') {
+		if (job.outputFormat !== 'original') {
 			const sourceIsLossless = await audioProcessor.isLosslessAudio(
 				join('./downloads', downloadFilename),
 			);
