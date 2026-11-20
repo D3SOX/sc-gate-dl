@@ -1,10 +1,20 @@
 import { describe, expect, test } from 'bun:test';
 import {
+	needsSourceLosslessProbe,
 	parseBrowserMode,
 	parseOutputFormat,
 	parseUnattendedJobOptions,
 } from './jobOptions';
 import type { BrowserMode } from './types';
+
+describe('needsSourceLosslessProbe', () => {
+	test('probes the source for every converting format, not for original', () => {
+		expect(needsSourceLosslessProbe('original')).toBe(false);
+		for (const value of ['mp3-320', 'm4a-aac', 'flac'] as const) {
+			expect(needsSourceLosslessProbe(value)).toBe(true);
+		}
+	});
+});
 
 describe('parseOutputFormat', () => {
 	test('accepts every output format value, including m4a-aac', () => {

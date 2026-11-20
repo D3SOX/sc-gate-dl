@@ -21,6 +21,11 @@ import {
 const ARTWORK_EXTENSIONS = new Set(['jpg', 'jpeg', 'png', 'webp', 'gif']);
 const PASSTHROUGH_TAG_EXTENSIONS = new Set(['.m4a', '.ogg', '.aac']);
 
+/** Covers ffmpeg cannot copy into an m4a as-is are transcoded to mjpeg. */
+export function m4aCoverCodec(artworkPath: string): 'mjpeg' | 'copy' {
+	return /\.(webp|gif)$/i.test(artworkPath) ? 'mjpeg' : 'copy';
+}
+
 export function artworkExtension(fileName: string): string {
 	const extension = extname(fileName).slice(1).toLowerCase();
 	return ARTWORK_EXTENSIONS.has(extension) ? extension : 'jpg';
@@ -614,7 +619,7 @@ export class AudioProcessor {
 					return path;
 				});
 
-		const coverCodec = /\.(webp|gif)$/i.test(artworkPath) ? 'mjpeg' : 'copy';
+		const coverCodec = m4aCoverCodec(artworkPath);
 		const args = [
 			'-i',
 			inputPath,
@@ -745,8 +750,7 @@ export class AudioProcessor {
 			`.retagging-${crypto.randomUUID()}${extension}`,
 		);
 		const withCover = extension === '.m4a' && hasArtwork;
-		const coverCodec = /\.(webp|gif)$/i.test(artworkPath) ? 'mjpeg' : 'copy';
-
+		const coverCodec = m4aCoverCodec(artworkPath);
 		const args: string[] = ['-i', inputPath];
 		if (withCover) args.push('-i', artworkPath);
 		args.push('-map', '0:a', '-c:a', 'copy', '-map_metadata', '-1');

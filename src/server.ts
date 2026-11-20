@@ -20,6 +20,7 @@ import { GaterushDownloader } from './gaterush';
 import { HypedditDownloader, type ProgressCallback } from './hypeddit';
 import { HypedditHttpDownloader } from './hypedditHttp';
 import {
+	needsSourceLosslessProbe,
 	parseBrowserMode,
 	parseOutputFormat,
 	parseUnattendedJobOptions,
@@ -720,7 +721,7 @@ async function runDownloadProcess(jobId: string): Promise<void> {
 		downloadFilename = await resolveDownloadedAudio(downloadFilename);
 		jobStore.update(jobId, { downloadFilename });
 		throwIfCancelled();
-		if (job.outputFormat !== 'original') {
+		if (needsSourceLosslessProbe(job.outputFormat)) {
 			const sourceIsLossless = await audioProcessor.isLosslessAudio(
 				join('./downloads', downloadFilename),
 			);

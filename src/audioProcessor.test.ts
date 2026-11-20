@@ -6,6 +6,7 @@ import {
 	AudioProcessor,
 	artworkExtension,
 	isLosslessCodec,
+	m4aCoverCodec,
 	parseAacBitrateKbps,
 } from './audioProcessor';
 
@@ -14,6 +15,15 @@ describe('artworkExtension', () => {
 		expect(artworkExtension('cover.PNG')).toBe('png');
 		expect(artworkExtension('../../.env')).toBe('jpg');
 		expect(artworkExtension('cover')).toBe('jpg');
+	});
+});
+
+describe('m4aCoverCodec', () => {
+	test('transcodes webp and gif covers to mjpeg and copies the rest', () => {
+		expect(m4aCoverCodec('.artwork-1.webp')).toBe('mjpeg');
+		expect(m4aCoverCodec('.artwork-1.GIF')).toBe('mjpeg');
+		expect(m4aCoverCodec('.artwork-1.jpg')).toBe('copy');
+		expect(m4aCoverCodec('.artwork-1.png')).toBe('copy');
 	});
 });
 
@@ -450,6 +460,58 @@ describe('AudioProcessor M4A/AAC output', () => {
 				{
 					buffer: await Bun.file('cover.gif').arrayBuffer(),
 					fileName: 'cover.gif',
+				},
+				'never',
+				'm4a-aac',
+			);
+
+			const data = await probe(outputPath);
+			const cover = data.streams.find((s) => s.codec_type === 'video');
+			expect(cover?.codec_name).toBe('mjpeg');
+			expect(cover?.disposition?.attached_pic).toBe(1);
+		});
+	});
+
+	test('transcodes a real webp cover to mjpeg so it embeds as an attached picture', async () => {
+		await inTempDir('sc-gate-dl-m4a-webp-', async () => {
+			await runFfmpeg([
+				'-f',
+				'lavfi',
+				'-i',
+				'sine=frequency=440:duration=0.5',
+				'-c:a',
+				'flac',
+				'-y',
+				'downloads/song.flac',
+			]);
+			await runFfmpeg([
+				'-f',
+				'lavfi',
+				'-i',
+				'color=c=red:s=16x16',
+				'-frames:v',
+				'1',
+				'-y',
+				'cover.png',
+			]);
+			const webp = Bun.spawn(
+				['cwebp', '-quiet', 'cover.png', '-o', 'cover.webp'],
+				{
+					stderr: 'ignore',
+				},
+			);
+			expect(await webp.exited).toBe(0);
+
+			const outputPath = await new AudioProcessor(
+				'ffmpeg',
+				'ffprobe',
+				128,
+			).processAudio(
+				'song.flac',
+				{ title: 'Song' },
+				{
+					buffer: await Bun.file('cover.webp').arrayBuffer(),
+					fileName: 'cover.webp',
 				},
 				'never',
 				'm4a-aac',
@@ -1066,6 +1128,65 @@ describe('AudioProcessor lossy m4a, ogg and aac tagging', () => {
 				'ffprobe',
 			).processAudio(
 				'song.m4a',
+				metadata,
+				await makeCover(),
+				'never',
+				'mp3-320',
+			);
+
+			const data = await probeFile(outputPath);
+			expect(data.format.tags?.title).toBe('Song');
+			expect(data.format.tags?.comment).toBeUndefined();
+		});
+	});
+
+	test('omits the comment for a lossy ogg without a source URL but still tags it', async () => {
+		await inTempDir('sc-gate-dl-tag-ogg-nourl-', async () => {
+			await makeLossy('song.ogg', [
+				'-c:a',
+				'vorbis',
+				'-ac',
+				'2',
+				'-strict',
+				'experimental',
+			]);
+
+			const outputPath = await new AudioProcessor(
+				'ffmpeg',
+				'ffprobe',
+			).processAudio(
+				'song.ogg',
+				metadata,
+				await makeCover(),
+				'never',
+				'mp3-320',
+			);
+
+			const data = await probeFile(outputPath);
+			const audio = data.streams.find(
+				(stream) => stream.codec_type === 'audio',
+			);
+			expect(audio?.tags?.title).toBe('Song');
+			expect(audio?.tags?.comment).toBeUndefined();
+		});
+	});
+
+	test('omits the comment for a lossy raw aac without a source URL but still tags it', async () => {
+		await inTempDir('sc-gate-dl-tag-aac-nourl-', async () => {
+			await makeLossy('song.aac', [
+				'-c:a',
+				'aac',
+				'-b:a',
+				'128k',
+				'-f',
+				'adts',
+			]);
+
+			const outputPath = await new AudioProcessor(
+				'ffmpeg',
+				'ffprobe',
+			).processAudio(
+				'song.aac',
 				metadata,
 				await makeCover(),
 				'never',

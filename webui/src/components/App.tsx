@@ -348,7 +348,7 @@ function artistTitleFilename(
 	return `${safeArtist} - ${safeTitle}${extension}`;
 }
 
-function previewProcessedFilename(
+export function previewProcessedFilename(
 	downloadFilename: string | null,
 	options: {
 		nameAsArtistTitle: boolean;

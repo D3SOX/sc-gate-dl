@@ -26,6 +26,11 @@ export function parseOutputFormat(value: unknown): OutputFormat | string {
 	return value;
 }
 
+/** Every non-original format converts, so the source must be probed first. */
+export function needsSourceLosslessProbe(outputFormat: OutputFormat): boolean {
+	return outputFormat !== 'original';
+}
+
 export interface UnattendedJobOptions {
 	/** Omitted keeps the server default from `BROWSER_HEADLESS`. */
 	browserMode?: BrowserMode;

@@ -4,6 +4,7 @@ import { describe, expect, test } from 'bun:test';
 import {
 	cleanMetadataFields,
 	cleanPromoTags,
+	previewProcessedFilename,
 	shouldActivateBrowserView,
 	shouldAutoCloseBrowserView,
 	stripDuplicateArtistFromTitle,
@@ -45,6 +46,36 @@ describe('metadata cleanup', () => {
 			title: 'Nite Sky - Guest Remix',
 			artist: 'OSKAMAXX, ADEMES',
 		});
+	});
+});
+
+describe('processed filename preview', () => {
+	test('previews an m4a name for a probed lossless source, and keeps lossy names', () => {
+		const base = {
+			nameAsArtistTitle: false,
+			outputFormat: 'm4a-aac' as const,
+		};
+		expect(
+			previewProcessedFilename('song.wav', { ...base, sourceIsLossless: true }),
+		).toBe('song.m4a');
+		expect(
+			previewProcessedFilename('song.mp3', {
+				...base,
+				sourceIsLossless: false,
+			}),
+		).toBe('song.mp3');
+	});
+
+	test('previews Artist - Title with an m4a extension for lossless m4a-aac output', () => {
+		expect(
+			previewProcessedFilename('song.wav', {
+				nameAsArtistTitle: true,
+				artist: 'Artist',
+				title: 'Song',
+				outputFormat: 'm4a-aac',
+				sourceIsLossless: true,
+			}),
+		).toBe('Artist - Song.m4a');
 	});
 });
 
