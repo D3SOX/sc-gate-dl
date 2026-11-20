@@ -1,7 +1,7 @@
 /// <reference types="bun" />
 
 import { describe, expect, test } from 'bun:test';
-import { previewProcessedFilename } from '../../../src/utils';
+import { previewProcessedFilename } from '../../../src/filenamePreview';
 import {
 	cleanMetadataFields,
 	cleanPromoTags,

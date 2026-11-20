@@ -1,7 +1,7 @@
 import crypto from 'node:crypto';
 import { rename, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { extname, join } from 'node:path';
+import { join } from 'node:path';
 import { lookpath } from 'find-bin';
 import type { Cookie, CookieData } from 'puppeteer';
 import type { SoundcloudTrack } from 'soundcloud.ts';
@@ -11,6 +11,7 @@ import {
 	normalizeDirectDownloadParsedUrl,
 	urlLooksLikeDirectDownload,
 } from './directLinkRules';
+import { LOSSLESS_EXTENSIONS } from './filenamePreview';
 import { safeFetch } from './safeOutboundUrl';
 import type { LocalCookieData, Metadata } from './types';
 
@@ -828,25 +829,6 @@ export function getDefaultMetadata(track: SoundcloudTrack): Metadata {
 	};
 }
 
-// Loose extension hint only. .caf can hold ALAC or AAC, so the codec probe
-// (isLosslessCodec) is the authority for lossless/lossy decisions.
-const LOSSLESS_EXTENSIONS = [
-	'.wav',
-	'.aiff',
-	'.aif',
-	'.flac',
-	'.ape',
-	'.wv',
-	'.tta',
-	'.dsf',
-	'.caf',
-	'.w64',
-] as const;
-/** Lossless extensions that always mean lossless; .caf and .m4a can hold lossy AAC, so they need the probe. */
-const PREVIEW_LOSSLESS_HINT = LOSSLESS_EXTENSIONS.filter(
-	(ext) => ext !== '.caf',
-);
-
 function hasExtension(
 	filename: string,
 	extensions: readonly string[],
@@ -875,68 +857,6 @@ export function toM4aFilename(filename: string): string {
 	return filename.replace(/\.[^.]+$/i, '.m4a');
 }
 
-/** Strip characters that are unsafe or awkward in filenames. */
-export function sanitizeFilenamePart(value: string): string {
-	return value
-		.replace(/[<>:"/\\|?*]/g, '')
-		.replace(/\s+/g, ' ')
-		.trim();
-}
-
-/** `Artist - Title` (+ extension) from metadata fields. */
-export function artistTitleFilename(
-	artist?: string,
-	title?: string,
-	extension = '.mp3',
-): string {
-	const safeArtist = sanitizeFilenamePart(artist || '') || 'Unknown Artist';
-	const safeTitle = sanitizeFilenamePart(title || '') || 'Unknown Title';
-	const ext = extension.startsWith('.') ? extension : `.${extension}`;
-	return `${safeArtist} - ${safeTitle}${ext}`;
-}
-
-/** Predicted output name for the metadata step (always ends as MP3). */
-function previewExtension(
-	outputFormat: 'mp3-320' | 'm4a-aac' | 'flac' | undefined,
-): string {
-	if (outputFormat === 'flac') return '.flac';
-	if (outputFormat === 'm4a-aac') return '.m4a';
-	return '.mp3';
-}
-
-export function previewProcessedFilename(
-	downloadFilename: string,
-	options: {
-		nameAsArtistTitle: boolean;
-		artist?: string;
-		title?: string;
-		outputFormat?: 'mp3-320' | 'm4a-aac' | 'flac' | 'original';
-		/** Probed lossless state; without a probe, an unambiguous lossless extension decides. */
-		sourceIsLossless?: boolean | null;
-	},
-): string {
-	const lossless =
-		options.sourceIsLossless ??
-		hasExtension(downloadFilename, PREVIEW_LOSSLESS_HINT);
-	const extension =
-		options.outputFormat === 'original' || !lossless
-			? extname(downloadFilename)
-			: previewExtension(options.outputFormat);
-	if (options.nameAsArtistTitle) {
-		return artistTitleFilename(options.artist, options.title, extension);
-	}
-	if (options.outputFormat === 'original' || !lossless) {
-		return downloadFilename;
-	}
-	if (options.outputFormat === 'flac') {
-		return toFlacFilename(downloadFilename);
-	}
-	if (options.outputFormat === 'm4a-aac') {
-		return toM4aFilename(downloadFilename);
-	}
-	return toMp3Filename(downloadFilename);
-}
-
 export function safeDecodeURIComponent(value: string): string {
 	try {
 		return decodeURIComponent(value);
@@ -944,3 +864,9 @@ export function safeDecodeURIComponent(value: string): string {
 		return value;
 	}
 }
+
+export {
+	artistTitleFilename,
+	previewProcessedFilename,
+	sanitizeFilenamePart,
+} from './filenamePreview';

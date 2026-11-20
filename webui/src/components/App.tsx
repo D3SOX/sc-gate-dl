@@ -1,12 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Toaster, toast } from 'sonner';
+import { previewProcessedFilename } from '../../../src/filenamePreview';
 import type {
 	BrowserMode,
 	OutputFormat,
 	SearchResponse,
 	SearchResult,
 } from '../../../src/types';
-import { previewProcessedFilename } from '../../../src/utils';
 import './App.css';
 import { resolveApiBase } from './apiBase';
 import {

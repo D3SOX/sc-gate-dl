@@ -43,6 +43,7 @@ import {
 	type HypedditConfig,
 	isBrowserMode,
 	isJobDestination,
+	isOutputFormat,
 	type Job,
 	type Metadata,
 } from './types';
@@ -1086,7 +1087,7 @@ const server = Bun.serve({
 					const format = parseOutputFormat(
 						outputFormat === undefined ? 'mp3-320' : outputFormat,
 					);
-					if (typeof format === 'string') {
+					if (!isOutputFormat(format)) {
 						return jsonResponse({ error: format }, { status: 400 });
 					}
 
