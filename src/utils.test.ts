@@ -8,6 +8,7 @@ import {
 	extractGateUrl,
 	findBandcampHomepageInHtml,
 	findKnownGateInHtml,
+	isLosslessFormat,
 	loadCookies,
 	previewProcessedFilename,
 	resolveGateProviderUrl,
@@ -508,5 +509,30 @@ describe('previewProcessedFilename', () => {
 				outputFormat: 'flac',
 			}),
 		).toBe('Artist - Title.flac');
+	});
+});
+
+describe('isLosslessFormat', () => {
+	test('recognizes lossless extensions, including tta, dsf, caf and w64', () => {
+		for (const name of [
+			'a.wav',
+			'a.aiff',
+			'a.aif',
+			'a.flac',
+			'a.ape',
+			'a.wv',
+			'a.tta',
+			'a.dsf',
+			'a.caf',
+			'a.w64',
+		]) {
+			expect(isLosslessFormat(name)).toBe(true);
+		}
+	});
+
+	test('does not treat the non-standard alac extension or lossy containers as lossless', () => {
+		for (const name of ['a.alac', 'a.m4a', 'a.aac', 'a.ogg', 'a.mp3']) {
+			expect(isLosslessFormat(name)).toBe(false);
+		}
 	});
 });

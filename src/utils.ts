@@ -828,6 +828,8 @@ export function getDefaultMetadata(track: SoundcloudTrack): Metadata {
 	};
 }
 
+// Loose extension hint only. .caf can hold ALAC or AAC, so the codec probe
+// (isLosslessCodec) is the authority for lossless/lossy decisions.
 const LOSSLESS_EXTENSIONS = [
 	'.wav',
 	'.aiff',
@@ -835,7 +837,10 @@ const LOSSLESS_EXTENSIONS = [
 	'.flac',
 	'.ape',
 	'.wv',
-	'.alac',
+	'.tta',
+	'.dsf',
+	'.caf',
+	'.w64',
 ] as const;
 /** Lossy containers we still re-encode to MP3 (bitrate chosen from the source). */
 const LOSSY_TO_MP3_EXTENSIONS = [

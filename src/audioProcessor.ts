@@ -36,6 +36,20 @@ type FfprobeResult = {
 	}>;
 };
 
+/** Codec names (from ffprobe) that carry lossless audio, regardless of container. */
+export function isLosslessCodec(codecName: string): boolean {
+	const codec = codecName.toLowerCase();
+	return (
+		codec === 'alac' ||
+		codec === 'flac' ||
+		codec === 'wavpack' ||
+		codec === 'ape' ||
+		codec === 'tta' ||
+		codec.startsWith('pcm_') ||
+		codec.startsWith('dsd_')
+	);
+}
+
 export class AudioProcessor {
 	private ffmpegBin: string;
 	private ffprobeBin: string;
@@ -381,14 +395,7 @@ export class AudioProcessor {
 	async isLosslessAudio(inputPath: string): Promise<boolean | null> {
 		const { codecName } = await this.probeAudioStream(inputPath);
 		if (!codecName) return null;
-		const codec = codecName.toLowerCase();
-		return (
-			codec === 'alac' ||
-			codec === 'flac' ||
-			codec === 'wavpack' ||
-			codec === 'ape' ||
-			codec.startsWith('pcm_')
-		);
+		return isLosslessCodec(codecName);
 	}
 
 	/**
@@ -400,8 +407,10 @@ export class AudioProcessor {
 		filename: string,
 	): Promise<number> {
 		const probed = await this.probeAudioStream(inputPath);
-		const losslessCodec = probed.codecName?.toLowerCase() === 'alac';
-		if (isLosslessFormat(filename) || losslessCodec) {
+		const lossless = probed.codecName
+			? isLosslessCodec(probed.codecName)
+			: isLosslessFormat(filename);
+		if (lossless) {
 			return 320;
 		}
 
