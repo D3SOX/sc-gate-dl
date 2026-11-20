@@ -5,17 +5,20 @@ const SOUNDCLOUD_HOST_RE = /(^|\.)soundcloud\.com$/i;
 const LOGIN_COPY_RE =
 	/(?:sign in or create an account|create an account or sign in)/i;
 
+function isSoundcloudHost(pageUrl: string): boolean {
+	try {
+		return SOUNDCLOUD_HOST_RE.test(new URL(pageUrl).hostname);
+	} catch {
+		return false;
+	}
+}
+
 export function isSoundcloudLoginDocument(
 	pageUrl: string,
 	text: string,
 	hasApproval: boolean,
 ): boolean {
-	try {
-		if (!SOUNDCLOUD_HOST_RE.test(new URL(pageUrl).hostname)) return false;
-	} catch {
-		return false;
-	}
-	return LOGIN_COPY_RE.test(text) && !hasApproval;
+	return isSoundcloudHost(pageUrl) && LOGIN_COPY_RE.test(text) && !hasApproval;
 }
 
 export async function isSoundcloudLoginPage(page: Page): Promise<boolean> {
@@ -33,6 +36,15 @@ export async function isSoundcloudLoginPage(page: Page): Promise<boolean> {
 				),
 		}))
 		.catch(() => null);
+	if (
+		documentState &&
+		isSoundcloudHost(page.url()) &&
+		/\byou have been blocked\b/i.test(documentState.text)
+	) {
+		throw new Error(
+			'SoundCloud blocked this browser or network. Stop and resolve the block with SoundCloud before retrying.',
+		);
+	}
 	return documentState
 		? isSoundcloudLoginDocument(
 				page.url(),

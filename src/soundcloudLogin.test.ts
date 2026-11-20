@@ -100,4 +100,52 @@ describe('SoundCloud login persistence', () => {
 			save.mockRestore();
 		}
 	});
+
+	test('reports a blocked SoundCloud session without saving cookies as a successful login', async () => {
+		const save = spyOn(utils, 'writeBrowserCookies').mockResolvedValue(
+			undefined,
+		);
+		let checks = 0;
+		const page = {
+			isClosed: () => false,
+			url: () => 'https://secure.soundcloud.com/authorize',
+			bringToFront: async () => {},
+			evaluate: async () => ({
+				text:
+					++checks === 1
+						? 'Create an account or sign in'
+						: 'You have been blocked. We detected unusual activity from your device or network.',
+				hasApproval: false,
+			}),
+			browserContext: () => ({ cookies: async () => [cookie('private')] }),
+		} as unknown as Page;
+		try {
+			await expect(
+				waitForSoundcloudLogin(page, {
+					interactive: true,
+					onWaiting: () => {},
+				}),
+			).rejects.toThrow('SoundCloud blocked');
+			expect(save).not.toHaveBeenCalled();
+		} finally {
+			save.mockRestore();
+		}
+	});
+
+	test('does not classify another site as a SoundCloud block', async () => {
+		const page = {
+			isClosed: () => false,
+			url: () => 'https://example.com/',
+			evaluate: async () => ({
+				text: 'You have been blocked',
+				hasApproval: false,
+			}),
+		} as unknown as Page;
+		expect(
+			await waitForSoundcloudLogin(page, {
+				interactive: false,
+				onWaiting: () => {},
+			}),
+		).toBe(false);
+	});
 });
