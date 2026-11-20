@@ -50,3 +50,6 @@ exports
 # local debug
 scripts
 *.mhtml
+
+# playwright MCP browser logs
+.playwright-mcp
