@@ -98,6 +98,7 @@ const LIBRARY_DIR = libraryDirFromEnv();
 const AAC_BITRATE_KBPS = parseAacBitrateKbps(
 	process.env.SC_GATE_DL_AAC_BITRATE,
 );
+const API_PORT = Number(process.env.SC_GATE_DL_PORT) || 3000;
 
 const soundcloudClient = new SoundcloudClient();
 const audioProcessor = new AudioProcessor(
@@ -910,7 +911,7 @@ function wrapRoutes<Path extends string>(
 }
 
 const server = Bun.serve({
-	port: 3000,
+	port: API_PORT,
 	// Increase idle timeout for long-running operations (browser automation, downloads)
 	idleTimeout: 255, // ~4 minutes (max allowed)
 	routes: wrapRoutes({
