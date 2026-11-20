@@ -5,7 +5,10 @@ import { nextDroploudSocialAction } from './droploudSocial';
 import type { ProgressCallback } from './hypeddit';
 import Selectors from './selectors';
 import { SoundcloudClient } from './soundcloud';
-import { waitForSoundcloudLogin } from './soundcloudLogin';
+import {
+	isSoundcloudLoginPage,
+	waitForSoundcloudLogin,
+} from './soundcloudLogin';
 import type { HypedditConfig } from './types';
 import { loadCookies, timeout } from './utils';
 
@@ -114,7 +117,12 @@ export class DroploudDownloader {
 
 		const maxSteps = 12;
 		for (let i = 0; i < maxSteps; i++) {
-			const kind = await this.detectPaneKind(page);
+			let kind = await this.detectPaneKind(page);
+			const deadline = Date.now() + 10_000;
+			while (kind === 'unknown' && Date.now() < deadline) {
+				await timeout(300);
+				kind = await this.detectPaneKind(page);
+			}
 			console.log(`Droploud pane: ${kind}`);
 
 			if (kind === 'unlocked') {
@@ -277,7 +285,9 @@ export class DroploudDownloader {
 
 				const connectBtn = Array.from(
 					document.querySelectorAll<HTMLButtonElement>('button'),
-				).find((btn) => /connect (soundcloud|with)/i.test(btn.textContent || ''));
+				).find((btn) =>
+					/connect (soundcloud|with)/i.test(btn.textContent || ''),
+				);
 				if (connectBtn || document.querySelector(selectors.commentInput)) {
 					return 'soundcloud_connect';
 				}
@@ -525,7 +535,10 @@ export class DroploudDownloader {
 				if (/^open\s/i.test(text)) openHandles.push(h);
 				else await h.dispose();
 			}
-			const target = openHandles[action.index];
+			const openIndex = cards
+				.slice(0, action.index)
+				.filter((card) => card.kind === 'open').length;
+			const target = openHandles[openIndex];
 			if (!target) {
 				for (const h of openHandles) await h.dispose();
 				throw new Error('Droploud social card disappeared mid-step.');
@@ -1950,23 +1963,11 @@ export class DroploudDownloader {
 			if (url.includes('soundcloud.com')) {
 				// Wait for the OAuth document to settle — early navigations can briefly
 				// show marketing/login copy before the session cookies apply.
-				const needsLogin = await oauthPage
-					.evaluate(async () => {
-						const loginRe = /sign in or create an account/i;
-						if (!loginRe.test(document.body?.innerText || '')) return false;
-						await new Promise((r) => setTimeout(r, 1_500));
-						const text = document.body?.innerText || '';
-						const hasApproval =
-							!!document.querySelector('button#submit_approval') ||
-							!!document.querySelector('button[name="accept"]') ||
-							Array.from(document.querySelectorAll('button')).some((btn) =>
-								/^(allow|accept|connect)$/i.test(
-									(btn.textContent || '').trim(),
-								),
-							);
-						return loginRe.test(text) && !hasApproval;
-					})
-					.catch(() => false);
+				let needsLogin = await isSoundcloudLoginPage(oauthPage);
+				if (needsLogin) {
+					await timeout(1_500);
+					needsLogin = await isSoundcloudLoginPage(oauthPage);
+				}
 				if (needsLogin) {
 					await waitForSoundcloudLogin(oauthPage, {
 						interactive: this.config.browserMode === 'headed',

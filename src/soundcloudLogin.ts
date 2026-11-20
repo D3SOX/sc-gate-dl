@@ -2,7 +2,8 @@ import type { BrowserContext, Page } from 'puppeteer';
 import { timeout, writeBrowserCookies } from './utils';
 
 const SOUNDCLOUD_HOST_RE = /(^|\.)soundcloud\.com$/i;
-const LOGIN_COPY_RE = /sign in or create an account/i;
+const LOGIN_COPY_RE =
+	/(?:sign in or create an account|create an account or sign in)/i;
 
 export function isSoundcloudLoginDocument(
 	pageUrl: string,
