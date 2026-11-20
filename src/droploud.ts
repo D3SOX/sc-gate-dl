@@ -105,17 +105,6 @@ export class DroploudDownloader {
 
 		await this.dismissCookieBanner(page);
 		await this.startGateIfNeeded(page);
-		// Social cards render late; a timeout just means this track has none.
-		await page
-			.waitForFunction(
-				() =>
-					Array.from(document.querySelectorAll('button')).some((btn) =>
-						/^open\s|done it/i.test((btn.textContent || '').trim()),
-					),
-				{ timeout: 10_000 },
-			)
-			.catch(() => {});
-
 		const maxSteps = 12;
 		for (let i = 0; i < maxSteps; i++) {
 			let kind = await this.detectPaneKind(page);
@@ -367,22 +356,13 @@ export class DroploudDownloader {
 			timeout: 10_000,
 		});
 
-		// Instant fill — React-controlled input needs the native value setter.
-		await page.evaluate(
-			(selector, value) => {
-				const el = document.querySelector<HTMLInputElement>(selector);
-				if (!el) return;
-				const setter = Object.getOwnPropertyDescriptor(
-					window.HTMLInputElement.prototype,
-					'value',
-				)?.set;
-				setter?.call(el, value);
-				el.dispatchEvent(new Event('input', { bubbles: true }));
-				el.dispatchEvent(new Event('change', { bubbles: true }));
-			},
-			Selectors.DROPLOUD_EMAIL_INPUT,
-			email,
-		);
+		await page.focus(Selectors.DROPLOUD_EMAIL_INPUT);
+		await page.evaluate((selector) => {
+			const input = document.querySelector<HTMLInputElement>(selector);
+			input?.select();
+		}, Selectors.DROPLOUD_EMAIL_INPUT);
+		await page.keyboard.press('Backspace');
+		await page.type(Selectors.DROPLOUD_EMAIL_INPUT, email);
 
 		await page.evaluate((selector) => {
 			const checkbox = document.querySelector<HTMLInputElement>(selector);
@@ -392,35 +372,33 @@ export class DroploudDownloader {
 		}, Selectors.DROPLOUD_EMAIL_CONSENT);
 
 		await page.waitForFunction(
-			() => {
-				const btn = Array.from(document.querySelectorAll('button')).find((el) =>
-					/continue/i.test((el.textContent || '').trim()),
-				) as HTMLButtonElement | undefined;
+			(selector) => {
+				const btn = Array.from(
+					document.querySelector(selector)?.querySelectorAll('button') ?? [],
+				).find((el) =>
+					/^(continue|free download)$/i.test((el.textContent || '').trim()),
+				);
 				return !!btn && !btn.disabled;
 			},
 			{ timeout: 10_000 },
+			Selectors.DROPLOUD_EMAIL_WRAP,
 		);
 
-		const beforeTitle = await page.evaluate((selector) => {
-			return document.querySelector(selector)?.textContent?.trim() || '';
-		}, Selectors.DROPLOUD_UNLOCKED_TITLE);
-
-		await page.evaluate(() => {
-			const btn = Array.from(document.querySelectorAll('button')).find((el) =>
-				/continue/i.test((el.textContent || '').trim()),
-			) as HTMLButtonElement | undefined;
+		await page.evaluate((selector) => {
+			const btn = Array.from(
+				document.querySelector(selector)?.querySelectorAll('button') ?? [],
+			).find(
+				(el) =>
+					/^(continue|free download)$/i.test((el.textContent || '').trim()) &&
+					!el.disabled,
+			);
 			btn?.click();
-		});
+		}, Selectors.DROPLOUD_EMAIL_WRAP);
 
 		await page.waitForFunction(
-			(selector, previous) => {
-				const title =
-					document.querySelector(selector)?.textContent?.trim() || '';
-				return title !== previous || !document.querySelector('.dtr-email-wrap');
-			},
+			(selector) => !document.querySelector(selector),
 			{ timeout: 20_000 },
-			Selectors.DROPLOUD_UNLOCKED_TITLE,
-			beforeTitle,
+			Selectors.DROPLOUD_EMAIL_INPUT,
 		);
 		await timeout(400);
 	}

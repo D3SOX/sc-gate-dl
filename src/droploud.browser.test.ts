@@ -7,12 +7,76 @@ let browser: Browser;
 let page: Page;
 
 beforeAll(async () => {
-	browser = await launchAppBrowser({ headless: true });
+	browser = await launchAppBrowser({ headless: true, humanize: false });
 	page = await browser.newPage();
 });
 
 afterAll(async () => {
 	await browser?.close();
+});
+
+test.each([
+	['initial email form', 'ds-gate-pane', 'dltg-email', 'Free download'],
+	['legacy email step', 'dtr-email-wrap', 'legacy-email', 'Continue'],
+])(
+	'submits the %s and waits for the next gate step',
+	async (_name, wrapper, id, label) => {
+		await page.setContent(`
+		<form class="${wrapper}">
+			<h2 class="ds-gate-t">Enter email</h2>
+			<input type="email" id="${id}" name="email">
+			<label><input type="checkbox" name="consent" required>Consent</label>
+			<button type="submit" disabled>${label}</button>
+		</form>
+		<script>
+		(() => {
+			const form = document.querySelector('form');
+			const email = form.querySelector('input[type=email]');
+			const consent = form.querySelector('input[type=checkbox]');
+			const button = form.querySelector('button');
+			let acceptedEmail = '';
+			const update = () => { button.disabled = !(acceptedEmail && consent.checked); };
+			email.addEventListener('input', event => { if (event.isTrusted) { acceptedEmail = email.value; update(); } });
+			consent.addEventListener('change', update);
+			form.addEventListener('submit', event => {
+				event.preventDefault();
+				if (email.value !== 'listener@example.test' || !consent.checked) return;
+				setTimeout(() => { form.outerHTML = '<div class="ds-gate-pane"><h2 class="ds-gate-t">Next step</h2></div>'; }, 100);
+			});
+		})();
+		</script>
+	`);
+		const downloader = new DroploudDownloader({
+			email: 'listener@example.test',
+			comment: 'test',
+			browserMode: 'headless',
+		});
+		const gate = downloader as unknown as {
+			detectPaneKind(page: Page): Promise<string>;
+			handleEmailStep(page: Page): Promise<void>;
+		};
+		expect(await gate.detectPaneKind(page)).toBe('email');
+		await gate.handleEmailStep(page);
+		expect(await page.$eval('.ds-gate-t', (el) => el.textContent)).toBe(
+			'Next step',
+		);
+	},
+	15_000,
+);
+
+test('does not mistake an unrelated email field for a Droploud email step', async () => {
+	await page.setContent(
+		'<input type="email"><div class="ds-gate-pane"><h2 class="ds-gate-t">Other step</h2></div>',
+	);
+	const downloader = new DroploudDownloader({
+		comment: 'test',
+		browserMode: 'headless',
+	});
+	expect(
+		await (
+			downloader as unknown as { detectPaneKind(page: Page): Promise<string> }
+		).detectPaneKind(page),
+	).toBe('unknown');
 });
 
 test('recognizes and verifies a repost step after SoundCloud authorization', async () => {

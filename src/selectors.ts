@@ -88,9 +88,11 @@ const DROPLOUD_CONFIRM_BUTTON = 'button.dtr-confirm-btn';
 const DROPLOUD_SC_COMMENT_INPUT = '#dltg-sc-comment, #dtr-sc-comment-input';
 const DROPLOUD_UNLOCKED_TITLE = '.dtr-card-title';
 const DROPLOUD_DOWNLOAD_BUTTON = '.ds-free-dl.dtr-card-cta';
-const DROPLOUD_EMAIL_WRAP = '.dtr-email-wrap';
-const DROPLOUD_EMAIL_INPUT = '.dtr-email-wrap input[type="email"]';
-const DROPLOUD_EMAIL_CONSENT = '.dtr-email-wrap input[type="checkbox"]';
+const DROPLOUD_EMAIL_WRAP = '.dtr-email-wrap, .ds-gate-pane:has(#dltg-email)';
+const DROPLOUD_EMAIL_INPUT =
+	'.dtr-email-wrap input[type="email"], .ds-gate-pane #dltg-email';
+const DROPLOUD_EMAIL_CONSENT =
+	'.dtr-email-wrap input[type="checkbox"], .ds-gate-pane:has(#dltg-email) input[name="consent"][type="checkbox"]';
 const DROPLOUD_DLFOLLOW_WRAP = '.dtr-dlfollow-wrap';
 const DROPLOUD_DLFOLLOW_SKIP = 'button.dtr-dlfollow-skip';
 const DROPLOUD_DISCLAIMER_CHECK = '.dtr-social-wrap input[type="checkbox"]';
