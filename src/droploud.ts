@@ -623,7 +623,17 @@ export class DroploudDownloader {
 			await target.click({ delay: 40 });
 			for (const h of openHandles) await h.dispose();
 
-			await this.closeSocialPopup(pagesBefore, page);
+			const stepTitle = await page
+				.$eval(
+					'.ds-gate-pane .ds-gate-t',
+					(element) => element.textContent?.trim() ?? '',
+				)
+				.catch(() => '');
+			await this.closeSocialPopup(
+				pagesBefore,
+				page,
+				`${stepTitle} ${cards[action.index]?.label ?? ''}`,
+			);
 		}
 		throw new Error('Droploud social cards did not finish within 20 attempts.');
 	}
@@ -631,6 +641,7 @@ export class DroploudDownloader {
 	private async closeSocialPopup(
 		pagesBefore: Set<Page>,
 		page: Page,
+		label: string,
 	): Promise<void> {
 		let popup: Page | undefined;
 		const started = Date.now();
@@ -645,8 +656,15 @@ export class DroploudDownloader {
 			if (!popup) await timeout(200);
 		}
 		if (popup && !popup.isClosed()) {
-			await timeout(1_200);
-			await popup.close().catch(() => {});
+			try {
+				if (/soundcloud\.com/i.test(popup.url()) && /repost/i.test(label)) {
+					await this.performSoundcloudManualActions(popup, { repost: true });
+				} else {
+					await timeout(1_200);
+				}
+			} finally {
+				if (!popup.isClosed()) await popup.close();
+			}
 		}
 	}
 
