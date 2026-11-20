@@ -6,6 +6,7 @@ import type {
 	SearchResponse,
 	SearchResult,
 } from '../../../src/types';
+import { previewProcessedFilename } from '../../../src/utils';
 import './App.css';
 import { resolveApiBase } from './apiBase';
 import {
@@ -329,54 +330,6 @@ function metadataNeedsCleanup(meta: Metadata): boolean {
 		(meta.album || '') !== (cleaned.album || '') ||
 		(meta.genre || '') !== (cleaned.genre || '')
 	);
-}
-
-function sanitizeFilenamePart(value: string): string {
-	return value
-		.replace(/[<>:"/\\|?*]/g, '')
-		.replace(/\s+/g, ' ')
-		.trim();
-}
-
-function artistTitleFilename(
-	artist?: string,
-	title?: string,
-	extension = '.mp3',
-): string {
-	const safeArtist = sanitizeFilenamePart(artist || '') || 'Unknown Artist';
-	const safeTitle = sanitizeFilenamePart(title || '') || 'Unknown Title';
-	return `${safeArtist} - ${safeTitle}${extension}`;
-}
-
-export function previewProcessedFilename(
-	downloadFilename: string | null,
-	options: {
-		nameAsArtistTitle: boolean;
-		artist?: string;
-		title?: string;
-		outputFormat: OutputFormat;
-		sourceIsLossless: boolean | null;
-	},
-): string {
-	if (!downloadFilename) return '';
-	const lossless =
-		options.sourceIsLossless ??
-		/\.(wav|aiff|aif|flac|ape|wv|tta|dsf|w64)$/i.test(downloadFilename);
-	const keepsSource = options.outputFormat === 'original' || !lossless;
-	const extension = keepsSource
-		? (downloadFilename.match(/\.[^.]+$/)?.[0] ?? '')
-		: options.outputFormat === 'flac'
-			? '.flac'
-			: options.outputFormat === 'm4a-aac'
-				? '.m4a'
-				: '.mp3';
-	if (options.nameAsArtistTitle) {
-		return artistTitleFilename(options.artist, options.title, extension);
-	}
-	if (keepsSource) {
-		return downloadFilename;
-	}
-	return downloadFilename.replace(/\.[^.]+$/i, extension);
 }
 
 export default function App() {
@@ -1232,13 +1185,15 @@ export default function App() {
 	};
 	const canCleanupMetadata = metadataNeedsCleanup(metadata);
 	const inputIsTrackUrl = isTrackUrlInput(soundcloudUrl);
-	const outputFilenamePreview = previewProcessedFilename(job.downloadFilename, {
-		nameAsArtistTitle,
-		artist: metadata.artist,
-		title: metadata.title,
-		outputFormat: job.outputFormat,
-		sourceIsLossless: job.sourceIsLossless,
-	});
+	const outputFilenamePreview = job.downloadFilename
+		? previewProcessedFilename(job.downloadFilename, {
+				nameAsArtistTitle,
+				artist: metadata.artist,
+				title: metadata.title,
+				outputFormat: job.outputFormat,
+				sourceIsLossless: job.sourceIsLossless,
+			})
+		: '';
 	const isHandlingGate =
 		step === 'gate' && GATE_PROGRESS_STAGES.has(job.progress?.stage ?? '');
 	const isCancelling = job.progress?.stage === 'cancelling';

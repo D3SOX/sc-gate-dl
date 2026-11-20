@@ -1,10 +1,10 @@
 /// <reference types="bun" />
 
 import { describe, expect, test } from 'bun:test';
+import { previewProcessedFilename } from '../../../src/utils';
 import {
 	cleanMetadataFields,
 	cleanPromoTags,
-	previewProcessedFilename,
 	shouldActivateBrowserView,
 	shouldAutoCloseBrowserView,
 	stripDuplicateArtistFromTitle,
