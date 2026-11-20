@@ -889,6 +889,21 @@ describe('AudioProcessor lossy passthrough and lossless gate', () => {
 		});
 	}
 
+	test('writes the source link to converted FLAC metadata', async () => {
+		await inTempDir('sc-gate-dl-flac-comment-', async () => {
+			await makeFixture('song.wav', ['-c:a', 'pcm_s16le']);
+			const output = await new AudioProcessor('ffmpeg', 'ffprobe').processAudio(
+				'song.wav',
+				{ title: 'Song' },
+				await makeCover(),
+				'never',
+				'flac',
+				sourceUrl,
+			);
+			expect((await probeFile(output)).format.tags?.comment).toBe(sourceUrl);
+		});
+	});
+
 	test('decides an m4a container by its probed codec: alac converts, aac passes through', async () => {
 		await inTempDir('sc-gate-dl-container-', async () => {
 			await makeFixture('song.m4a', ['-c:a', 'alac']);
@@ -906,6 +921,43 @@ describe('AudioProcessor lossy passthrough and lossless gate', () => {
 
 			expect(basename(outputPath)).toBe('song.mp3');
 			expect(await audioCodec(outputPath)).toBe('mp3');
+		});
+	});
+
+	test('keeps an ALAC source when converting to AAC and source retention is requested', async () => {
+		await inTempDir('sc-gate-dl-alac-retain-', async () => {
+			await makeFixture('song.m4a', ['-c:a', 'alac']);
+			const output = await new AudioProcessor('ffmpeg', 'ffprobe').processAudio(
+				'song.m4a',
+				{ title: 'Song' },
+				await makeCover(),
+				'never',
+				'm4a-aac',
+				sourceUrl,
+			);
+			expect(output).not.toBe(join('downloads', 'song.m4a'));
+			expect(await audioCodec('downloads/song.m4a')).toBe('alac');
+			expect(await audioCodec(output)).toBe('aac');
+		});
+	});
+
+	test('keeps the original FLAC when source retention is requested', async () => {
+		await inTempDir('sc-gate-dl-flac-retain-', async () => {
+			await makeFixture('song.flac', ['-c:a', 'flac']);
+			const original = await Bun.file('downloads/song.flac').arrayBuffer();
+			const output = await new AudioProcessor('ffmpeg', 'ffprobe').processAudio(
+				'song.flac',
+				{ title: 'Song' },
+				await makeCover(),
+				'never',
+				'flac',
+				sourceUrl,
+			);
+			expect(output).not.toBe(join('downloads', 'song.flac'));
+			expect(await Bun.file('downloads/song.flac').arrayBuffer()).toEqual(
+				original,
+			);
+			expect((await probeFile(output)).format.tags?.comment).toBe(sourceUrl);
 		});
 	});
 });

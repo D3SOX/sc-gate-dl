@@ -292,6 +292,8 @@ export class AudioProcessor {
 						artworkPath,
 						metadata,
 						filename,
+						losslessHandling,
+						sourceUrl,
 					);
 					await this.maybeRemoveSource(
 						inputPath,
@@ -308,6 +310,7 @@ export class AudioProcessor {
 						artworkPath,
 						metadata,
 						filename,
+						losslessHandling,
 						sourceUrl,
 					);
 					await this.maybeRemoveSource(
@@ -528,15 +531,19 @@ export class AudioProcessor {
 		artworkPath: string,
 		metadata: Metadata,
 		filename: string,
+		losslessHandling: 'prompt' | 'always' | 'never',
+		sourceUrl?: string,
 	): Promise<string> {
-		const replacingFlac = extname(filename).toLowerCase() === '.flac';
+		const replacingFlac =
+			extname(filename).toLowerCase() === '.flac' &&
+			losslessHandling === 'always';
 		const outputPath = replacingFlac
 			? join('./downloads', `.converting-${crypto.randomUUID()}.flac`)
 			: await withDownloadRenameLock(async () => {
 					const desiredFilename = toFlacFilename(filename);
 					const finalName = pickUniqueDownloadFilename({
 						desiredFilename,
-						currentFilename: basename(inputPath),
+						currentFilename: '',
 						jobId: crypto.randomUUID(),
 						exists: (name) => existsSync(join('./downloads', name)),
 						isOwnedByOtherJob: () => false,
@@ -573,13 +580,13 @@ export class AudioProcessor {
 		if (metadata.artist) args.push('-metadata', `artist=${metadata.artist}`);
 		if (metadata.album) args.push('-metadata', `album=${metadata.album}`);
 		if (metadata.genre) args.push('-metadata', `genre=${metadata.genre}`);
+		if (sourceUrl) args.push('-metadata', `comment=${sourceUrl}`);
 		args.push('-y', outputPath);
 
 		console.log('Converting to FLAC...');
 		try {
 			await this.run(this.ffmpegBin, args);
 			if (replacingFlac) {
-				await Bun.file(inputPath).unlink();
 				await rename(outputPath, inputPath);
 				console.log(`✓ Converted to ${inputPath}`);
 				return inputPath;
@@ -600,16 +607,19 @@ export class AudioProcessor {
 		artworkPath: string,
 		metadata: Metadata,
 		filename: string,
+		losslessHandling: 'prompt' | 'always' | 'never',
 		sourceUrl?: string,
 	): Promise<string> {
-		const replacingM4a = extname(filename).toLowerCase() === '.m4a';
+		const replacingM4a =
+			extname(filename).toLowerCase() === '.m4a' &&
+			losslessHandling === 'always';
 		const outputPath = replacingM4a
 			? join('./downloads', `.converting-${crypto.randomUUID()}.m4a`)
 			: await withDownloadRenameLock(async () => {
 					const desiredFilename = toM4aFilename(filename);
 					const finalName = pickUniqueDownloadFilename({
 						desiredFilename,
-						currentFilename: basename(inputPath),
+						currentFilename: '',
 						jobId: crypto.randomUUID(),
 						exists: (name) => existsSync(join('./downloads', name)),
 						isOwnedByOtherJob: () => false,
@@ -658,7 +668,6 @@ export class AudioProcessor {
 		try {
 			await this.run(this.ffmpegBin, args);
 			if (replacingM4a) {
-				await Bun.file(inputPath).unlink();
 				await rename(outputPath, inputPath);
 				console.log(`✓ Converted to ${inputPath}`);
 				return inputPath;
