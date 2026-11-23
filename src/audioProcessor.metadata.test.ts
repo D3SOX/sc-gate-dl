@@ -344,3 +344,53 @@ describe('lossy OGG passthrough without artwork', () => {
 		expect(tags.comment).toBe('https://soundcloud.com/artist/track');
 	}, 60_000);
 });
+
+describe('lossy AAC passthrough without artwork', () => {
+	let dir: string;
+	let previousCwd: string;
+
+	beforeEach(async () => {
+		dir = await mkdtemp(join(tmpdir(), 'sc-gate-dl-aac-'));
+		previousCwd = process.cwd();
+		process.chdir(dir);
+		await mkdir('downloads');
+	});
+
+	afterEach(async () => {
+		process.chdir(previousCwd);
+		await rm(dir, { recursive: true, force: true });
+	});
+
+	test('tags a lossy raw AAC, keeps its audio payload and needs no artwork', async () => {
+		await runFfmpeg([
+			'-f',
+			'lavfi',
+			'-i',
+			'sine=frequency=440:duration=1',
+			'-c:a',
+			'aac',
+			'-b:a',
+			'128k',
+			'-f',
+			'adts',
+			'-y',
+			join('downloads', 'lossy.aac'),
+		]);
+		const payloadBefore = await audioPayload(join('downloads', 'lossy.aac'));
+
+		const output = await new AudioProcessor('ffmpeg', 'ffprobe').processAudio(
+			'lossy.aac',
+			{ title: 'Tagged AAC' },
+			{ buffer: new ArrayBuffer(0), fileName: 'missing.jpg' },
+			'never',
+			'mp3-320',
+			'https://soundcloud.com/artist/track',
+		);
+
+		expect(await audioCodec(output)).toBe('aac');
+		expect(await audioPayload(output)).toEqual(payloadBefore);
+		const tags = await formatTags(output);
+		expect(tags.title).toBe('Tagged AAC');
+		expect(tags.comment).toBe('https://soundcloud.com/artist/track');
+	}, 60_000);
+});
