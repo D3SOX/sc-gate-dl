@@ -1627,17 +1627,22 @@ export class DroploudDownloader {
 				const track = await new SoundcloudClient().getTrack(trackUrl);
 				trackIdHint = String(track.id);
 			} catch {
-				// page HTML may still have the urn
+				console.warn(
+					'Droploud: Could not resolve the SoundCloud track for repost.',
+				);
+				return false;
 			}
 		}
 
 		const result = await page
 			.evaluate(
 				async (hints) => {
-					const urnMatch =
-						document.body.innerHTML.match(/soundcloud:tracks:(\d+)/) ||
-						document.documentElement.innerHTML.match(/soundcloud:tracks:(\d+)/);
-					const trackId = urnMatch?.[1] || hints.trackIdHint;
+					const trackId =
+						hints.trackIdHint ||
+						document.body?.innerHTML.match(/soundcloud:tracks:(\d+)/)?.[1] ||
+						document.documentElement.innerHTML.match(
+							/soundcloud:tracks:(\d+)/,
+						)?.[1];
 					if (!trackId) return { ok: false, reason: 'no-track-id' };
 
 					const clientId = (

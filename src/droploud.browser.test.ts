@@ -1,7 +1,9 @@
-import { afterAll, beforeAll, expect, test } from 'bun:test';
+import { afterAll, beforeAll, expect, spyOn, test } from 'bun:test';
 import type { Browser, Page } from 'puppeteer';
 import { launchAppBrowser } from './browserLaunch';
 import { DroploudDownloader } from './droploud';
+import { SoundcloudClient } from './soundcloud';
+import * as utils from './utils';
 
 let browser: Browser;
 let page: Page;
@@ -13,6 +15,82 @@ beforeAll(async () => {
 
 afterAll(async () => {
 	await browser?.close();
+});
+
+test('reposts the requested track, not an unrelated track embedded earlier in the page', async () => {
+	const previousClient = process.env.SC_CLIENT_ID;
+	const previousToken = process.env.SC_OAUTH_TOKEN;
+	process.env.SC_CLIENT_ID = 'test-client';
+	process.env.SC_OAUTH_TOKEN = 'test-token';
+	const cookies = spyOn(utils, 'loadCookies').mockResolvedValue([]);
+	const getTrack = spyOn(
+		SoundcloudClient.prototype,
+		'getTrack',
+	).mockResolvedValue({ id: 222 } as Awaited<
+		ReturnType<SoundcloudClient['getTrack']>
+	>);
+	try {
+		await page.setContent(`
+			<div>soundcloud:tracks:111</div><div>soundcloud:tracks:222</div>
+			<script>
+			Object.defineProperty(document, 'cookie', { get: () => '' });
+			window.fetch = async (_url, options) => {
+				window.requestedUrn = JSON.parse(options.body).variables.trackUrn;
+				return { ok: true, status: 200, text: async () => JSON.stringify({ data: { repostTrack: { __typename: 'Repost' } } }) };
+			};
+			</script>
+		`);
+		const downloader = new DroploudDownloader({
+			comment: 'test',
+			browserMode: 'headless',
+		});
+		const gate = downloader as unknown as {
+			repostViaPageFetch(page: Page, url: string): Promise<boolean>;
+		};
+		expect(
+			await gate.repostViaPageFetch(
+				page,
+				'https://soundcloud.com/artist/requested',
+			),
+		).toBe(true);
+		expect(
+			await page.evaluate(
+				() => (window as unknown as { requestedUrn: string }).requestedUrn,
+			),
+		).toBe('soundcloud:tracks:222');
+	} finally {
+		cookies.mockRestore();
+		getTrack.mockRestore();
+		if (previousClient === undefined) delete process.env.SC_CLIENT_ID;
+		else process.env.SC_CLIENT_ID = previousClient;
+		if (previousToken === undefined) delete process.env.SC_OAUTH_TOKEN;
+		else process.env.SC_OAUTH_TOKEN = previousToken;
+	}
+});
+
+test('does not repost an arbitrary page track when the requested URL cannot be resolved', async () => {
+	const getTrack = spyOn(
+		SoundcloudClient.prototype,
+		'getTrack',
+	).mockRejectedValue(new Error('resolve failed'));
+	try {
+		await page.setContent('<div>soundcloud:tracks:111</div>');
+		const downloader = new DroploudDownloader({
+			comment: 'test',
+			browserMode: 'headless',
+		});
+		const gate = downloader as unknown as {
+			repostViaPageFetch(page: Page, url: string): Promise<boolean>;
+		};
+		expect(
+			await gate.repostViaPageFetch(
+				page,
+				'https://soundcloud.com/artist/requested',
+			),
+		).toBe(false);
+	} finally {
+		getTrack.mockRestore();
+	}
 });
 
 test.each([
