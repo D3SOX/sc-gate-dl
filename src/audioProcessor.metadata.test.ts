@@ -153,4 +153,33 @@ describe('lossy MP3 retagging keeps unrelated tags', () => {
 		expect(tags.title).toBe('New Title');
 		expect(tags.composer).toBe('Jane Composer');
 	}, 60_000);
+
+	test('writes the source link comment when no other metadata is requested', async () => {
+		await runFfmpeg([
+			'-f',
+			'lavfi',
+			'-i',
+			'sine=frequency=440:duration=1',
+			'-c:a',
+			'aac',
+			'-b:a',
+			'128k',
+			'-y',
+			join('downloads', 'plain.m4a'),
+		]);
+
+		const output = await new AudioProcessor('ffmpeg', 'ffprobe').processAudio(
+			'plain.m4a',
+			{},
+			{ buffer: new ArrayBuffer(0), fileName: 'none.jpg' },
+			'never',
+			'mp3-320',
+			'https://soundcloud.com/artist/track',
+		);
+
+		expect(await audioCodec(output)).toBe('aac');
+		expect((await formatTags(output)).comment).toBe(
+			'https://soundcloud.com/artist/track',
+		);
+	}, 60_000);
 });

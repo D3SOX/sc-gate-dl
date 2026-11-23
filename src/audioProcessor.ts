@@ -367,7 +367,11 @@ export class AudioProcessor {
 			// otherwise if it is an MP3, we retag it with the correct metadata
 			// if metadata is empty, skip retagging
 			const hasMetadata =
-				metadata.title || metadata.artist || metadata.album || metadata.genre;
+				metadata.title ||
+				metadata.artist ||
+				metadata.album ||
+				metadata.genre ||
+				sourceUrl;
 			if (isMp3Format(filename)) {
 				if (hasMetadata) {
 					await this.retagMp3(inputPath, artworkPath, metadata, sourceUrl);
