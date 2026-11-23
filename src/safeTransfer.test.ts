@@ -2,7 +2,6 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import type { PathLike } from 'node:fs';
 import {
 	copyFile,
-	link,
 	mkdir,
 	mkdtemp,
 	readdir,
