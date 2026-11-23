@@ -1,6 +1,15 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import type { PathLike } from 'node:fs';
 import { existsSync } from 'node:fs';
-import { chmod, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import {
+	chmod,
+	copyFile,
+	mkdtemp,
+	readdir,
+	readFile,
+	rm,
+	writeFile,
+} from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { libraryDirFromEnv, moveIntoLibrary } from './libraryDestination';
@@ -61,6 +70,16 @@ describe('moveIntoLibrary', () => {
 		).toBe('third');
 	});
 
+	test('keeps an existing library file when the source is missing', async () => {
+		await Bun.write(join(library, 'Artist - Title.mp3'), 'mine');
+		const source = join(downloads, 'Artist - Title.mp3');
+
+		await expect(moveIntoLibrary(source, library)).rejects.toThrow();
+		expect(await readFile(join(library, 'Artist - Title.mp3'), 'utf8')).toBe(
+			'mine',
+		);
+	});
+
 	test('keeps no library copy when the source cannot be removed', async () => {
 		const source = join(downloads, 'Artist - Title.mp3');
 		await writeFile(source, 'audio');
@@ -69,5 +88,57 @@ describe('moveIntoLibrary', () => {
 		await expect(moveIntoLibrary(source, library)).rejects.toThrow();
 		expect(existsSync(join(library, 'Artist - Title.mp3'))).toBe(false);
 		expect(existsSync(source)).toBe(true);
+	});
+
+	test('keeps no partial library file when publication fails', async () => {
+		const source = join(downloads, 'Artist - Title.mp3');
+		await writeFile(source, 'audio');
+		const transfer = {
+			link: async () => {
+				throw Object.assign(new Error('cross-device'), { code: 'EXDEV' });
+			},
+			copyFile: async (from: PathLike, to: PathLike, mode?: number) => {
+				if (String(to).endsWith('Artist - Title.mp3')) {
+					await writeFile(to, 'par');
+					throw new Error('publish failed');
+				}
+				return copyFile(from, to, mode);
+			},
+		};
+
+		await expect(
+			moveIntoLibrary(source, library, undefined, transfer),
+		).rejects.toThrow('publish failed');
+		expect(await readFile(source, 'utf8')).toBe('audio');
+		expect(await readdir(library)).toEqual([]);
+	});
+
+	test('keeps two concurrent moves of the same name under distinct names', async () => {
+		const first = join(downloads, 'first.mp3');
+		const second = join(downloads, 'second.mp3');
+		await writeFile(first, 'first');
+		await writeFile(second, 'second');
+		await Bun.write(join(library, 'Artist - Title.mp3'), 'mine');
+		const transfer = {
+			link: async () => {
+				throw Object.assign(new Error('cross-device'), { code: 'EXDEV' });
+			},
+			copyFile,
+		};
+
+		const names = await Promise.all([
+			moveIntoLibrary(first, library, 'Artist - Title.mp3', transfer),
+			moveIntoLibrary(second, library, 'Artist - Title.mp3', transfer),
+		]);
+
+		expect(new Set(names).size).toBe(2);
+		expect(names).not.toContain('Artist - Title.mp3');
+		expect(await readFile(join(library, 'Artist - Title.mp3'), 'utf8')).toBe(
+			'mine',
+		);
+		const contents = await Promise.all(
+			names.map((name) => readFile(join(library, name), 'utf8')),
+		);
+		expect(contents.sort()).toEqual(['first', 'second']);
 	});
 });

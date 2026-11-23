@@ -3,6 +3,7 @@ import type { PathLike } from 'node:fs';
 import {
 	chmod,
 	copyFile,
+	link,
 	mkdir,
 	mkdtemp,
 	readdir,
@@ -187,6 +188,23 @@ describe('deliverCliOutput', () => {
 		expect(delivered).toEqual([join(destination, 'Song.mp3')]);
 		expect(await Bun.file(join(destination, 'Song.mp3')).text()).toBe('mp3');
 		expect(await readdir(downloads)).toEqual([]);
+	});
+
+	test('keeps an existing destination file when the source is missing', async () => {
+		await mkdir(destination, { recursive: true });
+		await writeFile(join(destination, 'Song.mp3'), 'mine');
+		const output = join(downloads, 'Song.mp3');
+
+		await expect(
+			deliverCliOutput({
+				outputPath: output,
+				sourcePath: output,
+				removeSource: false,
+				destinationDir: destination,
+			}),
+		).rejects.toThrow();
+
+		expect(await Bun.file(join(destination, 'Song.mp3')).text()).toBe('mine');
 	});
 
 	test('never overwrites an existing destination file', async () => {
@@ -418,6 +436,163 @@ describe('deliverCliOutput', () => {
 			'Other.mp3',
 			'Song.mp3',
 		]);
+	});
+});
+
+describe('deliverCliOutput failure recovery', () => {
+	let root: string;
+	let downloads: string;
+	let destination: string;
+
+	beforeEach(async () => {
+		root = await mkdtemp(join(tmpdir(), 'sc-gate-cli-recover-'));
+		downloads = join(root, 'downloads');
+		destination = join(root, 'Music');
+		await mkdir(downloads);
+	});
+
+	afterEach(async () => {
+		await rm(root, { recursive: true, force: true });
+	});
+
+	test('keeps the source and no partial file when publication fails', async () => {
+		const source = join(downloads, 'Song.flac');
+		const output = join(downloads, 'Song.mp3');
+		await writeFile(source, 'source');
+		await writeFile(output, 'output');
+		const transfer = {
+			link: async () => {
+				throw Object.assign(new Error('cross-device'), { code: 'EXDEV' });
+			},
+			copyFile: async (from: PathLike, to: PathLike, mode?: number) => {
+				if (String(to).endsWith('Song.mp3')) {
+					await writeFile(to, 'out');
+					throw new Error('publish failed');
+				}
+				return copyFile(from, to, mode);
+			},
+		};
+
+		const error = await deliverCliOutput({
+			outputPath: output,
+			sourcePath: source,
+			removeSource: true,
+			destinationDir: destination,
+			transfer,
+		}).catch((caught: unknown) => caught);
+
+		expect((error as Error).message).toContain('publish failed');
+		expect((error as Error).message).toContain(resolve(source));
+		expect(await Bun.file(source).text()).toBe('source');
+		expect(await Bun.file(output).text()).toBe('output');
+		expect(await readdir(destination).catch(() => [])).toEqual([]);
+	});
+
+	test('removes the delivered copy and keeps the source when the source cannot be removed', async () => {
+		const source = join(downloads, 'Song.flac');
+		const output = join(downloads, 'Song.mp3');
+		await writeFile(source, 'source');
+		await writeFile(output, 'output');
+		const transfer = {
+			link: async () => {
+				throw Object.assign(new Error('cross-device'), { code: 'EXDEV' });
+			},
+			copyFile,
+		};
+		await chmod(downloads, 0o555);
+
+		try {
+			const error = await deliverCliOutput({
+				outputPath: output,
+				sourcePath: source,
+				removeSource: true,
+				destinationDir: destination,
+				transfer,
+			}).catch((caught: unknown) => caught);
+
+			expect((error as Error).message).toContain(resolve(source));
+			expect(await Bun.file(source).text()).toBe('source');
+			expect(await readdir(destination).catch(() => [])).toEqual([]);
+		} finally {
+			await chmod(downloads, 0o755);
+		}
+	});
+
+	test('reports the surviving output when the second artifact cannot be delivered', async () => {
+		const source = join(downloads, 'Song.flac');
+		const output = join(downloads, 'Song.mp3');
+		await writeFile(source, 'source');
+		await writeFile(output, 'output');
+		await mkdir(destination);
+		const transfer = {
+			link: async (from: PathLike, to: PathLike) => {
+				if (from === source) {
+					throw Object.assign(new Error('cross-device'), { code: 'EXDEV' });
+				}
+				return link(from, to);
+			},
+			copyFile: async (from: PathLike, to: PathLike, mode?: number) => {
+				if (from === source) throw new Error('quota exceeded');
+				return copyFile(from, to, mode);
+			},
+		};
+
+		const error = await deliverCliOutput({
+			outputPath: output,
+			sourcePath: source,
+			removeSource: false,
+			destinationDir: destination,
+			transfer,
+		}).catch((caught: unknown) => caught);
+
+		expect((error as Error).message).toContain(join(destination, 'Song.mp3'));
+		expect(await Bun.file(join(destination, 'Song.mp3')).text()).toBe('output');
+		expect(await Bun.file(source).text()).toBe('source');
+	});
+
+	test('keeps two concurrent deliveries of the same name under distinct names', async () => {
+		const first = join(downloads, 'a', 'Song.mp3');
+		const second = join(downloads, 'b', 'Song.mp3');
+		await mkdir(join(downloads, 'a'));
+		await mkdir(join(downloads, 'b'));
+		await writeFile(first, 'first');
+		await writeFile(second, 'second');
+		await mkdir(destination);
+		await writeFile(join(destination, 'Song.mp3'), 'mine');
+		const transfer = {
+			link: async () => {
+				throw Object.assign(new Error('cross-device'), { code: 'EXDEV' });
+			},
+			copyFile,
+		};
+
+		const [a, b] = await Promise.all([
+			deliverCliOutput({
+				outputPath: first,
+				sourcePath: first,
+				removeSource: false,
+				destinationDir: destination,
+				transfer,
+			}),
+			deliverCliOutput({
+				outputPath: second,
+				sourcePath: second,
+				removeSource: false,
+				destinationDir: destination,
+				transfer,
+			}),
+		]);
+
+		const names = [...a, ...b].sort();
+		expect(names).toEqual([
+			join(destination, 'Song (2).mp3'),
+			join(destination, 'Song (3).mp3'),
+		]);
+		expect(await Bun.file(join(destination, 'Song.mp3')).text()).toBe('mine');
+		const contents = await Promise.all(
+			names.map((name) => Bun.file(name).text()),
+		);
+		expect(contents.sort()).toEqual(['first', 'second']);
 	});
 });
 

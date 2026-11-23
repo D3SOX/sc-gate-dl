@@ -1,6 +1,6 @@
-import { constants } from 'node:fs';
-import { copyFile, link, mkdir, rm } from 'node:fs/promises';
-import { basename, extname, join, resolve } from 'node:path';
+import { mkdir } from 'node:fs/promises';
+import { basename, resolve } from 'node:path';
+import { type FileTransfer, placeIntoDirectory } from './safeTransfer';
 
 /** Absolute library folder from `SC_GATE_DL_LIBRARY_DIR`, or null when unset. */
 export function libraryDirFromEnv(
@@ -8,10 +8,6 @@ export function libraryDirFromEnv(
 ): string | null {
 	const trimmed = value?.trim();
 	return trimmed ? resolve(trimmed) : null;
-}
-
-function errorCode(error: unknown): unknown {
-	return error instanceof Error && 'code' in error ? error.code : undefined;
 }
 
 /**
@@ -22,34 +18,14 @@ export async function moveIntoLibrary(
 	sourcePath: string,
 	libraryDir: string,
 	filename = basename(sourcePath),
+	transfer?: FileTransfer,
 ): Promise<string> {
 	await mkdir(libraryDir, { recursive: true });
-	const extension = extname(filename);
-	const stem = basename(filename, extension);
-	for (let n = 1; ; n += 1) {
-		const candidate = n === 1 ? filename : `${stem} (${n})${extension}`;
-		const target = join(libraryDir, candidate);
-		try {
-			// A hard link claims the name atomically and never exposes a partial file.
-			await link(sourcePath, target);
-		} catch (linkError) {
-			if (errorCode(linkError) === 'EEXIST') continue;
-			// Other filesystems or devices, or no hard-link support.
-			try {
-				await copyFile(sourcePath, target, constants.COPYFILE_EXCL);
-			} catch (copyError) {
-				if (errorCode(copyError) === 'EEXIST') continue;
-				await rm(target, { force: true });
-				throw copyError;
-			}
-		}
-		try {
-			await rm(sourcePath, { force: true });
-		} catch (removeError) {
-			// Keep one copy so a retry cannot add a suffixed duplicate.
-			await rm(target, { force: true }).catch(() => {});
-			throw removeError;
-		}
-		return candidate;
-	}
+	const target = await placeIntoDirectory({
+		sourcePath,
+		dir: libraryDir,
+		filename,
+		transfer,
+	});
+	return basename(target);
 }
