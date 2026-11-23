@@ -220,3 +220,51 @@ describe('lossy MP3 retagging keeps unrelated tags', () => {
 		expect(await Bun.file(output).bytes()).toEqual(before);
 	}, 60_000);
 });
+
+describe('explicit preserve choice', () => {
+	let dir: string;
+	let previousCwd: string;
+
+	beforeEach(async () => {
+		dir = await mkdtemp(join(tmpdir(), 'sc-gate-dl-preserve-'));
+		previousCwd = process.cwd();
+		process.chdir(dir);
+		await mkdir('downloads');
+	});
+
+	afterEach(async () => {
+		process.chdir(previousCwd);
+		await rm(dir, { recursive: true, force: true });
+	});
+
+	test('an MP3 the user chose not to retag stays byte-identical without a source comment', async () => {
+		await runFfmpeg([
+			'-f',
+			'lavfi',
+			'-i',
+			'sine=frequency=440:duration=1',
+			'-c:a',
+			'libmp3lame',
+			'-b:a',
+			'128k',
+			'-metadata',
+			'title=Kept',
+			'-y',
+			join('downloads', 'keep.mp3'),
+		]);
+		const before = await Bun.file(join('downloads', 'keep.mp3')).bytes();
+
+		const output = await new AudioProcessor('ffmpeg', 'ffprobe').processAudio(
+			'keep.mp3',
+			{},
+			{ buffer: new ArrayBuffer(0), fileName: 'none.jpg' },
+			'never',
+			'mp3-320',
+			'https://soundcloud.com/artist/track',
+			false,
+		);
+
+		expect(await Bun.file(output).bytes()).toEqual(before);
+		expect((await formatTags(output)).comment).toBeUndefined();
+	}, 60_000);
+});

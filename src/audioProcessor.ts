@@ -292,6 +292,7 @@ export class AudioProcessor {
 		losslessHandling: 'prompt' | 'always' | 'never' = 'prompt',
 		outputFormat: Exclude<OutputFormat, 'original'> = 'mp3-320',
 		sourceUrl?: string,
+		retag = true,
 	): Promise<string> {
 		const inputPath = join('./downloads', filename);
 		const bitrateKbps =
@@ -373,7 +374,7 @@ export class AudioProcessor {
 				metadata.genre ||
 				sourceUrl;
 			if (isMp3Format(filename) && lossless === false) {
-				if (hasMetadata) {
+				if (hasMetadata && retag) {
 					await this.retagMp3(inputPath, artworkPath, metadata, sourceUrl);
 				}
 			} else if (
