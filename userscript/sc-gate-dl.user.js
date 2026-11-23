@@ -222,18 +222,20 @@
 		}
 	}
 
+	const OUTPUT_FORMATS = ['original', 'mp3', 'mp3-320', 'm4a-aac', 'flac'];
+
 	function getOutputFormat() {
 		try {
 			if (typeof GM_getValue === 'function') {
 				const gm = GM_getValue(OUTPUT_FORMAT_KEY, null);
-				if (gm === 'original' || gm === 'mp3-320' || gm === 'flac') return gm;
+				if (OUTPUT_FORMATS.includes(gm)) return gm;
 			}
 		} catch {
 			// ignore
 		}
 		try {
 			const v = localStorage.getItem(OUTPUT_FORMAT_KEY);
-			if (v === 'original' || v === 'mp3-320' || v === 'flac') return v;
+			if (OUTPUT_FORMATS.includes(v)) return v;
 		} catch {
 			// ignore
 		}
@@ -246,7 +248,7 @@
 	}
 
 	function setOutputFormat(value) {
-		if (value !== 'original' && value !== 'mp3-320' && value !== 'flac') return;
+		if (!OUTPUT_FORMATS.includes(value)) return;
 		try {
 			if (typeof GM_setValue === 'function')
 				GM_setValue(OUTPUT_FORMAT_KEY, value);
