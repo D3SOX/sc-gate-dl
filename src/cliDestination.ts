@@ -59,6 +59,21 @@ export function cliDirFromEnv(value = process.env.SC_GATE_DL_CLI_DIR): string {
 	return resolve(trimmed);
 }
 
+/** Every CLI output setting, validated before any gate is opened. */
+export function cliOutputFromEnv(
+	env: Partial<Record<string, string>> = process.env,
+): { format: CliFormat; bitrateKbps: number; destinationDir: string } {
+	const { format, bitrateKbps } = cliFormatFromEnv(
+		env.SC_GATE_DL_CLI_FORMAT,
+		env.SC_GATE_DL_BITRATE,
+	);
+	return {
+		format,
+		bitrateKbps,
+		destinationDir: cliDirFromEnv(env.SC_GATE_DL_CLI_DIR),
+	};
+}
+
 function errorCode(error: unknown): unknown {
 	return error instanceof Error && 'code' in error ? error.code : undefined;
 }
@@ -66,6 +81,10 @@ function errorCode(error: unknown): unknown {
 async function isInDirectory(path: string, dir: string): Promise<boolean> {
 	return (await realpath(dirname(path))) === (await realpath(dir));
 }
+
+export type FileTransfer = { link: typeof link; copyFile: typeof copyFile };
+
+const nodeTransfer: FileTransfer = { link, copyFile };
 
 /**
  * Copy a file under a free name in `dir`, never replacing an existing file.
@@ -75,6 +94,7 @@ async function copyIntoDirectory(
 	sourcePath: string,
 	dir: string,
 	filename: string,
+	transfer: FileTransfer,
 ): Promise<string> {
 	const extension = extname(filename);
 	const stem = basename(filename, extension);
@@ -82,13 +102,13 @@ async function copyIntoDirectory(
 		const candidate = n === 1 ? filename : `${stem} (${n})${extension}`;
 		const target = join(dir, candidate);
 		try {
-			await link(sourcePath, target);
+			await transfer.link(sourcePath, target);
 			return target;
 		} catch (linkError) {
 			if (errorCode(linkError) === 'EEXIST') continue;
 		}
 		try {
-			await copyFile(sourcePath, target, constants.COPYFILE_EXCL);
+			await transfer.copyFile(sourcePath, target, constants.COPYFILE_EXCL);
 			const [copied, original] = await Promise.all([
 				stat(target),
 				stat(sourcePath),
@@ -106,9 +126,13 @@ async function copyIntoDirectory(
 }
 
 /** Put a file into `dir` under a free name, removing the original only after the copy. */
-async function placeIn(path: string, dir: string): Promise<string> {
+async function placeIn(
+	path: string,
+	dir: string,
+	transfer: FileTransfer,
+): Promise<string> {
 	if (await isInDirectory(path, dir)) return resolve(path);
-	const target = await copyIntoDirectory(path, dir, basename(path));
+	const target = await copyIntoDirectory(path, dir, basename(path), transfer);
 	try {
 		await rm(path);
 	} catch (removeError) {
@@ -130,17 +154,24 @@ export async function deliverCliOutput(options: {
 	sourcePath: string;
 	removeSource: boolean;
 	destinationDir: string;
+	transfer?: FileTransfer;
 }): Promise<string[]> {
-	const { outputPath, sourcePath, removeSource, destinationDir } = options;
+	const {
+		outputPath,
+		sourcePath,
+		removeSource,
+		destinationDir,
+		transfer = nodeTransfer,
+	} = options;
 	const delivered: string[] = [];
 	try {
 		await mkdir(destinationDir, { recursive: true });
-		delivered.push(await placeIn(outputPath, destinationDir));
+		delivered.push(await placeIn(outputPath, destinationDir, transfer));
 		if (resolve(sourcePath) !== resolve(outputPath)) {
 			if (removeSource) {
 				await rm(sourcePath, { force: true });
 			} else {
-				delivered.push(await placeIn(sourcePath, destinationDir));
+				delivered.push(await placeIn(sourcePath, destinationDir, transfer));
 			}
 		}
 	} catch (error) {

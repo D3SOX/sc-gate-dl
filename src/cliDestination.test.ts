@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import type { PathLike } from 'node:fs';
 import {
 	chmod,
+	copyFile,
 	mkdir,
 	mkdtemp,
 	readdir,
@@ -17,6 +19,7 @@ import {
 	type CliFormat,
 	cliDirFromEnv,
 	cliFormatFromEnv,
+	cliOutputFromEnv,
 	deliverCliOutput,
 	finishCliDownload,
 } from './cliDestination';
@@ -86,6 +89,42 @@ describe('cliFormatFromEnv', () => {
 			bitrateKbps: 320,
 		});
 		expect(cliFormatFromEnv('original', '100').format).toBe('original');
+	});
+});
+
+describe('cliOutputFromEnv', () => {
+	test('resolves the default mp3, 320 kbps and downloads folder when nothing is set', () => {
+		expect(cliOutputFromEnv({})).toEqual({
+			format: 'mp3',
+			bitrateKbps: 320,
+			destinationDir: resolve('./downloads'),
+		});
+	});
+
+	test('resolves the selected format, bitrate and destination together', () => {
+		expect(
+			cliOutputFromEnv({
+				SC_GATE_DL_CLI_FORMAT: 'm4a-aac',
+				SC_GATE_DL_BITRATE: '192',
+				SC_GATE_DL_CLI_DIR: 'music',
+			}),
+		).toEqual({
+			format: 'm4a-aac',
+			bitrateKbps: 192,
+			destinationDir: resolve('music'),
+		});
+	});
+
+	test('throws on an invalid format or bitrate before any gate is opened', () => {
+		expect(() => cliOutputFromEnv({ SC_GATE_DL_CLI_FORMAT: 'ogg' })).toThrow(
+			'SC_GATE_DL_CLI_FORMAT=ogg is not supported',
+		);
+		expect(() =>
+			cliOutputFromEnv({
+				SC_GATE_DL_CLI_FORMAT: 'mp3',
+				SC_GATE_DL_BITRATE: '100',
+			}),
+		).toThrow('SC_GATE_DL_BITRATE=100 is not valid for mp3 output');
 	});
 });
 
@@ -283,6 +322,102 @@ describe('deliverCliOutput', () => {
 		expect((error as Error).message).toContain(join(destination, 'Song.mp3'));
 		expect(await Bun.file(join(destination, 'Song.mp3')).text()).toBe('output');
 		expect(await readdir(downloads)).toEqual([]);
+	});
+
+	test('copies across filesystems and removes the source only after the copy', async () => {
+		const source = join(downloads, 'Song.flac');
+		const output = join(downloads, 'Song.mp3');
+		await writeFile(source, 'source');
+		await writeFile(output, 'output');
+		const transfer = {
+			link: async () => {
+				throw Object.assign(new Error('cross-device'), { code: 'EXDEV' });
+			},
+			copyFile,
+		};
+
+		await deliverCliOutput({
+			outputPath: output,
+			sourcePath: source,
+			removeSource: true,
+			destinationDir: destination,
+			transfer,
+		});
+
+		expect(await Bun.file(join(destination, 'Song.mp3')).text()).toBe('output');
+		expect(await readdir(downloads)).toEqual([]);
+	});
+
+	test('keeps the output and source intact when a cross-device copy fails midway', async () => {
+		const source = join(downloads, 'Song.flac');
+		const output = join(downloads, 'Song.mp3');
+		await writeFile(source, 'source');
+		await writeFile(output, 'output');
+		const transfer = {
+			link: async () => {
+				throw Object.assign(new Error('cross-device'), { code: 'EXDEV' });
+			},
+			copyFile: async (_from: PathLike, to: PathLike) => {
+				await writeFile(to, 'out');
+				throw new Error('disk full');
+			},
+		};
+
+		const error = await deliverCliOutput({
+			outputPath: output,
+			sourcePath: source,
+			removeSource: true,
+			destinationDir: destination,
+			transfer,
+		}).catch((caught: unknown) => caught);
+
+		expect((error as Error).message).toContain('disk full');
+		expect((error as Error).message).toContain(resolve(output));
+		expect((error as Error).message).toContain(resolve(source));
+		expect(await Bun.file(source).text()).toBe('source');
+		expect(await Bun.file(output).text()).toBe('output');
+		expect(await readdir(destination).catch(() => [])).toEqual([]);
+	});
+
+	test('reports surviving paths and leaves unrelated files when the second artifact fails', async () => {
+		await mkdir(destination, { recursive: true });
+		await writeFile(join(destination, 'Other.mp3'), 'unrelated');
+		const source = join(downloads, 'Song.flac');
+		const output = join(downloads, 'Song.mp3');
+		await writeFile(source, 'source');
+		await writeFile(output, 'output');
+		const transfer = {
+			link: async () => {
+				throw Object.assign(new Error('cross-device'), { code: 'EXDEV' });
+			},
+			copyFile: async (from: PathLike, to: PathLike, mode?: number) => {
+				if (from === source) throw new Error('quota exceeded');
+				return copyFile(from, to, mode);
+			},
+		};
+
+		const error = await deliverCliOutput({
+			outputPath: output,
+			sourcePath: source,
+			removeSource: false,
+			destinationDir: destination,
+			transfer,
+		}).catch((caught: unknown) => caught);
+
+		const message = (error as Error).message;
+		expect(message).toContain('quota exceeded');
+		expect(message).toContain(join(destination, 'Song.mp3'));
+		expect(message).toContain(resolve(source));
+		expect(message).not.toContain(resolve(output));
+		expect(await Bun.file(join(destination, 'Song.mp3')).text()).toBe('output');
+		expect(await Bun.file(join(destination, 'Other.mp3')).text()).toBe(
+			'unrelated',
+		);
+		expect(await Bun.file(source).text()).toBe('source');
+		expect((await readdir(destination)).sort()).toEqual([
+			'Other.mp3',
+			'Song.mp3',
+		]);
 	});
 });
 

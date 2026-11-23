@@ -46,9 +46,19 @@ describe('output-format preference hydration', () => {
 		expect(readRequestedOutputFormat('?outputFormat=invalid')).toBeNull();
 	});
 
+	test('keeps configurable mp3 and fixed mp3-320 deep links distinct', () => {
+		expect(readRequestedOutputFormat('?outputFormat=mp3')).toBe('mp3');
+		expect(readRequestedOutputFormat('?outputFormat=mp3-320')).toBe('mp3-320');
+	});
+
 	test('reads stored formats through the same helper used by the UI', () => {
 		const storage = { getItem: () => 'original' };
 		expect(readStoredOutputFormat(storage, 'output-format')).toBe('original');
+	});
+
+	test('keeps a stored legacy mp3-320 preference rather than remapping it', () => {
+		const storage = { getItem: () => 'mp3-320' };
+		expect(readStoredOutputFormat(storage, 'output-format')).toBe('mp3-320');
 	});
 
 	test('ignores invalid stored formats', () => {

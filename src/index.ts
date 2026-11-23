@@ -1,10 +1,6 @@
 import { confirm, input, select } from '@inquirer/prompts';
 import { AudioProcessor } from './audioProcessor';
-import {
-	cliDirFromEnv,
-	cliFormatFromEnv,
-	finishCliDownload,
-} from './cliDestination';
+import { cliOutputFromEnv, finishCliDownload } from './cliDestination';
 import { loadConfig, saveConfig } from './config';
 import { DirectDownloader } from './directDownload';
 import { DownloadgaterDownloader } from './downloadgater';
@@ -43,11 +39,7 @@ try {
 	const HYPEDDIT_EMAIL = process.env.HYPEDDIT_EMAIL;
 
 	const config = await loadConfig();
-	const cliDir = cliDirFromEnv();
-	const cliOutput = cliFormatFromEnv(
-		process.env.SC_GATE_DL_CLI_FORMAT,
-		process.env.SC_GATE_DL_BITRATE,
-	);
+	const cliOutput = cliOutputFromEnv();
 
 	const soundcloudArg = process.argv[2];
 	const soundcloudArgValidation = soundcloudArg
@@ -357,7 +349,7 @@ try {
 			downloadFilename,
 			output: { format: cliOutput.format },
 			losslessHandling,
-			destinationDir: cliDir,
+			destinationDir: cliOutput.destinationDir,
 			soundcloudUrl,
 			audioProcessor,
 			steps: {
