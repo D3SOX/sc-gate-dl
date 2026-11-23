@@ -1067,6 +1067,46 @@ describe('finishCliDownload with real FFmpeg output', () => {
 		const output = await probe(join(dir, 'downloads', 'Covered.mp3'));
 		expect(output.streams?.some((s) => s.codec_type === 'video')).toBe(true);
 	});
+
+	test('keeps an existing embedded M4A cover when no replacement artwork is supplied', async () => {
+		await runFfmpeg([
+			'-f',
+			'lavfi',
+			'-i',
+			'sine=frequency=440:duration=0.5',
+			'-f',
+			'lavfi',
+			'-i',
+			'color=c=green:s=16x16',
+			'-map',
+			'0:a',
+			'-map',
+			'1:v',
+			'-c:a',
+			'aac',
+			'-b:a',
+			'128k',
+			'-c:v',
+			'mjpeg',
+			'-disposition:v',
+			'attached_pic',
+			'-frames:v',
+			'1',
+			'-y',
+			join('downloads', 'CoveredM4a.m4a'),
+		]);
+
+		await new AudioProcessor('ffmpeg', 'ffprobe').processAudio(
+			'CoveredM4a.m4a',
+			{ title: 'Retitled' },
+			{ buffer: new ArrayBuffer(0), fileName: 'missing.jpg' },
+			'never',
+			'mp3-320',
+		);
+
+		const output = await probe(join(dir, 'downloads', 'CoveredM4a.m4a'));
+		expect(output.streams?.some((s) => s.codec_type === 'video')).toBe(true);
+	});
 });
 
 describe('deliverCliOutput with real FFmpeg output', () => {

@@ -821,6 +821,8 @@ export class AudioProcessor {
 		const args: string[] = ['-i', inputPath];
 		if (withCover) args.push('-i', artworkPath);
 		args.push('-map', '0:a', '-c:a', 'copy');
+		if (!withCover && extension === '.m4a')
+			args.push('-map', '0:v?', '-c:v', 'copy');
 		if (withCover) {
 			args.push(
 				'-map',
