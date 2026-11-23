@@ -1107,6 +1107,59 @@ describe('finishCliDownload with real FFmpeg output', () => {
 		const output = await probe(join(dir, 'downloads', 'CoveredM4a.m4a'));
 		expect(output.streams?.some((s) => s.codec_type === 'video')).toBe(true);
 	});
+
+	test('embeds valid replacement artwork in a lossy MP3 and M4A', async () => {
+		await runFfmpeg([
+			'-f',
+			'lavfi',
+			'-i',
+			'sine=frequency=440:duration=0.5',
+			'-c:a',
+			'libmp3lame',
+			'-b:a',
+			'128k',
+			'-y',
+			join('downloads', 'Plain.mp3'),
+		]);
+		await runFfmpeg([
+			'-f',
+			'lavfi',
+			'-i',
+			'sine=frequency=440:duration=0.5',
+			'-c:a',
+			'aac',
+			'-b:a',
+			'128k',
+			'-y',
+			join('downloads', 'Plain.m4a'),
+		]);
+		await runFfmpeg([
+			'-f',
+			'lavfi',
+			'-i',
+			'color=c=purple:s=16x16',
+			'-frames:v',
+			'1',
+			'-y',
+			join(dir, 'replacement.png'),
+		]);
+		const replacement = {
+			buffer: await Bun.file(join(dir, 'replacement.png')).arrayBuffer(),
+			fileName: 'replacement.png',
+		};
+
+		for (const name of ['Plain.mp3', 'Plain.m4a']) {
+			await new AudioProcessor('ffmpeg', 'ffprobe').processAudio(
+				name,
+				{ title: 'Covered' },
+				replacement,
+				'never',
+				'mp3-320',
+			);
+			const output = await probe(join(dir, 'downloads', name));
+			expect(output.streams?.some((s) => s.codec_type === 'video')).toBe(true);
+		}
+	});
 });
 
 describe('deliverCliOutput with real FFmpeg output', () => {
