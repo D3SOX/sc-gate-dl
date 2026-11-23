@@ -807,7 +807,7 @@ export class AudioProcessor {
 		const coverCodec = m4aCoverCodec(artworkPath);
 		const args: string[] = ['-i', inputPath];
 		if (withCover) args.push('-i', artworkPath);
-		args.push('-map', '0:a', '-c:a', 'copy', '-map_metadata', '-1');
+		args.push('-map', '0:a', '-c:a', 'copy');
 		if (withCover) {
 			args.push(
 				'-map',

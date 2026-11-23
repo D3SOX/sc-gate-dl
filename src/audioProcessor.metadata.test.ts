@@ -121,4 +121,36 @@ describe('lossy MP3 retagging keeps unrelated tags', () => {
 		expect(tags.composer).toBe('Jane Composer');
 		expect(tags.track).toBe('7');
 	}, 60_000);
+
+	test('keeps the composer of a lossy M4A when only the title changes', async () => {
+		await runFfmpeg([
+			'-f',
+			'lavfi',
+			'-i',
+			'sine=frequency=440:duration=1',
+			'-c:a',
+			'aac',
+			'-b:a',
+			'128k',
+			'-metadata',
+			'title=Old Title',
+			'-metadata',
+			'composer=Jane Composer',
+			'-y',
+			join('downloads', 'song.m4a'),
+		]);
+
+		const output = await new AudioProcessor('ffmpeg', 'ffprobe').processAudio(
+			'song.m4a',
+			{ title: 'New Title' },
+			{ buffer: new ArrayBuffer(0), fileName: 'none.jpg' },
+			'never',
+			'mp3-320',
+		);
+
+		expect(await audioCodec(output)).toBe('aac');
+		const tags = await formatTags(output);
+		expect(tags.title).toBe('New Title');
+		expect(tags.composer).toBe('Jane Composer');
+	}, 60_000);
 });
