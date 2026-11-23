@@ -19,7 +19,7 @@ async function formatTags(path: string): Promise<Record<string, string>> {
 			'-v',
 			'quiet',
 			'-show_entries',
-			'format_tags',
+			'format_tags:stream_tags',
 			'-of',
 			'json',
 			path,
@@ -28,9 +28,14 @@ async function formatTags(path: string): Promise<Record<string, string>> {
 	);
 	const data = JSON.parse(await new Response(proc.stdout).text()) as {
 		format?: { tags?: Record<string, string> };
+		streams?: Array<{ tags?: Record<string, string> }>;
 	};
 	expect(await proc.exited).toBe(0);
-	const tags = data.format?.tags ?? {};
+	const tags = Object.assign(
+		{},
+		...(data.streams ?? []).map((stream) => stream.tags ?? {}),
+		data.format?.tags ?? {},
+	) as Record<string, string>;
 	return Object.fromEntries(
 		Object.entries(tags).map(([key, value]) => [key.toLowerCase(), value]),
 	);
@@ -55,6 +60,29 @@ async function audioCodec(path: string): Promise<string> {
 	const codec = (await new Response(proc.stdout).text()).trim();
 	expect(await proc.exited).toBe(0);
 	return codec;
+}
+
+async function audioPayload(path: string): Promise<Uint8Array> {
+	const proc = Bun.spawn(
+		[
+			'ffmpeg',
+			'-v',
+			'error',
+			'-i',
+			path,
+			'-map',
+			'0:a',
+			'-c',
+			'copy',
+			'-f',
+			'data',
+			'-',
+		],
+		{ stdout: 'pipe', stderr: 'ignore' },
+	);
+	const bytes = new Uint8Array(await new Response(proc.stdout).arrayBuffer());
+	expect(await proc.exited).toBe(0);
+	return bytes;
 }
 
 describe('lossy MP3 retagging keeps unrelated tags', () => {
@@ -266,5 +294,53 @@ describe('explicit preserve choice', () => {
 
 		expect(await Bun.file(output).bytes()).toEqual(before);
 		expect((await formatTags(output)).comment).toBeUndefined();
+	}, 60_000);
+});
+
+describe('lossy OGG passthrough without artwork', () => {
+	let dir: string;
+	let previousCwd: string;
+
+	beforeEach(async () => {
+		dir = await mkdtemp(join(tmpdir(), 'sc-gate-dl-ogg-'));
+		previousCwd = process.cwd();
+		process.chdir(dir);
+		await mkdir('downloads');
+	});
+
+	afterEach(async () => {
+		process.chdir(previousCwd);
+		await rm(dir, { recursive: true, force: true });
+	});
+
+	test('tags a lossy OGG, keeps its audio bytes and needs no artwork', async () => {
+		await runFfmpeg([
+			'-f',
+			'lavfi',
+			'-i',
+			'sine=frequency=440:duration=1',
+			'-c:a',
+			'libopus',
+			'-b:a',
+			'96k',
+			'-y',
+			join('downloads', 'lossy.ogg'),
+		]);
+		const audioBefore = await audioPayload(join('downloads', 'lossy.ogg'));
+
+		const output = await new AudioProcessor('ffmpeg', 'ffprobe').processAudio(
+			'lossy.ogg',
+			{ title: 'Tagged Title' },
+			{ buffer: new ArrayBuffer(0), fileName: 'missing.jpg' },
+			'never',
+			'mp3-320',
+			'https://soundcloud.com/artist/track',
+		);
+
+		expect(await audioCodec(output)).toBe('opus');
+		expect(await audioPayload(output)).toEqual(audioBefore);
+		const tags = await formatTags(output);
+		expect(tags.title).toBe('Tagged Title');
+		expect(tags.comment).toBe('https://soundcloud.com/artist/track');
 	}, 60_000);
 });
