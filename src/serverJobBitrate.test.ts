@@ -1,13 +1,23 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { type Subprocess, spawn } from 'bun';
 
-const PORT = 3900 + Math.floor(Math.random() * 500);
-const BASE = `http://127.0.0.1:${PORT}`;
+async function freePort(): Promise<number> {
+	const probe = Bun.serve({ port: 0, fetch: () => new Response('') });
+	const port = probe.port ?? 0;
+	probe.stop(true);
+	if (port === 0) throw new Error('could not allocate a free port');
+	return port;
+}
+
+let PORT = 0;
+let BASE = '';
 const SOUNDCLOUD_URL = 'https://soundcloud.com/artist/track';
 
 let server: Subprocess | undefined;
 
 async function startServer(bitrate: string | undefined): Promise<void> {
+	PORT = await freePort();
+	BASE = `http://127.0.0.1:${PORT}`;
 	const env: Record<string, string> = {
 		...(process.env as Record<string, string>),
 		SC_COMMENT: 'test comment',
