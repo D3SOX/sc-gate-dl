@@ -97,7 +97,19 @@ const DELETE_AFTER_DOWNLOAD = deleteAfterDownloadEnabled(
 );
 const LIBRARY_DIR = libraryDirFromEnv();
 const AUDIO_BITRATE = process.env.SC_GATE_DL_BITRATE;
-const API_PORT = Number(process.env.SC_GATE_DL_PORT) || 3000;
+function parseApiPort(value: string | undefined): number {
+	if (value === undefined) return 3000;
+	const text = value.trim();
+	const port = /^\d+$/.test(text) ? Number(text) : Number.NaN;
+	if (!Number.isInteger(port) || port > 65535) {
+		throw new Error(
+			`SC_GATE_DL_PORT=${value} is not a valid port. Use a whole number from 0 to 65535, or leave it unset for 3000.`,
+		);
+	}
+	return port;
+}
+
+const API_PORT = parseApiPort(process.env.SC_GATE_DL_PORT);
 
 const soundcloudClient = new SoundcloudClient();
 const audioProcessor = new AudioProcessor(ffmpegBin, ffprobeBin, AUDIO_BITRATE);
