@@ -166,7 +166,12 @@ export async function finishCliDownload(options: {
 		return { delivered, sourceRemoved: false, sourcePath };
 	}
 
-	const artwork = await steps.fetchArtwork();
+	const artwork = await steps.fetchArtwork().catch((error: unknown) => {
+		console.warn(
+			`Artwork unavailable, continuing without a cover: ${error instanceof Error ? error.message : String(error)}`,
+		);
+		return { buffer: new ArrayBuffer(0), fileName: 'missing.jpg' };
+	});
 	const { metadata, retag } = await steps.promptMetadata(filename);
 	let outputPath: string;
 	try {

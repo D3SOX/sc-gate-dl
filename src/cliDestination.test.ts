@@ -31,6 +31,7 @@ type FfprobeOutput = {
 		codec_type?: string;
 		codec_name?: string;
 		bit_rate?: string;
+		tags?: Record<string, string>;
 		disposition?: { attached_pic?: number };
 	}>;
 };
@@ -861,6 +862,40 @@ describe('finishCliDownload with real FFmpeg output', () => {
 		expect(audioStream(output)?.bit_rate).toBe(source?.bit_rate);
 		expect(output.format?.tags?.comment).toBe(sourceUrl);
 		expect(await readdir(join(dir, 'downloads'))).toEqual([]);
+	});
+
+	test('tags a lossy OGG when artwork retrieval fails, without needing a cover', async () => {
+		await runFfmpeg([
+			'-f',
+			'lavfi',
+			'-i',
+			'sine=frequency=440:duration=0.5',
+			'-c:a',
+			'libopus',
+			'-b:a',
+			'96k',
+			'-y',
+			join('downloads', 'NoCover.ogg'),
+		]);
+
+		await finishCliDownload({
+			downloadFilename: 'NoCover.ogg',
+			output: { format: 'mp3' },
+			losslessHandling: 'never',
+			destinationDir: destination,
+			soundcloudUrl: sourceUrl,
+			audioProcessor: new AudioProcessor('ffmpeg', 'ffprobe', '320'),
+			steps: steps({
+				fetchArtwork: async () => {
+					throw new Error('artwork host unreachable');
+				},
+			}),
+		});
+
+		const output = await probe(join(destination, 'NoCover.ogg'));
+		expect(
+			output.format?.tags?.comment ?? output.streams?.[0]?.tags?.comment,
+		).toBe(sourceUrl);
 	});
 
 	test('keeps a declined MP3 retag byte-identical without a source comment', async () => {
