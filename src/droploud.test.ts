@@ -172,12 +172,13 @@ test('keeps the underlying cause when repost verification fails for a non-timeou
 		comment: 'test',
 		browserMode: 'headless',
 	});
+	Object.assign(downloader, { ensureRepostBeforeVerify: async () => {} });
 	const gate = downloader as unknown as {
-		handleRepostVerify(page: Page): Promise<void>;
+		handleRepostVerify(page: Page, trackUrl: string): Promise<void>;
 	};
 
 	const failure = await gate
-		.handleRepostVerify(page)
+		.handleRepostVerify(page, 'https://soundcloud.com/artist/track')
 		.catch((error: unknown) => error);
 
 	expect(failure).toBeInstanceOf(Error);
@@ -203,11 +204,48 @@ test('reports a real verification timeout as a timeout', async () => {
 		comment: 'test',
 		browserMode: 'headless',
 	});
+	Object.assign(downloader, { ensureRepostBeforeVerify: async () => {} });
 	const gate = downloader as unknown as {
-		handleRepostVerify(page: Page): Promise<void>;
+		handleRepostVerify(page: Page, trackUrl: string): Promise<void>;
 	};
 
-	await expect(gate.handleRepostVerify(page)).rejects.toThrow(
-		'timed out without a response',
-	);
+	await expect(
+		gate.handleRepostVerify(page, 'https://soundcloud.com/artist/track'),
+	).rejects.toThrow('timed out without a response');
+});
+
+test('ensures the repost before clicking Verify', async () => {
+	const events: string[] = [];
+	let verified = false;
+	const page = {
+		$eval: async () => 'Repost the track',
+		evaluate: async (fn: () => unknown) => {
+			void fn;
+			if (!verified) {
+				verified = true;
+				events.push('verify-clicked');
+			}
+			return true;
+		},
+		waitForFunction: async () => ({
+			jsonValue: async () => 'advanced',
+			dispose: async () => {},
+		}),
+	} as unknown as Page;
+	const downloader = new DroploudDownloader({
+		comment: 'test',
+		browserMode: 'headless',
+	});
+	Object.assign(downloader, {
+		ensureRepostBeforeVerify: async () => {
+			events.push('repost');
+		},
+	});
+	const gate = downloader as unknown as {
+		handleRepostVerify(page: Page, trackUrl: string): Promise<void>;
+	};
+
+	await gate.handleRepostVerify(page, 'https://soundcloud.com/artist/track');
+
+	expect(events).toEqual(['repost', 'verify-clicked']);
 });

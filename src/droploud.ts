@@ -1,5 +1,6 @@
 import { Presets, SingleBar } from 'cli-progress';
 import type { Browser, Page } from 'puppeteer';
+import type { BandcampGateOptions } from './bandcampGate';
 import { CancellableBrowserLaunch } from './browserLaunch';
 import { nextDroploudSocialAction } from './droploudSocial';
 import type { ProgressCallback } from './hypeddit';
@@ -90,7 +91,10 @@ export class DroploudDownloader {
 		await soundCloudPage.close();
 	}
 
-	async downloadAudio(url: string): Promise<string | null> {
+	async downloadAudio(
+		url: string,
+		options: BandcampGateOptions & { trackUrl?: string } = {},
+	): Promise<string | null> {
 		console.log('Navigating to Droploud gate...');
 		this.emitProgress('handling_gates', 'Navigating to Droploud gate...', 25);
 
@@ -187,7 +191,7 @@ export class DroploudDownloader {
 					65,
 					{ currentGate: 'sc' },
 				);
-				await this.handleRepostVerify(page);
+				await this.handleRepostVerify(page, options.trackUrl ?? url);
 				continue;
 			}
 
@@ -484,7 +488,21 @@ export class DroploudDownloader {
 		await timeout(400);
 	}
 
-	private async handleRepostVerify(page: Page): Promise<void> {
+	private async ensureRepostBeforeVerify(
+		page: Page,
+		trackUrl: string,
+	): Promise<void> {
+		if (await this.repostViaPageFetch(page, trackUrl)) return;
+		throw new Error(
+			'Droploud: the SoundCloud track could not be reposted before verification. Confirm the connected account and retry.',
+		);
+	}
+
+	private async handleRepostVerify(
+		page: Page,
+		trackUrl: string,
+	): Promise<void> {
+		await this.ensureRepostBeforeVerify(page, trackUrl);
 		const previousTitle = await page.$eval(
 			'.ds-gate-pane .ds-gate-t',
 			(element) => element.textContent?.trim() ?? '',

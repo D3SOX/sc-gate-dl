@@ -306,7 +306,7 @@ type BrowserGateDownloader = AnyDownloader & {
 	initialize(): Promise<void>;
 	downloadAudio(
 		url: string,
-		options?: BandcampGateOptions,
+		options?: BandcampGateOptions & { trackUrl?: string },
 	): Promise<string | null>;
 };
 
@@ -629,6 +629,7 @@ async function runDownloadProcess(jobId: string): Promise<void> {
 			downloadFilename = await downloader.downloadAudio(downloadSourceUrl, {
 				matchTitle: job.track?.title,
 				onAlbumMatchFailed: selectBandcampTrack(false),
+				trackUrl: job.soundcloudUrl,
 			});
 			throwIfCancelled();
 		} else if (provider === 'direct') {

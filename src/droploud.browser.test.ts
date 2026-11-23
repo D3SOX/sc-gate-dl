@@ -259,12 +259,13 @@ test('recognizes and verifies a repost step after SoundCloud authorization', asy
 		comment: 'test',
 		browserMode: 'headless',
 	});
+	Object.assign(downloader, { ensureRepostBeforeVerify: async () => {} });
 	const gate = downloader as unknown as {
 		detectPaneKind(page: Page): Promise<string>;
-		handleRepostVerify(page: Page): Promise<void>;
+		handleRepostVerify(page: Page, trackUrl: string): Promise<void>;
 	};
 	expect(await gate.detectPaneKind(page)).toBe('repost_verify');
-	await gate.handleRepostVerify(page);
+	await gate.handleRepostVerify(page, 'https://soundcloud.com/artist/track');
 	expect(await page.$eval('.ds-gate-t', (element) => element.textContent)).toBe(
 		'Email',
 	);
@@ -356,14 +357,17 @@ test('repost verification fails visibly when the gate stays on the same step', a
 		comment: 'test',
 		browserMode: 'headless',
 	});
+	Object.assign(downloader, { ensureRepostBeforeVerify: async () => {} });
 	const gate = downloader as unknown as {
-		handleRepostVerify(page: Page): Promise<void>;
+		handleRepostVerify(page: Page, trackUrl: string): Promise<void>;
 	};
 	const wait = page.waitForFunction;
 	page.waitForFunction = (() =>
 		Promise.reject(new Error('Timed out'))) as typeof page.waitForFunction;
 	try {
-		await expect(gate.handleRepostVerify(page)).rejects.toThrow('timed out');
+		await expect(
+			gate.handleRepostVerify(page, 'https://soundcloud.com/artist/track'),
+		).rejects.toThrow('Timed out');
 	} finally {
 		page.waitForFunction = wait;
 	}
@@ -383,10 +387,11 @@ test('reports a rejected repost verification without waiting for the full timeou
 		comment: 'test',
 		browserMode: 'headless',
 	});
+	Object.assign(downloader, { ensureRepostBeforeVerify: async () => {} });
 	const gate = downloader as unknown as {
-		handleRepostVerify(page: Page): Promise<void>;
+		handleRepostVerify(page: Page, trackUrl: string): Promise<void>;
 	};
-	await expect(gate.handleRepostVerify(page)).rejects.toThrow(
-		'could not verify',
-	);
+	await expect(
+		gate.handleRepostVerify(page, 'https://soundcloud.com/artist/track'),
+	).rejects.toThrow('could not verify');
 }, 8_000);
