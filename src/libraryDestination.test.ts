@@ -113,6 +113,21 @@ describe('moveIntoLibrary', () => {
 		expect(await readdir(library)).toEqual([]);
 	});
 
+	test('removing a cancelled library copy never touches an existing library file', async () => {
+		await Bun.write(join(library, 'Artist - Title.mp3'), 'existing');
+		const source = join(downloads, 'Artist - Title.mp3');
+		await writeFile(source, 'new');
+
+		const copied = await moveIntoLibrary(source, library);
+		expect(copied).toBe('Artist - Title (2).mp3');
+		await rm(join(library, copied), { force: true });
+
+		expect(await readFile(join(library, 'Artist - Title.mp3'), 'utf8')).toBe(
+			'existing',
+		);
+		expect(existsSync(join(library, 'Artist - Title (2).mp3'))).toBe(false);
+	});
+
 	test('keeps two concurrent moves of the same name under distinct names', async () => {
 		const first = join(downloads, 'first.mp3');
 		const second = join(downloads, 'second.mp3');
