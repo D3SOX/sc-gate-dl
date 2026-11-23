@@ -12,6 +12,7 @@ import { MypresskitDownloader } from './mypresskit';
 import { PumpyoursoundDownloader } from './pumpyoursound';
 import { SoundcloudClient } from './soundcloud';
 import { StillhypeDownloader } from './stillhype';
+import type { HypedditConfig } from './types';
 import {
 	getFfmpegBin,
 	getFfprobeBin,
@@ -28,6 +29,12 @@ export type CliDeps = {
 	saveConfig: (config: AppConfig) => Promise<void>;
 	createSoundcloudClient: () => SoundcloudClient;
 	createDirectDownloader: () => Pick<DirectDownloader, 'downloadAudio'>;
+	createDroploudDownloader: (
+		config: HypedditConfig,
+	) => Pick<
+		DroploudDownloader,
+		'initialize' | 'prepareLogins' | 'downloadAudio' | 'close'
+	>;
 	createAudioProcessor: (
 		ffmpegBin: string,
 		ffprobeBin: string,
@@ -42,6 +49,7 @@ export const defaultCliDeps: CliDeps = {
 	saveConfig,
 	createSoundcloudClient: () => new SoundcloudClient(),
 	createDirectDownloader: () => new DirectDownloader(),
+	createDroploudDownloader: (config) => new DroploudDownloader(config),
 	createAudioProcessor: (ffmpegBin, ffprobeBin, bitrateSetting) =>
 		new AudioProcessor(ffmpegBin, ffprobeBin, bitrateSetting),
 };
@@ -219,7 +227,7 @@ export async function runCli(deps: CliDeps): Promise<void> {
 		downloadFilename = await directDownloader.downloadAudio(gateUrl);
 	} else if (gate.provider === 'droploud') {
 		usedBrowser = true;
-		const droploudDownloader = new DroploudDownloader(gateConfig);
+		const droploudDownloader = deps.createDroploudDownloader(gateConfig);
 		try {
 			await droploudDownloader.initialize();
 			if (initializeLogins) {
@@ -229,7 +237,9 @@ export async function runCli(deps: CliDeps): Promise<void> {
 					console.log('✓ Updated config.json: initializeLogins set to false');
 				}
 			}
-			downloadFilename = await droploudDownloader.downloadAudio(gateUrl);
+			downloadFilename = await droploudDownloader.downloadAudio(gateUrl, {
+				trackUrl: soundcloudUrl,
+			});
 		} finally {
 			await droploudDownloader.close();
 		}
