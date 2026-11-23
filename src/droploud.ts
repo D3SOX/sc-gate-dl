@@ -526,10 +526,13 @@ export class DroploudDownloader {
 			);
 			result = (await state.jsonValue()) as 'advanced' | 'rejected';
 			await state.dispose();
-		} catch {
-			throw new Error(
-				'Droploud repost verification timed out without a response.',
-			);
+		} catch (error) {
+			if (error instanceof Error && error.name === 'TimeoutError') {
+				throw new Error(
+					'Droploud repost verification timed out without a response.',
+				);
+			}
+			throw error;
 		}
 		if (result === 'rejected')
 			throw new Error(

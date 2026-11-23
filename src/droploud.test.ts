@@ -159,3 +159,55 @@ test('does not repost for an unrelated SoundCloud social card', async () => {
 	).handleSocialCards(page);
 	expect(repostCalled).toBeFalse();
 });
+
+test('keeps the underlying cause when repost verification fails for a non-timeout reason', async () => {
+	const page = {
+		$eval: async () => 'Repost the track',
+		evaluate: async () => true,
+		waitForFunction: async () => {
+			throw new Error('Execution context was destroyed');
+		},
+	} as unknown as Page;
+	const downloader = new DroploudDownloader({
+		comment: 'test',
+		browserMode: 'headless',
+	});
+	const gate = downloader as unknown as {
+		handleRepostVerify(page: Page): Promise<void>;
+	};
+
+	const failure = await gate
+		.handleRepostVerify(page)
+		.catch((error: unknown) => error);
+
+	expect(failure).toBeInstanceOf(Error);
+	expect((failure as Error).message).toContain(
+		'Execution context was destroyed',
+	);
+	expect((failure as Error).message).not.toContain(
+		'timed out without a response',
+	);
+});
+
+test('reports a real verification timeout as a timeout', async () => {
+	const page = {
+		$eval: async () => 'Repost the track',
+		evaluate: async () => true,
+		waitForFunction: async () => {
+			const error = new Error('Waiting failed: 30000ms exceeded');
+			error.name = 'TimeoutError';
+			throw error;
+		},
+	} as unknown as Page;
+	const downloader = new DroploudDownloader({
+		comment: 'test',
+		browserMode: 'headless',
+	});
+	const gate = downloader as unknown as {
+		handleRepostVerify(page: Page): Promise<void>;
+	};
+
+	await expect(gate.handleRepostVerify(page)).rejects.toThrow(
+		'timed out without a response',
+	);
+});
