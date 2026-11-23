@@ -753,8 +753,6 @@ export class AudioProcessor {
 			'copy',
 			'-id3v2_version',
 			'3',
-			'-map_metadata',
-			'-1', // clear existing metadata
 			'-map',
 			'1:v',
 			'-c:v',
