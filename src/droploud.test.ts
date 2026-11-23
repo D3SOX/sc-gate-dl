@@ -249,3 +249,28 @@ test('ensures the repost before clicking Verify', async () => {
 
 	expect(events).toEqual(['repost', 'verify-clicked']);
 });
+
+test('does not repost again when the track is already reposted', async () => {
+	const downloader = new DroploudDownloader({
+		comment: 'test',
+		browserMode: 'headless',
+	});
+	let repostAttempted = false;
+	Object.assign(downloader, {
+		isTrackAlreadyReposted: async () => true,
+		repostViaPageFetch: async () => {
+			repostAttempted = true;
+			return false;
+		},
+	});
+	const gate = downloader as unknown as {
+		ensureRepostBeforeVerify(page: Page, trackUrl: string): Promise<void>;
+	};
+
+	await gate.ensureRepostBeforeVerify(
+		{} as Page,
+		'https://soundcloud.com/artist/track',
+	);
+
+	expect(repostAttempted).toBe(false);
+});

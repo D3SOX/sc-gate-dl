@@ -488,10 +488,19 @@ export class DroploudDownloader {
 		await timeout(400);
 	}
 
+	private async isTrackAlreadyReposted(trackUrl: string): Promise<boolean> {
+		try {
+			return await new SoundcloudClient().isTrackReposted(trackUrl);
+		} catch {
+			return false;
+		}
+	}
+
 	private async ensureRepostBeforeVerify(
 		page: Page,
 		trackUrl: string,
 	): Promise<void> {
+		if (await this.isTrackAlreadyReposted(trackUrl)) return;
 		if (await this.repostViaPageFetch(page, trackUrl)) return;
 		throw new Error(
 			'Droploud: the SoundCloud track could not be reposted before verification. Confirm the connected account and retry.',
