@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { mkdir, mkdtemp, rm } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { AudioProcessor } from './audioProcessor';
@@ -181,5 +181,42 @@ describe('lossy MP3 retagging keeps unrelated tags', () => {
 		expect((await formatTags(output)).comment).toBe(
 			'https://soundcloud.com/artist/track',
 		);
+	}, 60_000);
+
+	test('leaves an MP3 byte-identical when its codec probe fails', async () => {
+		await runFfmpeg([
+			'-f',
+			'lavfi',
+			'-i',
+			'sine=frequency=440:duration=1',
+			'-c:a',
+			'libmp3lame',
+			'-b:a',
+			'128k',
+			'-metadata',
+			'title=Original',
+			'-y',
+			join('downloads', 'probe.mp3'),
+		]);
+		const before = await Bun.file(join('downloads', 'probe.mp3')).bytes();
+		await writeFile(
+			join(dir, 'failing-ffprobe'),
+			'#!/bin/sh\necho "probe broken" >&2\nexit 1\n',
+		);
+		await chmod(join(dir, 'failing-ffprobe'), 0o755);
+
+		const output = await new AudioProcessor(
+			'ffmpeg',
+			join(dir, 'failing-ffprobe'),
+		).processAudio(
+			'probe.mp3',
+			{ title: 'Changed' },
+			{ buffer: new ArrayBuffer(0), fileName: 'none.jpg' },
+			'never',
+			'mp3-320',
+		);
+
+		expect(output).toBe(join('downloads', 'probe.mp3'));
+		expect(await Bun.file(output).bytes()).toEqual(before);
 	}, 60_000);
 });

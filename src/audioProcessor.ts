@@ -372,7 +372,7 @@ export class AudioProcessor {
 				metadata.album ||
 				metadata.genre ||
 				sourceUrl;
-			if (isMp3Format(filename)) {
+			if (isMp3Format(filename) && lossless === false) {
 				if (hasMetadata) {
 					await this.retagMp3(inputPath, artworkPath, metadata, sourceUrl);
 				}
