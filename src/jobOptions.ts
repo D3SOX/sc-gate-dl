@@ -21,7 +21,7 @@ export function parseBrowserMode(
 /** A requested output format, or the error message for a 400 response. */
 export function parseOutputFormat(value: unknown): OutputFormat | string {
 	if (!isOutputFormat(value)) {
-		return 'outputFormat must be "original", "mp3-320", "m4a-aac", or "flac"';
+		return 'outputFormat must be "original", "mp3", "mp3-320", "m4a-aac", or "flac"';
 	}
 	return value;
 }

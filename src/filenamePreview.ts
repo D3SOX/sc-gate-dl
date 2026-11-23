@@ -53,7 +53,7 @@ function replaceExtension(filename: string, extension: string): string {
 }
 
 function previewExtension(
-	outputFormat: 'mp3-320' | 'm4a-aac' | 'flac' | 'original' | undefined,
+	outputFormat: 'mp3' | 'mp3-320' | 'm4a-aac' | 'flac' | 'original' | undefined,
 ): string {
 	if (outputFormat === 'flac') return '.flac';
 	if (outputFormat === 'm4a-aac') return '.m4a';
@@ -67,7 +67,7 @@ export function previewProcessedFilename(
 		nameAsArtistTitle: boolean;
 		artist?: string;
 		title?: string;
-		outputFormat?: 'mp3-320' | 'm4a-aac' | 'flac' | 'original';
+		outputFormat?: 'mp3' | 'mp3-320' | 'm4a-aac' | 'flac' | 'original';
 		/** Probed lossless state; without a probe, an unambiguous lossless extension decides. */
 		sourceIsLossless?: boolean | null;
 	},

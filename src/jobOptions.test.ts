@@ -10,15 +10,15 @@ import type { BrowserMode } from './types';
 describe('needsSourceLosslessProbe', () => {
 	test('probes the source for every converting format, not for original', () => {
 		expect(needsSourceLosslessProbe('original')).toBe(false);
-		for (const value of ['mp3-320', 'm4a-aac', 'flac'] as const) {
+		for (const value of ['mp3', 'mp3-320', 'm4a-aac', 'flac'] as const) {
 			expect(needsSourceLosslessProbe(value)).toBe(true);
 		}
 	});
 });
 
 describe('parseOutputFormat', () => {
-	test('accepts every output format value, including m4a-aac', () => {
-		for (const value of ['original', 'mp3-320', 'm4a-aac', 'flac']) {
+	test('accepts every output format value, including mp3 and m4a-aac', () => {
+		for (const value of ['original', 'mp3', 'mp3-320', 'm4a-aac', 'flac']) {
 			expect(parseOutputFormat(value)).toBe(value);
 		}
 	});
@@ -26,7 +26,7 @@ describe('parseOutputFormat', () => {
 	test('rejects unknown and non-string values', () => {
 		for (const value of ['m4a', 'aac', 'M4A-AAC', '', 1, null]) {
 			expect(parseOutputFormat(value)).toBe(
-				'outputFormat must be "original", "mp3-320", "m4a-aac", or "flac"',
+				'outputFormat must be "original", "mp3", "mp3-320", "m4a-aac", or "flac"',
 			);
 		}
 	});

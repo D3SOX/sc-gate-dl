@@ -186,9 +186,16 @@ MP3, FLAC, and original files after their HTTP response has been transferred in
 full. This applies to headless, Xvfb, and visible-headed jobs. Interrupted or
 failed transfers retain the file so the download can be retried.
 
-Set `SC_GATE_DL_AAC_BITRATE` to change the AAC bitrate (kbps) for M4A/AAC
-output. It defaults to `320` and is clamped to `64`–`320`; non-numeric values
-fall back to `320`.
+Set `SC_GATE_DL_BITRATE` to the bitrate in kbps for configurable `mp3` and
+`m4a-aac` output. It is a whole number. It defaults to `320` when unset. MP3
+accepts `32`, `40`, `48`, `56`, `64`, `80`, `96`, `112`, `128`, `160`, `192`,
+`224`, `256`, or `320`. AAC accepts `64` through `320`. An invalid value rejects
+the job with an error. It does not change `mp3-320`, which always encodes at
+320 kbps.
+
+**Migration:** `SC_GATE_DL_BITRATE` replaces `SC_GATE_DL_AAC_BITRATE`, which is
+no longer read and has no fallback. If you used the old variable, copy its
+value to `SC_GATE_DL_BITRATE`. Otherwise AAC output returns to 320 kbps.
 
 Set `SC_GATE_DL_LIBRARY_DIR` to a folder inside your music server's library,
 for example `/home/YOUR_USER/Music/SoundCloud`, so API clients like
@@ -536,7 +543,7 @@ HTTPS so the embedded client connects over `wss://`.
 
 If it's the first time you're running it you will need to initialize the logins by clicking the button in the footer.
 
-You can deep-link a track with `?url=` (also accepted as `?soundcloudUrl=`), optional `outputFormat` (`mp3-320`, `m4a-aac`, `flac`, or `original`), and optional `browserMode` (`headless`, `xvfb`, or `headed`), which pre-fills the form and starts the job. FLAC output preserves lossless sources; converting a lossy source to FLAC changes the container but cannot restore lost quality.
+You can deep-link a track with `?url=` (also accepted as `?soundcloudUrl=`), optional `outputFormat` (`mp3`, `mp3-320`, `m4a-aac`, `flac`, or `original`), and optional `browserMode` (`headless`, `xvfb`, or `headed`), which pre-fills the form and starts the job. FLAC output preserves lossless sources; converting a lossy source to FLAC changes the container but cannot restore lost quality.
 
 ```text
 http://localhost:4321/?url=https://soundcloud.com/artist/track&outputFormat=mp3-320
@@ -612,5 +619,5 @@ Droploud, GateRush, DownloadGater, StillHype, PumpYourSound, and MyPressKit gate
 **File Processing**:
 
 - **Lossless (WAV/AIFF/FLAC) files**: Converted to MP3 (320kbps) with metadata and artwork
-- **Lossless files with `m4a-aac` output**: Converted to M4A (AAC, `SC_GATE_DL_AAC_BITRATE` kbps, default 320) with metadata, artwork, and the source link in the comment tag
+- **Lossless files with `m4a-aac` output**: Converted to M4A (AAC, `SC_GATE_DL_BITRATE` kbps, default 320) with metadata, artwork, and the source link in the comment tag
 - **MP3 files**: Retagged with metadata and artwork (no re-encoding)

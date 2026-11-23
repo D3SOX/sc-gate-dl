@@ -52,7 +52,7 @@ describe('output-format preference hydration', () => {
 	});
 
 	test('ignores invalid stored formats', () => {
-		const storage = { getItem: () => 'mp3' };
+		const storage = { getItem: () => 'mp4' };
 		expect(readStoredOutputFormat(storage, 'output-format')).toBeNull();
 	});
 });

@@ -7,7 +7,7 @@ import {
 	artworkExtension,
 	isLosslessCodec,
 	m4aCoverCodec,
-	parseAacBitrateKbps,
+	parseOutputBitrateKbps,
 } from './audioProcessor';
 
 describe('artworkExtension', () => {
@@ -207,21 +207,51 @@ describe('AudioProcessor source comment tag', () => {
 	});
 });
 
-describe('parseAacBitrateKbps', () => {
-	test('defaults to 320 when unset, blank, or non-numeric', () => {
-		for (const raw of [undefined, '', '   ', 'abc', '128kbps']) {
-			expect(parseAacBitrateKbps(raw)).toBe(320);
+describe('parseOutputBitrateKbps', () => {
+	test('defaults to 320 when unset', () => {
+		expect(parseOutputBitrateKbps(undefined, 'mp3')).toBe(320);
+		expect(parseOutputBitrateKbps(undefined, 'm4a-aac')).toBe(320);
+	});
+
+	test('accepts every MP3 nominal step', () => {
+		for (const kbps of [
+			32, 40, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320,
+		]) {
+			expect(parseOutputBitrateKbps(` ${kbps} `, 'mp3')).toBe(kbps);
 		}
 	});
 
-	test('keeps values inside the range and clamps the rest', () => {
-		expect(parseAacBitrateKbps('128')).toBe(128);
-		expect(parseAacBitrateKbps(' 192 ')).toBe(192);
-		expect(parseAacBitrateKbps('64')).toBe(64);
-		expect(parseAacBitrateKbps('320')).toBe(320);
-		expect(parseAacBitrateKbps('32')).toBe(64);
-		expect(parseAacBitrateKbps('999')).toBe(320);
-		expect(parseAacBitrateKbps('127.6')).toBe(128);
+	test('rejects MP3 values outside the nominal steps instead of rounding', () => {
+		for (const raw of ['72', '130', '31', '336', '0']) {
+			expect(() => parseOutputBitrateKbps(raw, 'mp3')).toThrow(
+				/SC_GATE_DL_BITRATE.*mp3 output.*32, 40, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320/,
+			);
+		}
+	});
+
+	test('accepts AAC integers from 64 to 320 inclusive', () => {
+		expect(parseOutputBitrateKbps('64', 'm4a-aac')).toBe(64);
+		expect(parseOutputBitrateKbps('128', 'm4a-aac')).toBe(128);
+		expect(parseOutputBitrateKbps('320', 'm4a-aac')).toBe(320);
+	});
+
+	test('rejects AAC values outside 64 to 320 with the supported range', () => {
+		for (const raw of ['32', '63', '321', '999']) {
+			expect(() => parseOutputBitrateKbps(raw, 'm4a-aac')).toThrow(
+				/SC_GATE_DL_BITRATE.*m4a-aac output.*64 to 320/,
+			);
+		}
+	});
+
+	test('rejects non-integer and non-numeric values instead of rounding them', () => {
+		for (const raw of ['127.6', '128.0', '128kbps', 'abc', '', '   ', '1e2']) {
+			expect(() => parseOutputBitrateKbps(raw, 'm4a-aac')).toThrow(
+				/SC_GATE_DL_BITRATE/,
+			);
+			expect(() => parseOutputBitrateKbps(raw, 'mp3')).toThrow(
+				/SC_GATE_DL_BITRATE/,
+			);
+		}
 	});
 });
 
@@ -399,7 +429,7 @@ describe('AudioProcessor M4A/AAC output', () => {
 			const outputPath = await new AudioProcessor(
 				'ffmpeg',
 				'ffprobe',
-				128,
+				'128',
 			).processAudio(
 				'song.flac',
 				{ title: 'Song', artist: 'Artist', album: 'Album', genre: 'Genre' },
@@ -453,7 +483,7 @@ describe('AudioProcessor M4A/AAC output', () => {
 			const outputPath = await new AudioProcessor(
 				'ffmpeg',
 				'ffprobe',
-				128,
+				'128',
 			).processAudio(
 				'song.flac',
 				{ title: 'Song' },
@@ -505,7 +535,7 @@ describe('AudioProcessor M4A/AAC output', () => {
 			const outputPath = await new AudioProcessor(
 				'ffmpeg',
 				'ffprobe',
-				128,
+				'128',
 			).processAudio(
 				'song.flac',
 				{ title: 'Song' },
@@ -540,7 +570,7 @@ describe('AudioProcessor M4A/AAC output', () => {
 			const outputPath = await new AudioProcessor(
 				'ffmpeg',
 				'ffprobe',
-				96,
+				'96',
 			).processAudio(
 				'song.flac',
 				{},
@@ -587,7 +617,7 @@ describe('AudioProcessor M4A/AAC output', () => {
 			const outputPath = await new AudioProcessor(
 				'ffmpeg',
 				'ffprobe',
-				128,
+				'128',
 			).processAudio(
 				'song.flac',
 				{ title: 'Song' },
@@ -618,7 +648,7 @@ describe('AudioProcessor M4A/AAC output', () => {
 			const outputPath = await new AudioProcessor(
 				'ffmpeg',
 				'ffprobe',
-				128,
+				'128',
 			).processAudio(
 				'song.flac',
 				{},
@@ -637,7 +667,7 @@ describe('AudioProcessor M4A/AAC output', () => {
 
 describe('AudioProcessor lossy passthrough and lossless gate', () => {
 	const sourceUrl = 'https://soundcloud.com/artist/track';
-	const outputFormats = ['mp3-320', 'm4a-aac', 'flac'] as const;
+	const outputFormats = ['mp3', 'mp3-320', 'm4a-aac', 'flac'] as const;
 
 	async function runFfmpeg(args: string[]): Promise<void> {
 		const proc = Bun.spawn(
@@ -863,6 +893,7 @@ describe('AudioProcessor lossy passthrough and lossless gate', () => {
 
 	const losslessTargets = [
 		['mp3-320', 'mp3', 'mp3'],
+		['mp3', 'mp3', 'mp3'],
 		['m4a-aac', 'm4a', 'aac'],
 		['flac', 'flac', 'flac'],
 	] as const;
@@ -1276,6 +1307,365 @@ describe('AudioProcessor lossy m4a, ogg and aac tagging', () => {
 				expect(
 					new Uint8Array(await Bun.file(outputPath).arrayBuffer()),
 				).toEqual(before);
+			}
+		});
+	});
+});
+
+describe('AudioProcessor shared bitrate output', () => {
+	const sourceUrl = 'https://soundcloud.com/artist/track';
+
+	async function runFfmpeg(args: string[]): Promise<void> {
+		const proc = Bun.spawn(
+			['ffmpeg', '-hide_banner', '-loglevel', 'error', ...args],
+			{ stderr: 'ignore' },
+		);
+		expect(await proc.exited).toBe(0);
+	}
+
+	async function audioStream(path: string): Promise<{
+		codec_name?: string;
+		sample_rate?: string;
+		channels?: number;
+		bit_rate?: string;
+	}> {
+		const proc = Bun.spawn(
+			[
+				'ffprobe',
+				'-v',
+				'quiet',
+				'-select_streams',
+				'a:0',
+				'-show_streams',
+				'-print_format',
+				'json',
+				path,
+			],
+			{ stdout: 'pipe' },
+		);
+		const data = JSON.parse(await new Response(proc.stdout).text());
+		expect(await proc.exited).toBe(0);
+		return data.streams[0];
+	}
+
+	async function makeLossless(
+		name: string,
+		sampleRate: number = 44100,
+	): Promise<void> {
+		await runFfmpeg([
+			'-f',
+			'lavfi',
+			'-i',
+			'sine=frequency=440:duration=1',
+			'-ar',
+			String(sampleRate),
+			'-c:a',
+			'flac',
+			'-y',
+			join('downloads', name),
+		]);
+	}
+
+	async function makeCover(): Promise<{
+		buffer: ArrayBuffer;
+		fileName: string;
+	}> {
+		await runFfmpeg([
+			'-f',
+			'lavfi',
+			'-i',
+			'color=c=red:s=16x16',
+			'-frames:v',
+			'1',
+			'-y',
+			'cover.png',
+		]);
+		return {
+			buffer: await Bun.file('cover.png').arrayBuffer(),
+			fileName: 'cover.png',
+		};
+	}
+
+	async function inTempDir(
+		prefix: string,
+		fn: () => Promise<void>,
+	): Promise<void> {
+		const dir = await mkdtemp(join(tmpdir(), prefix));
+		const previousCwd = process.cwd();
+		try {
+			process.chdir(dir);
+			await mkdir('downloads');
+			await fn();
+		} finally {
+			process.chdir(previousCwd);
+			await rm(dir, { recursive: true, force: true });
+		}
+	}
+
+	test('encodes configurable mp3 at the configured nominal bitrate', async () => {
+		await inTempDir('sc-gate-dl-bitrate-mp3-', async () => {
+			await makeLossless('song.flac');
+
+			const outputPath = await new AudioProcessor(
+				'ffmpeg',
+				'ffprobe',
+				'128',
+			).processAudio(
+				'song.flac',
+				{ title: 'Song' },
+				await makeCover(),
+				'never',
+				'mp3',
+				sourceUrl,
+			);
+
+			expect(basename(outputPath)).toBe('song.mp3');
+			expect(Number((await audioStream(outputPath)).bit_rate)).toBe(128_000);
+		});
+	});
+
+	test('keeps mp3-320 at 320 kbps even when a different shared bitrate is configured', async () => {
+		await inTempDir('sc-gate-dl-bitrate-legacy-', async () => {
+			await makeLossless('song.flac');
+
+			const outputPath = await new AudioProcessor(
+				'ffmpeg',
+				'ffprobe',
+				'128',
+			).processAudio(
+				'song.flac',
+				{ title: 'Song' },
+				await makeCover(),
+				'never',
+				'mp3-320',
+				sourceUrl,
+			);
+
+			expect(Number((await audioStream(outputPath)).bit_rate)).toBe(320_000);
+		});
+	});
+
+	test('encodes AAC at the configured target rather than a fixed value', async () => {
+		await inTempDir('sc-gate-dl-bitrate-aac-', async () => {
+			await makeLossless('song.flac');
+
+			const outputPath = await new AudioProcessor(
+				'ffmpeg',
+				'ffprobe',
+				'96',
+			).processAudio(
+				'song.flac',
+				{ title: 'Song' },
+				await makeCover(),
+				'never',
+				'm4a-aac',
+				sourceUrl,
+			);
+
+			const bitRate = Number((await audioStream(outputPath)).bit_rate);
+			expect(bitRate).toBeGreaterThan(90_000);
+			expect(bitRate).toBeLessThan(105_000);
+		});
+	});
+
+	test('keeps the requested sample rate and channel count for mp3', async () => {
+		await inTempDir('sc-gate-dl-bitrate-rate-', async () => {
+			await makeLossless('song.flac', 22050);
+
+			const outputPath = await new AudioProcessor(
+				'ffmpeg',
+				'ffprobe',
+				'160',
+			).processAudio('song.flac', {}, await makeCover(), 'never', 'mp3');
+
+			const stream = await audioStream(outputPath);
+			expect(stream.sample_rate).toBe('22050');
+			expect(stream.channels).toBe(1);
+		});
+	});
+
+	test('keeps a lossy mp3 source unencoded when mp3 is selected', async () => {
+		await inTempDir('sc-gate-dl-bitrate-lossy-', async () => {
+			await runFfmpeg([
+				'-f',
+				'lavfi',
+				'-i',
+				'sine=frequency=440:duration=0.5',
+				'-c:a',
+				'libmp3lame',
+				'-b:a',
+				'128k',
+				'-y',
+				'downloads/song.mp3',
+			]);
+			const before = new Uint8Array(
+				await Bun.file('downloads/song.mp3').arrayBuffer(),
+			);
+
+			const outputPath = await new AudioProcessor(
+				'ffmpeg',
+				'ffprobe',
+				'320',
+			).processAudio('song.mp3', {}, await makeCover(), 'never', 'mp3');
+
+			expect(new Uint8Array(await Bun.file(outputPath).arrayBuffer())).toEqual(
+				before,
+			);
+		});
+	});
+
+	test('warns but keeps the output when AAC reports a capped target', async () => {
+		await inTempDir('sc-gate-dl-bitrate-clamp-', async () => {
+			await makeLossless('song.flac', 11025);
+			const warnings: string[] = [];
+			const originalWarn = console.warn;
+			console.warn = (...args: unknown[]) => {
+				warnings.push(args.map(String).join(' '));
+			};
+
+			try {
+				const outputPath = await new AudioProcessor(
+					'ffmpeg',
+					'ffprobe',
+					'320',
+				).processAudio('song.flac', {}, await makeCover(), 'never', 'm4a-aac');
+
+				expect(basename(outputPath)).toBe('song.m4a');
+				expect(await Bun.file(outputPath).exists()).toBe(true);
+				expect(
+					warnings.some((message) => /was capped by the encoder/.test(message)),
+				).toBe(true);
+			} finally {
+				console.warn = originalWarn;
+			}
+		});
+	});
+});
+
+describe('AudioProcessor shared bitrate validation timing', () => {
+	const sourceUrl = 'https://soundcloud.com/artist/track';
+
+	async function runFfmpeg(args: string[]): Promise<void> {
+		const proc = Bun.spawn(
+			['ffmpeg', '-hide_banner', '-loglevel', 'error', ...args],
+			{ stderr: 'ignore' },
+		);
+		expect(await proc.exited).toBe(0);
+	}
+
+	async function inTempDir(
+		prefix: string,
+		fn: () => Promise<void>,
+	): Promise<void> {
+		const dir = await mkdtemp(join(tmpdir(), prefix));
+		const previousCwd = process.cwd();
+		try {
+			process.chdir(dir);
+			await mkdir('downloads');
+			await fn();
+		} finally {
+			process.chdir(previousCwd);
+			await rm(dir, { recursive: true, force: true });
+		}
+	}
+
+	async function makeLossless(): Promise<void> {
+		await runFfmpeg([
+			'-f',
+			'lavfi',
+			'-i',
+			'sine=frequency=440:duration=0.5',
+			'-c:a',
+			'flac',
+			'-y',
+			'downloads/song.flac',
+		]);
+	}
+
+	async function makeCover(): Promise<{
+		buffer: ArrayBuffer;
+		fileName: string;
+	}> {
+		await runFfmpeg([
+			'-f',
+			'lavfi',
+			'-i',
+			'color=c=red:s=16x16',
+			'-frames:v',
+			'1',
+			'-y',
+			'cover.png',
+		]);
+		return {
+			buffer: await Bun.file('cover.png').arrayBuffer(),
+			fileName: 'cover.png',
+		};
+	}
+
+	test('ignores an invalid shared bitrate for flac and fixed mp3-320', async () => {
+		await inTempDir('sc-gate-dl-bitrate-ignore-', async () => {
+			await makeLossless();
+			for (const format of ['flac', 'mp3-320'] as const) {
+				const outputPath = await new AudioProcessor(
+					'ffmpeg',
+					'ffprobe',
+					'127.6',
+				).processAudio('song.flac', {}, await makeCover(), 'never', format);
+				expect(await Bun.file(outputPath).exists()).toBe(true);
+			}
+		});
+	});
+
+	test('rejects an invalid shared bitrate before encoding configurable mp3', async () => {
+		await inTempDir('sc-gate-dl-bitrate-reject-', async () => {
+			await makeLossless();
+			await expect(
+				new AudioProcessor('ffmpeg', 'ffprobe', '127.6').processAudio(
+					'song.flac',
+					{},
+					await makeCover(),
+					'never',
+					'mp3',
+					sourceUrl,
+				),
+			).rejects.toThrow(/SC_GATE_DL_BITRATE.*mp3 output/);
+			expect(await readdir('downloads')).toEqual(['song.flac']);
+		});
+	});
+
+	test('warns but keeps mp3 output when FFmpeg picks another nominal bitrate', async () => {
+		await inTempDir('sc-gate-dl-bitrate-mp3-warn-', async () => {
+			await runFfmpeg([
+				'-f',
+				'lavfi',
+				'-i',
+				'sine=frequency=440:duration=1',
+				'-ar',
+				'11025',
+				'-c:a',
+				'flac',
+				'-y',
+				'downloads/song.flac',
+			]);
+			const warnings: string[] = [];
+			const originalWarn = console.warn;
+			console.warn = (...args: unknown[]) => {
+				warnings.push(args.map(String).join(' '));
+			};
+
+			try {
+				const outputPath = await new AudioProcessor(
+					'ffmpeg',
+					'ffprobe',
+					'128',
+				).processAudio('song.flac', {}, await makeCover(), 'never', 'mp3');
+
+				expect(await Bun.file(outputPath).exists()).toBe(true);
+				expect(
+					warnings.some((message) => /encoder wrote 64kbps/.test(message)),
+				).toBe(true);
+			} finally {
+				console.warn = originalWarn;
 			}
 		});
 	});

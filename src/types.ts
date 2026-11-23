@@ -33,11 +33,12 @@ export interface Metadata {
 	genre?: string;
 }
 
-export type OutputFormat = 'original' | 'mp3-320' | 'm4a-aac' | 'flac';
+export type OutputFormat = 'original' | 'mp3' | 'mp3-320' | 'm4a-aac' | 'flac';
 
 export function isOutputFormat(value: unknown): value is OutputFormat {
 	return (
 		value === 'original' ||
+		value === 'mp3' ||
 		value === 'mp3-320' ||
 		value === 'm4a-aac' ||
 		value === 'flac'

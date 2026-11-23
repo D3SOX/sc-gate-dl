@@ -138,9 +138,9 @@ const OUTPUT_FORMAT_OPTIONS: {
 	hint: string;
 }[] = [
 	{
-		value: 'mp3-320',
-		label: 'MP3 320',
-		hint: 'Converts to MP3 at 320 kbps, then lets you check the tags.',
+		value: 'mp3',
+		label: 'MP3',
+		hint: 'Converts to MP3 at the server bitrate, then lets you check the tags.',
 	},
 	{
 		value: 'm4a-aac',
@@ -158,6 +158,15 @@ const OUTPUT_FORMAT_OPTIONS: {
 		hint: 'Keeps the file as downloaded, with no conversion or tag editing.',
 	},
 ];
+const LEGACY_MP3_320_OPTION: {
+	value: OutputFormat;
+	label: string;
+	hint: string;
+} = {
+	value: 'mp3-320',
+	label: 'MP3 320',
+	hint: 'Converts to MP3 at a fixed 320 kbps, then lets you check the tags.',
+};
 
 const STEPS: { id: Step; label: string }[] = [
 	{ id: 'url', label: 'Link' },
@@ -349,7 +358,7 @@ export default function App() {
 	const [browserViewActive, setBrowserViewActive] = useState(false);
 	const [browserViewOpen, setBrowserViewOpen] = useState(false);
 	const [embedded, setEmbedded] = useState(false);
-	const [outputFormat, setOutputFormat] = useState<OutputFormat>('mp3-320');
+	const [outputFormat, setOutputFormat] = useState<OutputFormat>('mp3');
 	const [job, setJob] = useState<JobState>({
 		jobId: null,
 		track: null,
@@ -357,7 +366,7 @@ export default function App() {
 		defaultMetadata: null,
 		existingMetadata: null,
 		hasExistingArtwork: false,
-		outputFormat: 'mp3-320',
+		outputFormat: 'mp3',
 		progress: null,
 		downloadFilename: null,
 		outputFilename: null,
@@ -1232,8 +1241,9 @@ export default function App() {
 		? metadata.artist || ''
 		: metadata.artist || trackArtist;
 	const outputFormatHint =
-		OUTPUT_FORMAT_OPTIONS.find(({ value }) => value === outputFormat)?.hint ??
-		'';
+		[...OUTPUT_FORMAT_OPTIONS, LEGACY_MP3_320_OPTION].find(
+			({ value }) => value === outputFormat,
+		)?.hint ?? '';
 	const hasDownloadTotal = typeof job.progress?.totalBytes === 'number';
 	const downloadPercent = formatPercent(job.progress?.percent);
 	const toMegabytes = (bytes: number) => (bytes / 1024 / 1024).toFixed(1);
@@ -1496,7 +1506,12 @@ export default function App() {
 							<fieldset className="field">
 								<legend>Format</legend>
 								<div className="choices">
-									{OUTPUT_FORMAT_OPTIONS.map(({ value, label }) => (
+									{[
+										...OUTPUT_FORMAT_OPTIONS,
+										...(outputFormat === 'mp3-320'
+											? [LEGACY_MP3_320_OPTION]
+											: []),
+									].map(({ value, label }) => (
 										<label key={value} className="choice">
 											<input
 												type="radio"

@@ -3,7 +3,7 @@ import { cp, mkdir, rm } from 'node:fs/promises';
 import { basename, extname, join } from 'node:path';
 import type { SoundcloudTrack } from 'soundcloud.ts';
 import { hasZipSignature, resolveDownloadedAudio } from './archiveAudio';
-import { AudioProcessor, parseAacBitrateKbps } from './audioProcessor';
+import { AudioProcessor, parseOutputBitrateKbps } from './audioProcessor';
 import type { BandcampGateOptions } from './bandcampGate';
 import { isXvfbSupported } from './browserLaunch';
 import { attachmentContentDisposition } from './contentDisposition';
@@ -96,17 +96,11 @@ const DELETE_AFTER_DOWNLOAD = deleteAfterDownloadEnabled(
 	process.env.SC_GATE_DL_DELETE_AFTER_DOWNLOAD,
 );
 const LIBRARY_DIR = libraryDirFromEnv();
-const AAC_BITRATE_KBPS = parseAacBitrateKbps(
-	process.env.SC_GATE_DL_AAC_BITRATE,
-);
+const AUDIO_BITRATE = process.env.SC_GATE_DL_BITRATE;
 const API_PORT = Number(process.env.SC_GATE_DL_PORT) || 3000;
 
 const soundcloudClient = new SoundcloudClient();
-const audioProcessor = new AudioProcessor(
-	ffmpegBin,
-	ffprobeBin,
-	AAC_BITRATE_KBPS,
-);
+const audioProcessor = new AudioProcessor(ffmpegBin, ffprobeBin, AUDIO_BITRATE);
 const availableBrowserModes: BrowserMode[] = isXvfbSupported()
 	? ['headless', 'xvfb', 'headed']
 	: ['headless', 'headed'];
@@ -1089,6 +1083,18 @@ const server = Bun.serve({
 					);
 					if (!isOutputFormat(format)) {
 						return jsonResponse({ error: format }, { status: 400 });
+					}
+					if (format === 'mp3' || format === 'm4a-aac') {
+						try {
+							parseOutputBitrateKbps(AUDIO_BITRATE, format);
+						} catch (error) {
+							return jsonResponse(
+								{
+									error: error instanceof Error ? error.message : String(error),
+								},
+								{ status: 400 },
+							);
+						}
 					}
 
 					if (destination !== undefined && !isJobDestination(destination)) {

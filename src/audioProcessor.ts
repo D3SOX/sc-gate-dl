@@ -56,26 +56,45 @@ export function isLosslessCodec(codecName: string): boolean {
 	);
 }
 
-/** Server `SC_GATE_DL_AAC_BITRATE` in kbps; unset or non-numeric means 320. */
-export function parseAacBitrateKbps(raw: string | undefined): number {
-	const value = Number(raw?.trim() || NaN);
-	if (!Number.isFinite(value)) return 320;
-	return Math.min(320, Math.max(64, Math.round(value)));
+const MP3_BITRATES_KBPS = [
+	32, 40, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320,
+];
+const AAC_BITRATE_RANGE_KBPS = { min: 64, max: 320 };
+
+/**
+ * Parse the shared `SC_GATE_DL_BITRATE` for a configurable `mp3` or `m4a-aac`
+ * output. Unset means 320. Rejects anything that is not a supported whole number.
+ */
+export function parseOutputBitrateKbps(
+	raw: string | undefined,
+	format: 'mp3' | 'm4a-aac',
+): number {
+	if (raw === undefined) return 320;
+	const text = raw.trim();
+	const value = /^\d+$/.test(text) ? Number(text) : NaN;
+
+	if (format === 'mp3') {
+		if (MP3_BITRATES_KBPS.includes(value)) return value;
+		throw new Error(
+			`SC_GATE_DL_BITRATE=${raw} is not valid for mp3 output. Use one of: ${MP3_BITRATES_KBPS.join(', ')}`,
+		);
+	}
+	const { min, max } = AAC_BITRATE_RANGE_KBPS;
+	if (value >= min && value <= max) return value;
+	throw new Error(
+		`SC_GATE_DL_BITRATE=${raw} is not valid for m4a-aac output. Use a whole number from ${min} to ${max}`,
+	);
 }
 
 export class AudioProcessor {
 	private ffmpegBin: string;
 	private ffprobeBin: string;
-	private aacBitrateKbps: number;
+	private bitrateSetting: string | undefined;
 
-	constructor(
-		ffmpegBin: string,
-		ffprobeBin: string,
-		aacBitrateKbps: number = 320,
-	) {
+	constructor(ffmpegBin: string, ffprobeBin: string, bitrateSetting?: string) {
 		this.ffmpegBin = ffmpegBin;
 		this.ffprobeBin = ffprobeBin;
-		this.aacBitrateKbps = aacBitrateKbps;
+		this.bitrateSetting = bitrateSetting;
 	}
 
 	/** Run a binary with argv (no shell); throws on non-zero exit. */
@@ -275,6 +294,10 @@ export class AudioProcessor {
 		sourceUrl?: string,
 	): Promise<string> {
 		const inputPath = join('./downloads', filename);
+		const bitrateKbps =
+			outputFormat === 'mp3' || outputFormat === 'm4a-aac'
+				? parseOutputBitrateKbps(this.bitrateSetting, outputFormat)
+				: 320;
 
 		// The artwork name may come from a client upload, so never use it as a path.
 		const artworkPath = join(
@@ -311,6 +334,7 @@ export class AudioProcessor {
 						metadata,
 						filename,
 						losslessHandling,
+						bitrateKbps,
 						sourceUrl,
 					);
 					await this.maybeRemoveSource(
@@ -327,6 +351,7 @@ export class AudioProcessor {
 					artworkPath,
 					metadata,
 					filename,
+					bitrateKbps,
 					sourceUrl,
 				);
 
@@ -417,6 +442,16 @@ export class AudioProcessor {
 		}
 	}
 
+	/** Nominal audio-stream bitrate in kbps, not the container's; null when unknown. */
+	private async probeAudioBitrateKbps(path: string): Promise<number | null> {
+		const probeData = await this.runFfprobe(path);
+		const audioStream = probeData?.streams?.find(
+			(stream) => stream.codec_type === 'audio',
+		);
+		const bps = Number(audioStream?.bit_rate);
+		return Number.isFinite(bps) && bps > 0 ? Math.round(bps / 1000) : null;
+	}
+
 	/** Probed audio codec name; null when the probe fails or finds no audio stream. */
 	private async probeCodecName(inputPath: string): Promise<string | null> {
 		const probeData = await this.runFfprobe(inputPath);
@@ -464,10 +499,10 @@ export class AudioProcessor {
 		artworkPath: string,
 		metadata: Metadata,
 		filename: string,
+		bitrateKbps: number,
 		sourceUrl?: string,
 	): Promise<string> {
 		const outputPath = await this.allocateMp3OutputPath(inputPath, filename);
-		const bitrateKbps = 320;
 
 		const args: string[] = [
 			'-i',
@@ -521,6 +556,12 @@ export class AudioProcessor {
 					.catch(() => {});
 			}
 			throw error;
+		}
+		const actualKbps = await this.probeAudioBitrateKbps(outputPath);
+		if (actualKbps !== null && actualKbps !== bitrateKbps) {
+			console.warn(
+				`Requested ${bitrateKbps}kbps MP3 but the encoder wrote ${actualKbps}kbps: ${outputPath}`,
+			);
 		}
 		console.log(`✓ Converted to ${outputPath}`);
 		return outputPath;
@@ -608,6 +649,7 @@ export class AudioProcessor {
 		metadata: Metadata,
 		filename: string,
 		losslessHandling: 'prompt' | 'always' | 'never',
+		bitrateKbps: number,
 		sourceUrl?: string,
 	): Promise<string> {
 		const replacingM4a =
@@ -644,7 +686,7 @@ export class AudioProcessor {
 			'-profile:a',
 			'aac_low',
 			'-b:a',
-			`${this.aacBitrateKbps}k`,
+			`${bitrateKbps}k`,
 			'-c:v',
 			coverCodec,
 			'-disposition:v',
@@ -664,9 +706,14 @@ export class AudioProcessor {
 		if (sourceUrl) args.push('-metadata', `comment=${sourceUrl}`);
 		args.push('-y', outputPath);
 
-		console.log(`Converting to M4A (AAC ${this.aacBitrateKbps}kbps)...`);
+		console.log(`Converting to M4A (AAC ${bitrateKbps}kbps)...`);
 		try {
-			await this.run(this.ffmpegBin, args);
+			const { stderr } = await this.run(this.ffmpegBin, args);
+			if (/clamping to max/.test(stderr)) {
+				console.warn(
+					`AAC target ${bitrateKbps}kbps was capped by the encoder for this sample rate and channel count: ${outputPath}`,
+				);
+			}
 			if (replacingM4a) {
 				await rename(outputPath, inputPath);
 				console.log(`✓ Converted to ${inputPath}`);
