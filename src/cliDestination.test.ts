@@ -4,13 +4,90 @@ import {
 	mkdir,
 	mkdtemp,
 	readdir,
+	realpath,
+	rename,
 	rm,
 	writeFile,
 } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
+import { lookpath } from 'find-bin';
 import { AudioProcessor } from './audioProcessor';
-import { cliDirFromEnv, deliverCliOutput } from './cliDestination';
+import {
+	type CliFormat,
+	cliDirFromEnv,
+	cliFormatFromEnv,
+	deliverCliOutput,
+	finishCliDownload,
+} from './cliDestination';
+
+type FfprobeOutput = {
+	format?: { tags?: Record<string, string>; bit_rate?: string };
+	streams?: Array<{
+		codec_type?: string;
+		codec_name?: string;
+		bit_rate?: string;
+		disposition?: { attached_pic?: number };
+	}>;
+};
+
+describe('cliFormatFromEnv', () => {
+	test('defaults to configurable mp3 when unset or blank', () => {
+		expect(cliFormatFromEnv(undefined, undefined)).toEqual({
+			format: 'mp3',
+			bitrateKbps: 320,
+		});
+		expect(cliFormatFromEnv('  ', undefined)).toEqual({
+			format: 'mp3',
+			bitrateKbps: 320,
+		});
+	});
+
+	test('accepts every CLI format', () => {
+		expect(cliFormatFromEnv('m4a-aac', undefined).format).toBe('m4a-aac');
+		expect(cliFormatFromEnv('flac', undefined).format).toBe('flac');
+		expect(cliFormatFromEnv('original', undefined).format).toBe('original');
+	});
+
+	test('applies the shared bitrate to mp3 and m4a-aac', () => {
+		expect(cliFormatFromEnv('mp3', '128').bitrateKbps).toBe(128);
+		expect(cliFormatFromEnv('m4a-aac', '256').bitrateKbps).toBe(256);
+	});
+
+	test('accepts AAC bounds and rejects values just outside them', () => {
+		expect(cliFormatFromEnv('m4a-aac', '64').bitrateKbps).toBe(64);
+		expect(cliFormatFromEnv('m4a-aac', '320').bitrateKbps).toBe(320);
+		expect(() => cliFormatFromEnv('m4a-aac', '63')).toThrow(
+			'SC_GATE_DL_BITRATE=63 is not valid for m4a-aac output',
+		);
+		expect(() => cliFormatFromEnv('m4a-aac', '321')).toThrow(
+			'SC_GATE_DL_BITRATE=321 is not valid for m4a-aac output',
+		);
+	});
+
+	test('rejects an unknown format and names the supported values', () => {
+		expect(() => cliFormatFromEnv('ogg', undefined)).toThrow(
+			'SC_GATE_DL_CLI_FORMAT=ogg is not supported. Use one of: mp3, m4a-aac, flac, original',
+		);
+	});
+
+	test('rejects an invalid bitrate for mp3 and m4a-aac', () => {
+		expect(() => cliFormatFromEnv('mp3', '100')).toThrow(
+			'SC_GATE_DL_BITRATE=100 is not valid for mp3 output',
+		);
+		expect(() => cliFormatFromEnv('m4a-aac', '32')).toThrow(
+			'SC_GATE_DL_BITRATE=32 is not valid for m4a-aac output',
+		);
+	});
+
+	test('ignores an invalid bitrate for flac and original', () => {
+		expect(cliFormatFromEnv('flac', 'nope')).toEqual({
+			format: 'flac',
+			bitrateKbps: 320,
+		});
+		expect(cliFormatFromEnv('original', '100').format).toBe('original');
+	});
+});
 
 describe('cliDirFromEnv', () => {
 	test('defaults to the downloads folder when unset or blank', () => {
@@ -206,6 +283,359 @@ describe('deliverCliOutput', () => {
 		expect((error as Error).message).toContain(join(destination, 'Song.mp3'));
 		expect(await Bun.file(join(destination, 'Song.mp3')).text()).toBe('output');
 		expect(await readdir(downloads)).toEqual([]);
+	});
+});
+
+describe('finishCliDownload with real FFmpeg output', () => {
+	const sourceUrl = 'https://soundcloud.com/artist/track';
+	let dir: string;
+	let previousCwd: string;
+	let destination: string;
+
+	beforeEach(async () => {
+		dir = await mkdtemp(join(tmpdir(), 'sc-gate-cli-finish-'));
+		previousCwd = process.cwd();
+		process.chdir(dir);
+		await mkdir('downloads');
+		destination = join(dir, 'Music');
+	});
+
+	afterEach(async () => {
+		process.chdir(previousCwd);
+		await rm(dir, { recursive: true, force: true });
+	});
+
+	async function runFfmpeg(args: string[]): Promise<void> {
+		const proc = Bun.spawn(
+			['ffmpeg', '-hide_banner', '-loglevel', 'error', ...args],
+			{ stderr: 'ignore' },
+		);
+		expect(await proc.exited).toBe(0);
+	}
+
+	async function probe(path: string): Promise<FfprobeOutput> {
+		const proc = Bun.spawn(
+			[
+				'ffprobe',
+				'-v',
+				'quiet',
+				'-print_format',
+				'json',
+				'-show_format',
+				'-show_streams',
+				path,
+			],
+			{ stdout: 'pipe' },
+		);
+		const data = JSON.parse(
+			await new Response(proc.stdout).text(),
+		) as FfprobeOutput;
+		expect(await proc.exited).toBe(0);
+		return data;
+	}
+
+	function audioStream(data: FfprobeOutput) {
+		return data.streams?.find((stream) => stream.codec_type === 'audio');
+	}
+
+	async function makeFlacSource(name: string): Promise<void> {
+		await runFfmpeg([
+			'-f',
+			'lavfi',
+			'-i',
+			'sine=frequency=440:duration=0.5',
+			'-ac',
+			'2',
+			'-ar',
+			'44100',
+			'-c:a',
+			'flac',
+			'-y',
+			join('downloads', name),
+		]);
+	}
+
+	async function makeArtwork(): Promise<{
+		buffer: ArrayBuffer;
+		fileName: string;
+	}> {
+		await runFfmpeg([
+			'-f',
+			'lavfi',
+			'-i',
+			'color=c=red:s=16x16',
+			'-frames:v',
+			'1',
+			'-y',
+			'cover.png',
+		]);
+		return {
+			buffer: await Bun.file('cover.png').arrayBuffer(),
+			fileName: 'cover.png',
+		};
+	}
+
+	function steps(
+		overrides: Partial<{
+			fetchArtwork: () => Promise<{ buffer: ArrayBuffer; fileName: string }>;
+			promptMetadata: () => Promise<{ title?: string }>;
+			confirmRemoveSource: (filename: string) => Promise<boolean>;
+		}> = {},
+	) {
+		return {
+			fetchArtwork: overrides.fetchArtwork ?? makeArtwork,
+			promptMetadata:
+				overrides.promptMetadata ??
+				(async () => ({ title: 'Song', artist: 'Artist', album: 'Album' })),
+			confirmRemoveSource: overrides.confirmRemoveSource ?? (async () => false),
+		};
+	}
+
+	function finish(
+		downloadFilename: string,
+		options: {
+			format: CliFormat;
+			losslessHandling?: 'prompt' | 'always' | 'never';
+			bitrateSetting?: string;
+			stepOverrides?: Parameters<typeof steps>[0];
+		},
+	) {
+		return finishCliDownload({
+			downloadFilename,
+			output: { format: options.format },
+			losslessHandling: options.losslessHandling ?? 'never',
+			destinationDir: destination,
+			soundcloudUrl: sourceUrl,
+			audioProcessor: new AudioProcessor(
+				'ffmpeg',
+				'ffprobe',
+				options.bitrateSetting,
+			),
+			steps: steps(options.stepOverrides),
+		});
+	}
+
+	test('encodes a lossless source as MP3 at the configured bitrate with tags and source comment', async () => {
+		await makeFlacSource('Song.flac');
+
+		await finish('Song.flac', {
+			format: 'mp3',
+			bitrateSetting: '128',
+		});
+
+		const output = await probe(join(destination, 'Song.mp3'));
+		expect(audioStream(output)?.codec_name).toBe('mp3');
+		expect(audioStream(output)?.bit_rate).toBe('128000');
+		expect(output.format?.tags?.title).toBe('Song');
+		expect(output.format?.tags?.comment).toBe(sourceUrl);
+	});
+
+	test('encodes a lossless source as AAC in an m4a with artwork and tags', async () => {
+		await makeFlacSource('Song.flac');
+
+		await finish('Song.flac', {
+			format: 'm4a-aac',
+			bitrateSetting: '256',
+		});
+
+		const output = await probe(join(destination, 'Song.m4a'));
+		expect(audioStream(output)?.codec_name).toBe('aac');
+		expect(output.format?.tags?.title).toBe('Song');
+		expect(output.format?.tags?.comment).toBe(sourceUrl);
+		const cover = output.streams?.find(
+			(stream) => stream.codec_type === 'video',
+		);
+		expect(cover?.disposition?.attached_pic).toBe(1);
+	});
+
+	test('keeps a lossless FLAC output without using the common bitrate', async () => {
+		await makeFlacSource('Song.flac');
+
+		await finish('Song.flac', {
+			format: 'flac',
+			losslessHandling: 'always',
+			bitrateSetting: 'not-a-bitrate',
+		});
+
+		const output = await probe(
+			join(destination, (await readdir(destination))[0] ?? ''),
+		);
+		expect(audioStream(output)?.codec_name).toBe('flac');
+		expect(output.format?.tags?.comment).toBe(sourceUrl);
+		expect(await readdir(join(dir, 'downloads'))).toEqual([]);
+	});
+
+	test('delivers the selected audio unchanged for original', async () => {
+		await makeFlacSource('Song.flac');
+		const source = await Bun.file(join(dir, 'downloads', 'Song.flac')).bytes();
+		let artworkFetched = false;
+		let metadataPrompted = false;
+
+		await finish('Song.flac', {
+			format: 'original',
+			losslessHandling: 'always',
+			stepOverrides: {
+				fetchArtwork: async () => {
+					artworkFetched = true;
+					return makeArtwork();
+				},
+				promptMetadata: async () => {
+					metadataPrompted = true;
+					return {};
+				},
+			},
+		});
+
+		expect(await Bun.file(join(destination, 'Song.flac')).bytes()).toEqual(
+			source,
+		);
+		expect(artworkFetched).toBeFalse();
+		expect(metadataPrompted).toBeFalse();
+		expect(await readdir(join(dir, 'downloads'))).toEqual([]);
+	});
+
+	test('extracts the audio from a ZIP download before delivering it as original', async () => {
+		const zipBin = await lookpath('zip');
+		if (!zipBin) return;
+		await makeFlacSource('Song.flac');
+		await mkdir('archive');
+		await rename(
+			join(dir, 'downloads', 'Song.flac'),
+			join(dir, 'archive', 'Song.flac'),
+		);
+		const flacBytes = await Bun.file(join(dir, 'archive', 'Song.flac')).bytes();
+		Bun.spawnSync([zipBin, '-q', 'download.bin', 'Song.flac'], {
+			cwd: join(dir, 'archive'),
+		});
+		await rename(
+			join(dir, 'archive', 'download.bin'),
+			join(dir, 'downloads', 'download.bin'),
+		);
+
+		await finish('download.bin', { format: 'original' });
+
+		expect(await Bun.file(join(destination, 'Song.flac')).bytes()).toEqual(
+			flacBytes,
+		);
+		expect(await readdir(join(dir, 'downloads'))).toEqual([]);
+	});
+
+	test('does not re-encode a lossy MP3 for a conversion target', async () => {
+		await runFfmpeg([
+			'-f',
+			'lavfi',
+			'-i',
+			'sine=frequency=440:duration=0.5',
+			'-c:a',
+			'libmp3lame',
+			'-b:a',
+			'192k',
+			'-y',
+			join('downloads', 'Song.mp3'),
+		]);
+		const source = audioStream(await probe(join(dir, 'downloads', 'Song.mp3')));
+
+		await finish('Song.mp3', {
+			format: 'm4a-aac',
+			bitrateSetting: '256',
+		});
+
+		const output = await probe(join(destination, 'Song.mp3'));
+		expect(audioStream(output)?.codec_name).toBe('mp3');
+		expect(audioStream(output)?.bit_rate).toBe(source?.bit_rate);
+		expect(output.format?.tags?.comment).toBe(sourceUrl);
+		expect(await readdir(join(dir, 'downloads'))).toEqual([]);
+	});
+
+	test('retags a lossy M4A without re-encoding and keeps its extension', async () => {
+		await runFfmpeg([
+			'-f',
+			'lavfi',
+			'-i',
+			'sine=frequency=440:duration=0.5',
+			'-c:a',
+			'aac',
+			'-b:a',
+			'192k',
+			'-y',
+			join('downloads', 'Song.m4a'),
+		]);
+		const source = audioStream(await probe(join(dir, 'downloads', 'Song.m4a')));
+
+		await finish('Song.m4a', { format: 'mp3', bitrateSetting: '128' });
+
+		const output = await probe(join(destination, 'Song.m4a'));
+		expect(audioStream(output)?.codec_name).toBe('aac');
+		expect(audioStream(output)?.bit_rate).toBe(source?.bit_rate);
+		expect(output.format?.tags?.title).toBe('Song');
+		expect(output.format?.tags?.comment).toBe(sourceUrl);
+	});
+
+	test('leaves an unknown source type as delivered bytes', async () => {
+		await Bun.write(join(dir, 'downloads', 'Notes.xyz'), 'not audio');
+
+		await finish('Notes.xyz', { format: 'mp3', bitrateSetting: '128' });
+
+		expect(await Bun.file(join(destination, 'Notes.xyz')).text()).toBe(
+			'not audio',
+		);
+	});
+
+	test('keeps the source and reports it when conversion fails', async () => {
+		await makeFlacSource('Song.flac');
+		const source = await Bun.file(join(dir, 'downloads', 'Song.flac')).bytes();
+
+		const failing = finishCliDownload({
+			downloadFilename: 'Song.flac',
+			output: { format: 'mp3' },
+			losslessHandling: 'always',
+			destinationDir: destination,
+			soundcloudUrl: sourceUrl,
+			audioProcessor: new AudioProcessor(
+				'/definitely/missing/ffmpeg',
+				'ffprobe',
+				'128',
+			),
+			steps: steps(),
+		});
+
+		await expect(failing).rejects.toThrow('Files kept: ');
+		await expect(failing).rejects.toThrow(
+			`${await realpath(join(dir, 'downloads', 'Song.flac'))}`,
+		);
+		expect(await Bun.file(join(dir, 'downloads', 'Song.flac')).bytes()).toEqual(
+			source,
+		);
+		expect(await readdir(destination).catch(() => [])).toEqual([]);
+	});
+
+	test('delivers a retained ALAC source beside its AAC output with the same extension', async () => {
+		await runFfmpeg([
+			'-f',
+			'lavfi',
+			'-i',
+			'sine=frequency=440:duration=0.5',
+			'-c:a',
+			'alac',
+			'-y',
+			join('downloads', 'Song.m4a'),
+		]);
+
+		await finish('Song.m4a', {
+			format: 'm4a-aac',
+			losslessHandling: 'never',
+			bitrateSetting: '256',
+		});
+
+		const files = (await readdir(destination)).sort();
+		expect(files).toHaveLength(2);
+		const codecs = await Promise.all(
+			files.map(
+				async (file) =>
+					audioStream(await probe(join(destination, file)))?.codec_name,
+			),
+		);
+		expect(codecs.sort()).toEqual(['aac', 'alac']);
 	});
 });
 

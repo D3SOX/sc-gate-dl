@@ -150,6 +150,17 @@ SC_GATE_DL_CLI_DIR=~/Music/SoundCloud
 
 Relative paths resolve from the directory you start the tool in. `~` and `~/...` expand to your home folder; `~user` is rejected. Missing folders are created. Existing files are never overwritten: the new file gets a ` (2)` suffix, and the path that was written is printed. When you keep a lossless source, it is moved to the same folder next to the output. Downloads, ZIP extraction and temporary processing stay in `./downloads`.
 
+Set `SC_GATE_DL_CLI_FORMAT` to choose the format of the finished file:
+
+| Value | Result |
+| --- | --- |
+| `mp3` (default) | MP3 at `SC_GATE_DL_BITRATE` kbps |
+| `m4a-aac` | AAC in an M4A at `SC_GATE_DL_BITRATE` kbps |
+| `flac` | FLAC; the bitrate setting is not used |
+| `original` | The downloaded audio, unchanged. No artwork lookup, no metadata prompts, no retagging |
+
+Only verified lossless sources are converted. Lossy and unknown files keep their codec and are never re-encoded. An unknown `SC_GATE_DL_CLI_FORMAT` stops the CLI before a gate opens. ZIP downloads are still extracted first for `original`.
+
 ### Managed account export
 
 To export the followed users, liked tracks, reposted tracks, and playlists from the separate managed SoundCloud account in your `.env`, run:

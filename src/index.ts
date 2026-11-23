@@ -1,8 +1,10 @@
-import { join } from 'node:path';
 import { confirm, input, select } from '@inquirer/prompts';
-import { resolveDownloadedAudio } from './archiveAudio';
 import { AudioProcessor } from './audioProcessor';
-import { cliDirFromEnv, deliverCliOutput } from './cliDestination';
+import {
+	cliDirFromEnv,
+	cliFormatFromEnv,
+	finishCliDownload,
+} from './cliDestination';
 import { loadConfig, saveConfig } from './config';
 import { DirectDownloader } from './directDownload';
 import { DownloadgaterDownloader } from './downloadgater';
@@ -42,6 +44,10 @@ try {
 
 	const config = await loadConfig();
 	const cliDir = cliDirFromEnv();
+	const cliOutput = cliFormatFromEnv(
+		process.env.SC_GATE_DL_CLI_FORMAT,
+		process.env.SC_GATE_DL_BITRATE,
+	);
 
 	const soundcloudArg = process.argv[2];
 	const soundcloudArgValidation = soundcloudArg
@@ -336,53 +342,40 @@ try {
 	}
 
 	if (downloadFilename) {
-		downloadFilename = await resolveDownloadedAudio(downloadFilename);
-		const artworkUrl = soundcloudClient.getArtworkUrl(track);
-		const artwork = await soundcloudClient.fetchArtwork(artworkUrl);
-
-		const audioProcessor = new AudioProcessor(ffmpegBin, ffprobeBin);
-		const metadata = await audioProcessor.promptForMetadata(
-			track,
-			downloadFilename,
+		const audioProcessor = new AudioProcessor(
+			ffmpegBin,
+			ffprobeBin,
+			process.env.SC_GATE_DL_BITRATE,
 		);
-
 		const losslessHandling = config
 			? config.deleteLosslessAfterConversion
 				? 'always'
 				: 'never'
 			: 'prompt';
 
-		const sourcePath = join('./downloads', downloadFilename);
-		const outputPath = await audioProcessor.processAudio(
+		const { delivered, sourceRemoved, sourcePath } = await finishCliDownload({
 			downloadFilename,
-			metadata,
-			artwork,
-			'never',
-			'mp3-320',
-			soundcloudUrl,
-		);
-
-		let removeSource = false;
-		if (outputPath !== sourcePath) {
-			removeSource =
-				losslessHandling === 'always' ||
-				(losslessHandling === 'prompt' &&
-					(await confirm({
-						message: `Do you want to remove the ${isLosslessFormat(downloadFilename) ? 'lossless' : 'source'} file now?`,
-						default: true,
-					})));
-		}
-
-		const delivered = await deliverCliOutput({
-			outputPath,
-			sourcePath,
-			removeSource,
+			output: { format: cliOutput.format },
+			losslessHandling,
 			destinationDir: cliDir,
+			soundcloudUrl,
+			audioProcessor,
+			steps: {
+				fetchArtwork: () =>
+					soundcloudClient.fetchArtwork(soundcloudClient.getArtworkUrl(track)),
+				promptMetadata: (filename) =>
+					audioProcessor.promptForMetadata(track, filename),
+				confirmRemoveSource: (filename) =>
+					confirm({
+						message: `Do you want to remove the ${isLosslessFormat(filename) ? 'lossless' : 'source'} file now?`,
+						default: true,
+					}),
+			},
 		});
 		for (const path of delivered) {
 			console.log(`✓ Saved ${path}`);
 		}
-		if (removeSource) {
+		if (sourceRemoved) {
 			console.log(`✓ Removed ${sourcePath}`);
 		}
 	}
