@@ -1025,6 +1025,48 @@ describe('finishCliDownload with real FFmpeg output', () => {
 		);
 		expect(codecs.sort()).toEqual(['aac', 'alac']);
 	});
+
+	test('keeps an existing embedded MP3 cover when no replacement artwork is supplied', async () => {
+		await runFfmpeg([
+			'-f',
+			'lavfi',
+			'-i',
+			'sine=frequency=440:duration=0.5',
+			'-f',
+			'lavfi',
+			'-i',
+			'color=c=blue:s=16x16',
+			'-map',
+			'0:a',
+			'-map',
+			'1:v',
+			'-c:a',
+			'libmp3lame',
+			'-b:a',
+			'128k',
+			'-c:v',
+			'mjpeg',
+			'-disposition:v',
+			'attached_pic',
+			'-id3v2_version',
+			'3',
+			'-frames:v',
+			'1',
+			'-y',
+			join('downloads', 'Covered.mp3'),
+		]);
+
+		await new AudioProcessor('ffmpeg', 'ffprobe').processAudio(
+			'Covered.mp3',
+			{ title: 'Retitled' },
+			{ buffer: new ArrayBuffer(0), fileName: 'missing.jpg' },
+			'never',
+			'mp3-320',
+		);
+
+		const output = await probe(join(dir, 'downloads', 'Covered.mp3'));
+		expect(output.streams?.some((s) => s.codec_type === 'video')).toBe(true);
+	});
 });
 
 describe('deliverCliOutput with real FFmpeg output', () => {

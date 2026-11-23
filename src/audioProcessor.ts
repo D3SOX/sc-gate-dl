@@ -378,7 +378,13 @@ export class AudioProcessor {
 				sourceUrl;
 			if (isMp3Format(filename) && lossless === false) {
 				if (hasMetadata && retag) {
-					await this.retagMp3(inputPath, artworkPath, metadata, sourceUrl);
+					await this.retagMp3(
+						inputPath,
+						artworkPath,
+						metadata,
+						sourceUrl,
+						artwork.buffer.byteLength > 0,
+					);
 				}
 			} else if (
 				lossless === false &&
@@ -743,6 +749,7 @@ export class AudioProcessor {
 		artworkPath: string,
 		metadata: Metadata,
 		sourceUrl?: string,
+		hasArtwork = true,
 	): Promise<void> {
 		const filename = basename(inputPath);
 		const outputPath = join(
@@ -750,26 +757,24 @@ export class AudioProcessor {
 			filename.replace(/\.mp3$/i, '_retagged.mp3'),
 		);
 
-		const args: string[] = [
-			'-i',
-			inputPath,
-			'-i',
-			artworkPath,
-			'-map',
-			'0:a',
-			'-c:a',
-			'copy',
-			'-id3v2_version',
-			'3',
-			'-map',
-			'1:v',
-			'-c:v',
-			'copy',
-			'-metadata:s:v',
-			'title=Album cover',
-			'-metadata:s:v',
-			'comment=Cover (front)',
-		];
+		const args: string[] = hasArtwork
+			? ['-i', inputPath, '-i', artworkPath, '-map', '0:a']
+			: ['-i', inputPath, '-map', '0:a'];
+		args.push('-c:a', 'copy', '-id3v2_version', '3');
+		if (hasArtwork) {
+			args.push(
+				'-map',
+				'1:v',
+				'-c:v',
+				'copy',
+				'-metadata:s:v',
+				'title=Album cover',
+				'-metadata:s:v',
+				'comment=Cover (front)',
+			);
+		} else {
+			args.push('-map', '0:v?', '-c:v', 'copy');
+		}
 
 		if (metadata.title) {
 			args.push('-metadata', `title=${metadata.title}`);
