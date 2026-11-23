@@ -141,7 +141,10 @@ export async function finishCliDownload(options: {
 	audioProcessor: AudioProcessor;
 	steps: {
 		fetchArtwork: () => Promise<{ buffer: ArrayBuffer; fileName: string }>;
-		promptMetadata: (filename: string) => Promise<Metadata>;
+		promptMetadata: (filename: string) => Promise<{
+			metadata: Metadata;
+			retag: boolean;
+		}>;
 		confirmRemoveSource: (filename: string) => Promise<boolean>;
 	};
 }): Promise<{
@@ -164,7 +167,7 @@ export async function finishCliDownload(options: {
 	}
 
 	const artwork = await steps.fetchArtwork();
-	const metadata = await steps.promptMetadata(filename);
+	const { metadata, retag } = await steps.promptMetadata(filename);
 	let outputPath: string;
 	try {
 		outputPath = await audioProcessor.processAudio(
@@ -174,6 +177,7 @@ export async function finishCliDownload(options: {
 			'never',
 			output.format,
 			options.soundcloudUrl,
+			retag,
 		);
 	} catch (error) {
 		const message = error instanceof Error ? error.message : String(error);

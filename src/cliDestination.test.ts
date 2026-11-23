@@ -688,7 +688,10 @@ describe('finishCliDownload with real FFmpeg output', () => {
 	function steps(
 		overrides: Partial<{
 			fetchArtwork: () => Promise<{ buffer: ArrayBuffer; fileName: string }>;
-			promptMetadata: () => Promise<{ title?: string }>;
+			promptMetadata: () => Promise<{
+				metadata: Record<string, string>;
+				retag: boolean;
+			}>;
 			confirmRemoveSource: (filename: string) => Promise<boolean>;
 		}> = {},
 	) {
@@ -696,7 +699,10 @@ describe('finishCliDownload with real FFmpeg output', () => {
 			fetchArtwork: overrides.fetchArtwork ?? makeArtwork,
 			promptMetadata:
 				overrides.promptMetadata ??
-				(async () => ({ title: 'Song', artist: 'Artist', album: 'Album' })),
+				(async () => ({
+					metadata: { title: 'Song', artist: 'Artist', album: 'Album' },
+					retag: true,
+				})),
 			confirmRemoveSource: overrides.confirmRemoveSource ?? (async () => false),
 		};
 	}
@@ -791,7 +797,7 @@ describe('finishCliDownload with real FFmpeg output', () => {
 				},
 				promptMetadata: async () => {
 					metadataPrompted = true;
-					return {};
+					return { metadata: {}, retag: true };
 				},
 			},
 		});
@@ -855,6 +861,43 @@ describe('finishCliDownload with real FFmpeg output', () => {
 		expect(audioStream(output)?.bit_rate).toBe(source?.bit_rate);
 		expect(output.format?.tags?.comment).toBe(sourceUrl);
 		expect(await readdir(join(dir, 'downloads'))).toEqual([]);
+	});
+
+	test('keeps a declined MP3 retag byte-identical without a source comment', async () => {
+		await runFfmpeg([
+			'-f',
+			'lavfi',
+			'-i',
+			'sine=frequency=440:duration=0.5',
+			'-c:a',
+			'libmp3lame',
+			'-b:a',
+			'128k',
+			'-metadata',
+			'title=Kept',
+			'-y',
+			join('downloads', 'Declined.mp3'),
+		]);
+		const before = await Bun.file(
+			join(dir, 'downloads', 'Declined.mp3'),
+		).bytes();
+
+		await finishCliDownload({
+			downloadFilename: 'Declined.mp3',
+			output: { format: 'mp3' },
+			losslessHandling: 'never',
+			destinationDir: destination,
+			soundcloudUrl: sourceUrl,
+			audioProcessor: new AudioProcessor('ffmpeg', 'ffprobe', '320'),
+			steps: steps({
+				promptMetadata: async () => ({ retag: false, metadata: {} }),
+			}),
+		});
+
+		const delivered = await Bun.file(join(destination, 'Declined.mp3')).bytes();
+		expect(delivered).toEqual(before);
+		const output = await probe(join(destination, 'Declined.mp3'));
+		expect(output.format?.tags?.comment).toBeUndefined();
 	});
 
 	test('retags a lossy M4A without re-encoding and keeps its extension', async () => {

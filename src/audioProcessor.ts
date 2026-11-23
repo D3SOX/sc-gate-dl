@@ -214,7 +214,7 @@ export class AudioProcessor {
 	async promptForMetadata(
 		track: SoundcloudTrack,
 		filename: string,
-	): Promise<Metadata> {
+	): Promise<{ metadata: Metadata; retag: boolean }> {
 		// if file is MP3, show existing metadata and ask if user wants to retag
 		if (isMp3Format(filename)) {
 			const inputPath = join('./downloads', filename);
@@ -237,7 +237,7 @@ export class AudioProcessor {
 					});
 
 					if (!wantToRetag) {
-						return {};
+						return { metadata: {}, retag: false };
 					}
 				}
 			}
@@ -278,10 +278,13 @@ export class AudioProcessor {
 		});
 
 		return {
-			title: correctedTitle.trim(),
-			artist: correctedArtist.trim(),
-			album: correctedAlbum.trim(),
-			genre: correctedGenre.trim(),
+			metadata: {
+				title: correctedTitle.trim(),
+				artist: correctedArtist.trim(),
+				album: correctedAlbum.trim(),
+				genre: correctedGenre.trim(),
+			},
+			retag: true,
 		};
 	}
 

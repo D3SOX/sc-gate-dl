@@ -49,8 +49,11 @@ async function audioCodec(path: string): Promise<string> {
 }
 
 class SilentAudioProcessor extends AudioProcessor {
-	override async promptForMetadata(): Promise<Record<string, string>> {
-		return {};
+	override async promptForMetadata(): Promise<{
+		metadata: Record<string, string>;
+		retag: boolean;
+	}> {
+		return { metadata: {}, retag: true };
 	}
 }
 
