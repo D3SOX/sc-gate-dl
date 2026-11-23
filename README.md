@@ -142,7 +142,13 @@ You can also pass a SoundCloud track URL directly.
 bun start https://soundcloud.com/artist/track
 ```
 
-The final MP3 file will be saved in the `./downloads` directory with proper metadata and artwork embedded.
+The final MP3 file is saved in the `./downloads` directory with proper metadata and artwork embedded. Set `SC_GATE_DL_CLI_DIR` to save it somewhere else:
+
+```bash
+SC_GATE_DL_CLI_DIR=~/Music/SoundCloud
+```
+
+Relative paths resolve from the directory you start the tool in. `~` and `~/...` expand to your home folder; `~user` is rejected. Missing folders are created. Existing files are never overwritten: the new file gets a ` (2)` suffix, and the path that was written is printed. When you keep a lossless source, it is moved to the same folder next to the output. Downloads, ZIP extraction and temporary processing stay in `./downloads`.
 
 ### Managed account export
 

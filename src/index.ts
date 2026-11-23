@@ -1,6 +1,8 @@
+import { join } from 'node:path';
 import { confirm, input, select } from '@inquirer/prompts';
 import { resolveDownloadedAudio } from './archiveAudio';
 import { AudioProcessor } from './audioProcessor';
+import { cliDirFromEnv, deliverCliOutput } from './cliDestination';
 import { loadConfig, saveConfig } from './config';
 import { DirectDownloader } from './directDownload';
 import { DownloadgaterDownloader } from './downloadgater';
@@ -15,6 +17,7 @@ import { StillhypeDownloader } from './stillhype';
 import {
 	getFfmpegBin,
 	getFfprobeBin,
+	isLosslessFormat,
 	resolveGateUrlOrFollow,
 	validateSoundcloudUrl,
 } from './utils';
@@ -38,6 +41,7 @@ try {
 	const HYPEDDIT_EMAIL = process.env.HYPEDDIT_EMAIL;
 
 	const config = await loadConfig();
+	const cliDir = cliDirFromEnv();
 
 	const soundcloudArg = process.argv[2];
 	const soundcloudArgValidation = soundcloudArg
@@ -348,14 +352,39 @@ try {
 				: 'never'
 			: 'prompt';
 
-		await audioProcessor.processAudio(
+		const sourcePath = join('./downloads', downloadFilename);
+		const outputPath = await audioProcessor.processAudio(
 			downloadFilename,
 			metadata,
 			artwork,
-			losslessHandling,
+			'never',
 			'mp3-320',
 			soundcloudUrl,
 		);
+
+		let removeSource = false;
+		if (outputPath !== sourcePath) {
+			removeSource =
+				losslessHandling === 'always' ||
+				(losslessHandling === 'prompt' &&
+					(await confirm({
+						message: `Do you want to remove the ${isLosslessFormat(downloadFilename) ? 'lossless' : 'source'} file now?`,
+						default: true,
+					})));
+		}
+
+		const delivered = await deliverCliOutput({
+			outputPath,
+			sourcePath,
+			removeSource,
+			destinationDir: cliDir,
+		});
+		for (const path of delivered) {
+			console.log(`✓ Saved ${path}`);
+		}
+		if (removeSource) {
+			console.log(`✓ Removed ${sourcePath}`);
+		}
 	}
 } catch (error) {
 	if (error instanceof Error && error.name === 'ExitPromptError') {
