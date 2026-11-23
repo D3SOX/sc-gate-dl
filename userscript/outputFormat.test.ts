@@ -69,3 +69,26 @@ describe('userscript output format selection', () => {
 		expect(getOutputFormat()).toBe('mp3-320');
 	});
 });
+
+describe('userscript format options are selectable', () => {
+	const dialogStart = source.indexOf('\tfunction openFormatDialog()');
+	const dialogEnd = source.indexOf(
+		'\n\tfunction openBrowserModeDialog()',
+		dialogStart,
+	);
+	const panelStart = source.indexOf('\t\t\tconst format = getOutputFormat();');
+	const panelEnd = source.indexOf(
+		'</select>',
+		source.indexOf('class="sc-gate-dl-format"', panelStart),
+	);
+	const dialogSource = source.slice(dialogStart, dialogEnd);
+	const panelSource = source.slice(panelStart, panelEnd);
+
+	test.each(['mp3', 'm4a-aac'])('the format dialog offers %s', (format) => {
+		expect(dialogSource).toContain(`value="${format}"`);
+	});
+
+	test.each(['mp3', 'm4a-aac'])('the panel selector offers %s', (format) => {
+		expect(panelSource).toContain(`value="${format}"`);
+	});
+});

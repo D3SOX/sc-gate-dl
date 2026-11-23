@@ -1657,6 +1657,14 @@
 			<div class="sc-gate-dl-format-card" role="dialog" aria-label="Output format">
 				<div class="sc-gate-dl-format-title">Output format</div>
 				<label class="sc-gate-dl-format-option">
+					<input type="radio" name="sc-gate-dl-fmt" value="mp3"${current === 'mp3' ? ' checked' : ''}/>
+					<span>MP3</span>
+				</label>
+				<label class="sc-gate-dl-format-option">
+					<input type="radio" name="sc-gate-dl-fmt" value="m4a-aac"${current === 'm4a-aac' ? ' checked' : ''}/>
+					<span>M4A/AAC</span>
+				</label>
+				<label class="sc-gate-dl-format-option">
 					<input type="radio" name="sc-gate-dl-fmt" value="mp3-320"${current === 'mp3-320' ? ' checked' : ''}/>
 					<span>MP3 320kbps</span>
 				</label>
@@ -2952,6 +2960,8 @@ a[${STORE_SERVICE_ATTR}] > button::after {
 						</label>
 						<label>
 							<select class="sc-gate-dl-format" aria-label="Output format" title="Output format">
+								<option value="mp3"${format === 'mp3' ? ' selected' : ''}>MP3</option>
+								<option value="m4a-aac"${format === 'm4a-aac' ? ' selected' : ''}>M4A/AAC</option>
 								<option value="mp3-320"${format === 'mp3-320' ? ' selected' : ''}>MP3 320</option>
 								<option value="flac"${format === 'flac' ? ' selected' : ''}>FLAC</option>
 								<option value="original"${format === 'original' ? ' selected' : ''}>Original</option>
