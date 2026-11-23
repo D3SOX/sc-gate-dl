@@ -86,8 +86,9 @@ const DROPLOUD_STEP_PANE = '.dtr-card-pane-step';
 const DROPLOUD_OPEN_LINK_BUTTONS = '.dtr-open-grid .ds-btn';
 const DROPLOUD_CONFIRM_BUTTON = 'button.dtr-confirm-btn';
 const DROPLOUD_SC_COMMENT_INPUT = '#dltg-sc-comment, #dtr-sc-comment-input';
-const DROPLOUD_UNLOCKED_TITLE = '.dtr-card-title';
-const DROPLOUD_DOWNLOAD_BUTTON = '.ds-free-dl.dtr-card-cta';
+const DROPLOUD_UNLOCKED_TITLE = '.dtr-card-title, .ds-gate-pane .ds-gate-t';
+const DROPLOUD_DOWNLOAD_BUTTON =
+	'.ds-free-dl.dtr-card-cta, .ds-gate-pane button';
 const DROPLOUD_EMAIL_WRAP = '.dtr-email-wrap, .ds-gate-pane:has(#dltg-email)';
 const DROPLOUD_EMAIL_INPUT =
 	'.dtr-email-wrap input[type="email"], .ds-gate-pane #dltg-email';

@@ -260,19 +260,16 @@ export class DroploudDownloader {
 	private async detectPaneKind(page: Page): Promise<PaneKind> {
 		return page.evaluate(
 			(selectors) => {
-				const title =
-					document.querySelector(selectors.title)?.textContent || '';
-				if (/drop unlocked/i.test(title)) {
-					return 'unlocked';
-				}
-
 				const downloadButtons = Array.from(
 					document.querySelectorAll<HTMLButtonElement>(selectors.downloadBtn),
 				);
-				const hasDownload = downloadButtons.some((btn) =>
-					/^(\s*)download(\s*)$/i.test((btn.textContent || '').trim()),
+				const hasDownload = downloadButtons.some(
+					(btn) =>
+						/^(\s*)download(\s*)$/i.test((btn.textContent || '').trim()) &&
+						!btn.disabled &&
+						btn.getAttribute('aria-disabled') !== 'true',
 				);
-				if (hasDownload || /your download is ready/i.test(title)) {
+				if (hasDownload) {
 					return 'unlocked';
 				}
 
@@ -333,7 +330,6 @@ export class DroploudDownloader {
 				return 'unknown';
 			},
 			{
-				title: Selectors.DROPLOUD_UNLOCKED_TITLE,
 				downloadBtn: Selectors.DROPLOUD_DOWNLOAD_BUTTON,
 				commentInput: Selectors.DROPLOUD_SC_COMMENT_INPUT,
 				openLinks: Selectors.DROPLOUD_OPEN_LINK_BUTTONS,
@@ -2269,7 +2265,12 @@ export class DroploudDownloader {
 				const download = buttons.find((btn) =>
 					/^(\s*)download(\s*)$/i.test((btn.textContent || '').trim()),
 				);
-				if (!download || download.disabled) return false;
+				if (
+					!download ||
+					download.disabled ||
+					download.getAttribute('aria-disabled') === 'true'
+				)
+					return false;
 				download.click();
 				return true;
 			}, Selectors.DROPLOUD_DOWNLOAD_BUTTON);

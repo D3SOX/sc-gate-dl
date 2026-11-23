@@ -289,6 +289,65 @@ test('recognizes a repost verification step before any social cards', async () =
 	).toBe('repost_verify');
 });
 
+test('recognizes the redesigned unlocked download button', async () => {
+	await page.setContent(`
+		<section class="ds-gate-card"><div class="ds-gate-pane">
+			<h2 class="ds-gate-t">Download unlocked</h2>
+			<button class="ds-btn ds-h40 ds-solid ds-gate-wide">Download</button>
+		</div></section>
+	`);
+	const downloader = new DroploudDownloader({
+		comment: 'test',
+		browserMode: 'headless',
+	});
+	const gate = downloader as unknown as {
+		detectPaneKind(page: Page): Promise<string>;
+	};
+	expect(await gate.detectPaneKind(page)).toBe('unlocked');
+});
+
+test('does not classify a disabled download button as unlocked', async () => {
+	await page.setContent(`
+		<div class="ds-gate-pane">
+			<h2 class="ds-gate-t">Processing download</h2>
+			<button disabled>Download</button>
+		</div>
+	`);
+	const downloader = new DroploudDownloader({
+		comment: 'test',
+		browserMode: 'headless',
+	});
+	const gate = downloader as unknown as {
+		detectPaneKind(page: Page): Promise<string>;
+	};
+	expect(await gate.detectPaneKind(page)).toBe('unknown');
+});
+
+test('starts the browser download from the redesigned unlocked button', async () => {
+	await page.setContent(`
+		<section class="ds-gate-card"><div class="ds-gate-pane">
+			<h2 class="ds-gate-t">Download unlocked</h2>
+			<button class="ds-btn ds-h40 ds-solid ds-gate-wide">Download</button>
+		</div></section>
+		<script>
+			document.querySelector('button').onclick = () => {
+				const file = new Blob(['test audio'], { type: 'audio/mpeg' });
+				const link = document.createElement('a');
+				link.href = URL.createObjectURL(file);
+				link.download = 'fixture.mp3';
+				link.click();
+			};
+		</script>
+	`);
+	const downloader = new DroploudDownloader({
+		comment: 'test',
+		browserMode: 'headless',
+	});
+	await (
+		downloader as unknown as { handleDownload(page: Page): Promise<void> }
+	).handleDownload(page);
+}, 15_000);
+
 test('repost verification fails visibly when the gate stays on the same step', async () => {
 	await page.setContent(
 		'<div class="ds-gate-pane"><h2 class="ds-gate-t">Repost the track</h2><button>Verify</button></div>',
