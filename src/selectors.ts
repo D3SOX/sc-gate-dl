@@ -80,20 +80,31 @@ const SP_AUTH_ACCEPT_BUTTON = '[data-testid="auth-accept"]';
 // Download gate
 const DW_DOWNLOAD_BUTTON = '#gateDownloadButton';
 
-// Droploud gate
-const DROPLOUD_FREE_DOWNLOAD_BUTTON = '.ds-free-dl.dtr-card-cta';
-const DROPLOUD_STEP_PANE = '.dtr-card-pane-step';
-const DROPLOUD_OPEN_LINK_BUTTONS = '.dtr-open-grid .ds-btn';
-const DROPLOUD_CONFIRM_BUTTON = 'button.dtr-confirm-btn';
-const DROPLOUD_SC_COMMENT_INPUT = '#dtr-sc-comment-input';
-const DROPLOUD_UNLOCKED_TITLE = '.dtr-card-title';
-const DROPLOUD_DOWNLOAD_BUTTON = '.ds-free-dl.dtr-card-cta';
-const DROPLOUD_EMAIL_WRAP = '.dtr-email-wrap';
-const DROPLOUD_EMAIL_INPUT = '.dtr-email-wrap input[type="email"]';
-const DROPLOUD_EMAIL_CONSENT = '.dtr-email-wrap input[type="checkbox"]';
-const DROPLOUD_DLFOLLOW_WRAP = '.dtr-dlfollow-wrap';
-const DROPLOUD_DLFOLLOW_SKIP = 'button.dtr-dlfollow-skip';
-const DROPLOUD_DISCLAIMER_CHECK = '.dtr-social-wrap input[type="checkbox"]';
+// Droploud gate (v2 "dltg" layout; droploud_follow/disclaimer still render legacy dtr-* panes)
+const DROPLOUD_COOKIE_BUTTONS = '.dw-cookie-card button';
+const DROPLOUD_STAGE = '.dltg-stage';
+const DROPLOUD_STAGE_VISIBLE = '.dltg-stage.is-vis';
+const DROPLOUD_PANE_TITLE = '.ds-gate-card .ds-gate-t';
+const DROPLOUD_PANE_BUTTONS = '.ds-gate-card button';
+const DROPLOUD_PRIMARY_BUTTON = '.ds-gate-card button.ds-gate-wide';
+const DROPLOUD_EMAIL_INPUT = '.ds-gate-card #dltg-email';
+const DROPLOUD_EMAIL_CONSENT =
+	'.ds-gate-card input[type="checkbox"][name="consent"]';
+const DROPLOUD_EMAIL_SUBMIT = '.ds-gate-card form button[type="submit"]';
+const DROPLOUD_EMAIL_ERROR = '#dltg-email-e';
+const DROPLOUD_HONOR_ROW = '.ds-gate-card .ds-honor-list > .ds-honor-row';
+const DROPLOUD_HONOR_OPEN = '.ds-honor-act button.ds-btn';
+const DROPLOUD_HONOR_DONE = '.ds-gate-card button[data-honor-go]';
+const DROPLOUD_SC_CONNECT = '.ds-gate-card .dltg-sc-start button.ds-sc-btn';
+const DROPLOUD_SC_COMMENT_INPUT = '.ds-gate-card #dltg-sc-comment';
+const DROPLOUD_SC_ROWS = '.ds-gate-card .dltg-sc-rows';
+const DROPLOUD_DLFOLLOW_WRAP = '.ds-gate-card .dtr-dlfollow-wrap';
+const DROPLOUD_DLFOLLOW_SKIP = '.ds-gate-card button.dtr-dlfollow-skip';
+// Logged-in SoundCloud track pages render the track UI in this same-origin iframe.
+const DROPLOUD_SC_WEBI_IFRAME =
+	'iframe.webiIframe, iframe#__WEBI_IFRAME_PRELOADED__';
+const DROPLOUD_DISCLAIMER_CHECK =
+	'.ds-gate-card .dtr-social-wrap input[type="checkbox"]';
 
 // GateRush gate
 const GATERUSH_COOKIE_REJECT = '#cookieModal:not([hidden]) #cookieRejectAll';
@@ -162,18 +173,25 @@ export default {
 	SP_LOGIN_BUTTON,
 	SP_AUTH_ACCEPT_BUTTON,
 	DW_DOWNLOAD_BUTTON,
-	DROPLOUD_FREE_DOWNLOAD_BUTTON,
-	DROPLOUD_STEP_PANE,
-	DROPLOUD_OPEN_LINK_BUTTONS,
-	DROPLOUD_CONFIRM_BUTTON,
-	DROPLOUD_SC_COMMENT_INPUT,
-	DROPLOUD_UNLOCKED_TITLE,
-	DROPLOUD_DOWNLOAD_BUTTON,
-	DROPLOUD_EMAIL_WRAP,
+	DROPLOUD_COOKIE_BUTTONS,
+	DROPLOUD_STAGE,
+	DROPLOUD_STAGE_VISIBLE,
+	DROPLOUD_PANE_TITLE,
+	DROPLOUD_PANE_BUTTONS,
+	DROPLOUD_PRIMARY_BUTTON,
 	DROPLOUD_EMAIL_INPUT,
 	DROPLOUD_EMAIL_CONSENT,
+	DROPLOUD_EMAIL_SUBMIT,
+	DROPLOUD_EMAIL_ERROR,
+	DROPLOUD_HONOR_ROW,
+	DROPLOUD_HONOR_OPEN,
+	DROPLOUD_HONOR_DONE,
+	DROPLOUD_SC_CONNECT,
+	DROPLOUD_SC_COMMENT_INPUT,
+	DROPLOUD_SC_ROWS,
 	DROPLOUD_DLFOLLOW_WRAP,
 	DROPLOUD_DLFOLLOW_SKIP,
+	DROPLOUD_SC_WEBI_IFRAME,
 	DROPLOUD_DISCLAIMER_CHECK,
 	GATERUSH_COOKIE_REJECT,
 	GATERUSH_STEP,

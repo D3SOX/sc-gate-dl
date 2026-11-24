@@ -18,6 +18,8 @@ type BandcampTrack = { title: string; title_link: string };
 type BandcampData = {
 	current?: { minimum_price?: number };
 	trackinfo?: BandcampTrack[];
+	/** Set when Bandcamp offers the free download without its email form. */
+	freeDownloadPage?: string | null;
 };
 
 /** Keep version names: LATINA (perreo) and LATINA (guaracha) are different tracks. */
@@ -68,9 +70,14 @@ export class BandcampGateDownloader {
 	private readonly stream = new YtDlpDownloader('Bandcamp');
 	private closed = false;
 
+	/**
+	 * `interactive` means someone can fill in Bandcamp's email form in the
+	 * browser. Without that, such tracks fall back to the stream.
+	 */
 	constructor(
 		private readonly page: Page,
 		private readonly progress?: ProgressCallback,
+		private readonly interactive = true,
 	) {
 		this.direct.setProgressCallback((stage, message, percent, extra) =>
 			this.progress?.(stage, message, percent, {
@@ -137,44 +144,66 @@ export class BandcampGateDownloader {
 			};
 		}
 
-		const buy = await this.page.evaluate(() => {
-			const button = Array.from(
-				document.querySelectorAll<HTMLButtonElement>('.buyItem button'),
-			).find(
-				(button) =>
-					button.checkVisibility() &&
-					/^buy digital track$/i.test(button.textContent?.trim() ?? ''),
+		if (data.freeDownloadPage) {
+			await this.page.goto(data.freeDownloadPage, {
+				waitUntil: 'domcontentloaded',
+			});
+		} else if (!this.interactive) {
+			if (options.originalOnly)
+				throw new Error(
+					'Bandcamp asks for an email address for this free download. Run the job in a visible headed browser to fill in its form.',
+				);
+			console.log(
+				'Bandcamp needs its email form for the original and nobody can fill it in; downloading the stream instead.',
 			);
-			button?.click();
-			return !!button;
-		});
-		if (!buy)
-			throw new Error('Bandcamp free track download button was not found.');
-		await this.page.waitForSelector('#userPrice', { visible: true });
-		await this.page.evaluate(() => {
-			const price = document.querySelector<HTMLInputElement>('#userPrice');
-			if (!price?.checkVisibility())
-				throw new Error('Bandcamp price input missing.');
-			price.value = '0';
-			price.dispatchEvent(new Event('input', { bubbles: true }));
-			price.dispatchEvent(new Event('change', { bubbles: true }));
-		});
-		await this.page.waitForSelector('.download-panel-free-download-link', {
-			visible: true,
-		});
-		await this.page.click('.download-panel-free-download-link');
+			return {
+				filename: await this.stream.downloadAudio(url),
+				method: 'bandcamp-stream',
+			};
+		} else {
+			const buy = await this.page.evaluate(() => {
+				const button = Array.from(
+					document.querySelectorAll<HTMLButtonElement>('.buyItem button'),
+				).find(
+					(button) =>
+						button.checkVisibility() &&
+						/^buy digital track$/i.test(button.textContent?.trim() ?? ''),
+				);
+				button?.click();
+				return !!button;
+			});
+			if (!buy)
+				throw new Error('Bandcamp free track download button was not found.');
+			await this.page.waitForSelector('#userPrice', { visible: true });
+			await this.page.evaluate(() => {
+				const price = document.querySelector<HTMLInputElement>('#userPrice');
+				if (!price?.checkVisibility())
+					throw new Error('Bandcamp price input missing.');
+				price.value = '0';
+				price.dispatchEvent(new Event('input', { bubbles: true }));
+				price.dispatchEvent(new Event('change', { bubbles: true }));
+			});
+			await this.page.waitForSelector('.download-panel-free-download-link', {
+				visible: true,
+			});
+			await this.page.click('.download-panel-free-download-link');
 
-		await this.page.bringToFront();
-		this.progress?.(
-			'handling_gates',
-			'Complete Bandcamp’s free download form in the remote browser, then continue to the download page. MP3 320 will be selected.',
-			80,
-			{ currentGate: 'bandcamp', browserActive: true, requiresAttention: true },
-		);
-		await this.page.waitForFunction(
-			() => location.pathname.startsWith('/download'),
-			{ timeout: 180_000 },
-		);
+			await this.page.bringToFront();
+			this.progress?.(
+				'handling_gates',
+				'Complete Bandcamp’s free download form in the remote browser, then continue to the download page. MP3 320 will be selected.',
+				80,
+				{
+					currentGate: 'bandcamp',
+					browserActive: true,
+					requiresAttention: true,
+				},
+			);
+			await this.page.waitForFunction(
+				() => location.pathname.startsWith('/download'),
+				{ timeout: 180_000 },
+			);
+		}
 		if (this.closed) throw new Error('Download cancelled');
 		this.progress?.('handling_gates', 'Selecting Bandcamp MP3 320...', 82, {
 			currentGate: 'bandcamp',
@@ -238,6 +267,7 @@ export class BandcampGateDownloader {
 				.TralbumData;
 			return {
 				current: { minimum_price: data?.current?.minimum_price },
+				freeDownloadPage: data?.freeDownloadPage ?? null,
 				trackinfo: data?.trackinfo?.map(({ title, title_link }) => ({
 					title,
 					title_link,

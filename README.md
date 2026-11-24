@@ -86,9 +86,10 @@ Install the [EditThisCookie (fork)](https://chromewebstore.google.com/detail/edi
 Used for SoundCloud API/session automation and for **yt-dlp** when downloading a SoundCloud track directly (so downloadable tracks can fetch the original upload, not only the 128k stream).
 
 You can omit `soundcloud-cookies.json` and use **Initialize logins** in the Web
-UI instead. Sign in through the visible or remote browser; after SoundCloud's
-Library page opens, sc-gate-dl saves the browser cookies to
-`soundcloud-cookies.json` with owner-only permissions. A blank file and `[]` are
+UI instead. It opens SoundCloud's sign-in page in the visible or remote
+browser, even when an older session exists, because gates authorize through
+a sign-in session of their own. Once you are signed in, sc-gate-dl saves the
+browser cookies to `soundcloud-cookies.json` with owner-only permissions. A blank file and `[]` are
 also treated as an empty cookie set. The exported cookies are reused by browser
 gate jobs and yt-dlp.
 

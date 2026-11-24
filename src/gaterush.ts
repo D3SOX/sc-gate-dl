@@ -1,16 +1,46 @@
 import { Presets, SingleBar } from 'cli-progress';
-import type { Browser, Page } from 'puppeteer';
+import type { Browser, HTTPRequest, HTTPResponse, Page } from 'puppeteer';
+import {
+	BandcampGateDownloader,
+	type BandcampGateOptions,
+} from './bandcampGate';
 import { CancellableBrowserLaunch } from './browserLaunch';
+import { DirectDownloader } from './directDownload';
 import type { ProgressCallback } from './hypeddit';
 import Selectors from './selectors';
 import { visitSocialPopup } from './socialPopup';
 import {
 	isSoundcloudLoginPage,
 	saveSoundcloudLogin,
+	signInToSoundcloud,
 	waitForSoundcloudLogin,
 } from './soundcloudLogin';
 import type { HypedditConfig } from './types';
-import { loadCookies, timeout } from './utils';
+import {
+	isBandcampUrl,
+	loadCookies,
+	resolveGateUrlOrFollow,
+	timeout,
+} from './utils';
+
+/** Spotify follow step: honor-system open + confirm, like Instagram. */
+const GATERUSH_SPOTIFY_BUTTON =
+	'#stepStage .list-btn.svc-spotify, #stepStage .btn-spotify[data-open]';
+
+const FOLLOW_STEPS = {
+	instagram: {
+		label: 'Instagram',
+		gate: 'ig',
+		percent: 60,
+		buttons: Selectors.GATERUSH_IG_ACCOUNT_BUTTON,
+	},
+	spotify: {
+		label: 'Spotify',
+		gate: 'sp',
+		percent: 70,
+		buttons: GATERUSH_SPOTIFY_BUTTON,
+	},
+} as const;
 
 export class GaterushDownloader {
 	private browser!: Browser;
@@ -19,6 +49,11 @@ export class GaterushDownloader {
 	private config: HypedditConfig;
 	private progressCallback: ProgressCallback | null = null;
 	private cancelPendingDownloadWait: (() => void) | null = null;
+	private destinationDownloader:
+		| BandcampGateDownloader
+		| DirectDownloader
+		| null = null;
+	private downloadOptions: BandcampGateOptions = {};
 
 	constructor(config: HypedditConfig) {
 		this.config = config;
@@ -46,40 +81,14 @@ export class GaterushDownloader {
 	}
 
 	async prepareLogins() {
-		const soundCloudPage = await this.browser.newPage();
-		soundCloudPage.setViewport({ width: 1920, height: 1080 });
-		await soundCloudPage.goto('https://soundcloud.com/messages');
-
-		try {
-			await soundCloudPage.waitForSelector(
-				Selectors.SOUNDCLOUD_CAPTCHA_CONTAINER,
-				{ timeout: 5_000 },
-			);
-			console.log(
-				'GateRush: SoundCloud captcha present during login warm-up; solve it in the browser window if needed.',
-			);
-			await soundCloudPage.waitForSelector(
-				Selectors.SOUNDCLOUD_CAPTCHA_CONTAINER,
-				{ hidden: true, timeout: 120_000 },
-			);
-		} catch {
-			// no captcha
-		}
-
-		await soundCloudPage.waitForSelector(Selectors.SOUNDCLOUD_LIBRARY_LINK, {
-			timeout: 30_000,
-		});
-		await Promise.all([
-			soundCloudPage.click(Selectors.SOUNDCLOUD_LIBRARY_LINK),
-			soundCloudPage.waitForNavigation({ waitUntil: 'domcontentloaded' }),
-		]);
-		await soundCloudPage.waitForFunction(() =>
-			window.location.href.includes('/you/library'),
-		);
-		await soundCloudPage.close();
+		await signInToSoundcloud(this.browser);
 	}
 
-	async downloadAudio(url: string): Promise<string | null> {
+	async downloadAudio(
+		url: string,
+		options: BandcampGateOptions = {},
+	): Promise<string | null> {
+		this.downloadOptions = options;
 		console.log('Navigating to GateRush gate...');
 		this.emitProgress('handling_gates', 'Navigating to GateRush gate...', 25);
 
@@ -100,22 +109,28 @@ export class GaterushDownloader {
 						if (download && !download.disabled) return 'download';
 						const step = document.querySelector(selectors.GATERUSH_STEP);
 						if (!step || step.classList.contains('leaving')) return false;
+						const skip = step.querySelector('[data-skip]');
+						if (skip instanceof HTMLElement && skip.checkVisibility())
+							return 'skip';
 						if (step.querySelector(selectors.GATERUSH_EMAIL_INPUT))
 							return 'email';
 						if (document.querySelector(selectors.GATERUSH_SC_CONNECT))
 							return 'soundcloud';
 						if (document.querySelector(selectors.GATERUSH_IG_ACCOUNT_BUTTON))
 							return 'instagram';
+						if (document.querySelector(selectors.spotify)) return 'spotify';
 						return 'unsupported';
 					},
 					{ timeout: 60_000 },
-					Selectors,
+					{ ...Selectors, spotify: GATERUSH_SPOTIFY_BUTTON },
 				);
 				const step = await next.jsonValue();
 				await next.dispose();
 				if (step === 'download') break;
 
-				if (step === 'email') {
+				if (step === 'skip') {
+					await this.skipStep(page);
+				} else if (step === 'email') {
 					this.emitProgress(
 						'handling_gates',
 						'Submitting GateRush email...',
@@ -133,14 +148,15 @@ export class GaterushDownloader {
 						{ currentGate: 'sc' },
 					);
 					await this.handleSoundcloudConnect(page);
-				} else if (step === 'instagram') {
+				} else if (step === 'instagram' || step === 'spotify') {
+					const { label, gate, percent } = FOLLOW_STEPS[step];
 					this.emitProgress(
 						'handling_gates',
-						'Handling GateRush Instagram follows...',
-						60,
-						{ currentGate: 'ig' },
+						`Handling GateRush ${label} follows...`,
+						percent,
+						{ currentGate: gate },
 					);
-					await this.handleInstagram(page);
+					await this.handleFollowStep(page, step);
 				} else {
 					const title = await page.$eval(
 						`${Selectors.GATERUSH_STEP} .step-title`,
@@ -160,7 +176,27 @@ export class GaterushDownloader {
 	async close() {
 		this.cancelPendingDownloadWait?.();
 		this.cancelPendingDownloadWait = null;
+		await this.destinationDownloader?.close();
 		await this.browserLaunch.close();
+	}
+
+	/** The gate owner allowed skipping this step; the server does not require it. */
+	private async skipStep(page: Page) {
+		const step = await page.$(Selectors.GATERUSH_STEP);
+		if (!step) return;
+		try {
+			await page.$eval(Selectors.GATERUSH_SKIP_BUTTON, (button) =>
+				(button as HTMLButtonElement).click(),
+			);
+			await page.waitForFunction(
+				(element) =>
+					!element.isConnected || element.classList.contains('leaving'),
+				{ timeout: 10_000 },
+				step,
+			);
+		} finally {
+			await step.dispose();
+		}
 	}
 
 	private async dismissCookieBanner(page: Page) {
@@ -491,84 +527,89 @@ export class GaterushDownloader {
 		return 'miss';
 	}
 
-	private async handleInstagram(page: Page) {
+	/**
+	 * Instagram and Spotify steps open each profile in a popup, then enable a
+	 * confirm control after a short delay; GateRush cannot verify either follow.
+	 */
+	private async handleFollowStep(page: Page, kind: keyof typeof FOLLOW_STEPS) {
+		const {
+			label,
+			gate,
+			percent,
+			buttons: buttonSelector,
+		} = FOLLOW_STEPS[kind];
 		const step = await page.$(Selectors.GATERUSH_STEP);
-		if (!step) throw new Error('GateRush Instagram step was not found.');
+		if (!step) throw new Error(`GateRush ${label} step was not found.`);
 		try {
-			const skip = await page.$(Selectors.GATERUSH_SKIP_BUTTON);
-			if (skip && (await skip.isVisible())) {
-				await skip.click();
-			} else {
-				const buttons = await page.$$(Selectors.GATERUSH_IG_ACCOUNT_BUTTON);
-				let needsAttention = false;
-				try {
-					for (const button of buttons) {
-						const pending = await button.evaluate(
-							(element) =>
-								element instanceof HTMLButtonElement &&
-								element.checkVisibility() &&
-								!element.disabled &&
-								!element.classList.contains('done'),
-						);
-						if (!pending) continue;
-						if (!(await visitSocialPopup(page, button))) {
-							needsAttention = true;
-							break;
-						}
-						try {
-							await page.waitForFunction(
-								(element) => {
-									if (!element.isConnected) return true;
-									const confirm = element.matches('[data-open]')
-										? element
-												.closest('.follow-pair')
-												?.querySelector('[data-confirm]')
-										: element;
-									if (confirm?.classList.contains('done')) return true;
-									if (
-										!(confirm instanceof HTMLButtonElement) ||
-										confirm.disabled ||
-										!confirm.checkVisibility() ||
-										!/^(done|i followed)$/i.test(
-											confirm.textContent?.trim() ?? '',
-										)
-									)
-										return false;
-									confirm.click();
-									return true;
-								},
-								{ timeout: 10_000 },
-								button,
-							);
-						} catch {
-							needsAttention = true;
-							break; // Additional interaction is needed; surface the browser below.
-						}
+			const buttons = await page.$$(buttonSelector);
+			let needsAttention = false;
+			try {
+				for (const button of buttons) {
+					const pending = await button.evaluate(
+						(element) =>
+							element instanceof HTMLButtonElement &&
+							element.checkVisibility() &&
+							!element.disabled &&
+							!element.classList.contains('done'),
+					);
+					if (!pending) continue;
+					if (!(await visitSocialPopup(page, button))) {
+						needsAttention = true;
+						break;
 					}
-				} finally {
-					await Promise.all(buttons.map((button) => button.dispose()));
-				}
-				if (!needsAttention) {
 					try {
 						await page.waitForFunction(
-							(element) =>
-								!element.isConnected || element.classList.contains('leaving'),
-							{ timeout: 5_000 },
-							step,
+							(element) => {
+								if (!element.isConnected) return true;
+								const confirm = element.matches('[data-open]')
+									? element
+											.closest('.follow-pair')
+											?.querySelector('[data-confirm]')
+									: element;
+								if (confirm?.classList.contains('done')) return true;
+								if (
+									!(confirm instanceof HTMLButtonElement) ||
+									confirm.disabled ||
+									!confirm.checkVisibility() ||
+									!/^(done|i followed)$/i.test(
+										confirm.textContent?.trim() ?? '',
+									)
+								)
+									return false;
+								confirm.click();
+								return true;
+							},
+							{ timeout: 10_000 },
+							button,
 						);
 					} catch {
 						needsAttention = true;
+						break; // Additional interaction is needed; surface the browser below.
 					}
 				}
-				if (needsAttention) {
-					await page.bringToFront();
-					this.emitProgress(
-						'handling_gates',
-						'Complete the Instagram follows and confirmations in the remote browser to continue.',
-						60,
-						{ currentGate: 'ig', browserActive: true, requiresAttention: true },
+			} finally {
+				await Promise.all(buttons.map((button) => button.dispose()));
+			}
+			if (!needsAttention) {
+				try {
+					await page.waitForFunction(
+						(element) =>
+							!element.isConnected || element.classList.contains('leaving'),
+						{ timeout: 5_000 },
+						step,
 					);
+				} catch {
+					needsAttention = true;
 				}
+			}
+			if (needsAttention) {
+				await page.bringToFront();
+				this.emitProgress(
+					'handling_gates',
+					`Complete the ${label} follows and confirmations in the remote browser to continue.`,
+					percent,
+					{ currentGate: gate, browserActive: true, requiresAttention: true },
+				);
 			}
 			// Wait for this step, even when the next step reuses the same selectors.
 			await page.waitForFunction(
@@ -579,17 +620,17 @@ export class GaterushDownloader {
 			);
 			this.emitProgress(
 				'handling_gates',
-				'GateRush Instagram step completed.',
-				65,
+				`GateRush ${label} step completed.`,
+				percent + 5,
 				{
-					currentGate: 'ig',
+					currentGate: gate,
 					browserActive: true,
 					requiresAttention: false,
 				},
 			);
 		} catch (cause) {
 			throw new Error(
-				'Complete the Instagram step in the remote browser, then retry the gate download.',
+				`Complete the ${label} step in the remote browser, then retry the gate download.`,
 				{ cause },
 			);
 		} finally {
@@ -599,6 +640,19 @@ export class GaterushDownloader {
 
 	private async handleDownload(page: Page) {
 		this.emitProgress('handling_gates', 'Preparing GateRush download...', 75);
+
+		const reward = await page.evaluate(() => {
+			const gate = (
+				window as { __GATE__?: { slug?: string; rewardIsLink?: boolean } }
+			).__GATE__;
+			return { slug: gate?.slug ?? '', isLink: !!gate?.rewardIsLink };
+		});
+		if (reward.isLink) {
+			const destination = await this.readRewardLink(page, reward.slug);
+			console.log(`GateRush link reward: ${destination}`);
+			await this.downloadRewardLink(page, destination);
+			return;
+		}
 
 		const client = await page.createCDPSession();
 		await client.send('Browser.setDownloadBehavior', {
@@ -706,6 +760,120 @@ export class GaterushDownloader {
 			clearTimeout(retryTimer);
 			pBar.stop();
 			await client.detach().catch(() => {});
+		}
+	}
+
+	/**
+	 * GateRush answers `/download/:slug` for a link reward with a redirect to
+	 * the artist's link (the Open button sends it to a new tab). Navigate the
+	 * gate tab there and stop at the redirect so only its target is read.
+	 */
+	private async readRewardLink(page: Page, slug: string): Promise<string> {
+		if (!slug) throw new Error('GateRush link reward is missing its gate id.');
+		const downloadUrl = new URL(
+			`/download/${encodeURIComponent(slug)}`,
+			page.url(),
+		).href;
+		let resolveLink!: (url: string) => void;
+		let rejectLink!: (error: Error) => void;
+		const link = new Promise<string>((resolve, reject) => {
+			resolveLink = resolve;
+			rejectLink = reject;
+		});
+		const onRequest = (request: HTTPRequest) => {
+			if (request.isInterceptResolutionHandled()) return;
+			if (request.redirectChain()[0]?.url() === downloadUrl) {
+				resolveLink(request.url());
+				void request.abort('aborted').catch(() => {});
+				return;
+			}
+			void request.continue().catch(() => {});
+		};
+		const onResponse = (response: HTTPResponse) => {
+			if (response.url() !== downloadUrl) return;
+			const status = response.status();
+			if (status < 300 || status >= 400)
+				rejectLink(
+					new Error(
+						`GateRush did not unlock the link reward (HTTP ${status}). Review the gate in the remote browser.`,
+					),
+				);
+		};
+		const timer = setTimeout(
+			() => rejectLink(new Error('GateRush did not open the link reward.')),
+			30_000,
+		);
+		await page.setRequestInterception(true);
+		page.on('request', onRequest);
+		page.on('response', onResponse);
+		try {
+			await page.evaluate((href) => window.location.assign(href), downloadUrl);
+			const destination = await link;
+			if (new URL(destination).hostname === new URL(downloadUrl).hostname) {
+				throw new Error(
+					'GateRush sent the link reward back to the gate. Review the gate in the remote browser.',
+				);
+			}
+			return destination;
+		} finally {
+			clearTimeout(timer);
+			page.off('request', onRequest);
+			page.off('response', onResponse);
+			await page.setRequestInterception(false).catch(() => {});
+		}
+	}
+
+	/** Hand the unlocked link to the Bandcamp or direct-file downloader. */
+	private async downloadRewardLink(page: Page, destination: string) {
+		let target = destination;
+		let recognized = isBandcampUrl(target);
+		if (!recognized) {
+			const resolved = await resolveGateUrlOrFollow(target);
+			if (
+				resolved?.provider === 'bandcamp' ||
+				resolved?.provider === 'direct'
+			) {
+				target = resolved.url;
+				recognized = true;
+			} else if (resolved) {
+				throw new Error(
+					`GateRush unlocked a ${resolved.provider} link: ${resolved.url}. Download it from that URL instead.`,
+				);
+			}
+		}
+
+		if (isBandcampUrl(target)) {
+			const bandcamp = new BandcampGateDownloader(
+				page,
+				this.progressCallback ?? undefined,
+				this.config.browserMode === 'headed',
+			);
+			this.destinationDownloader = bandcamp;
+			const result = await bandcamp.downloadAudio(target, this.downloadOptions);
+			this.downloadFilename = result.filename;
+			return;
+		}
+
+		await page.goto('about:blank');
+		const direct = new DirectDownloader();
+		this.destinationDownloader = direct;
+		if (this.progressCallback)
+			direct.setProgressCallback((stage, message, percent, extra) =>
+				this.progressCallback?.(stage, message, percent, {
+					...extra,
+					browserless: false,
+				}),
+			);
+		try {
+			this.downloadFilename = await direct.downloadAudio(target);
+		} catch (cause) {
+			if (recognized || (cause instanceof Error && cause.name === 'AbortError'))
+				throw cause;
+			// e.g. a Laylo drop, which texts the file to fans who RSVP by phone.
+			throw new Error(
+				`GateRush unlocked ${destination}, which is neither a direct download nor a supported source. Open it in a browser to get the file.`,
+				{ cause },
+			);
 		}
 	}
 }

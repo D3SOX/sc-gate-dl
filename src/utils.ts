@@ -541,21 +541,20 @@ export function findBandcampHomepageInHtml(html: string): string | null {
 function matchDirectDownloadUrl(
 	value: string,
 ): { url: string; provider: GateProvider } | null {
-	const httpMatch = value.match(/https?:\/\/[^\s<>"')\]]+/i)?.[0];
-	if (!httpMatch) return null;
-	const trimmed = trimExtractedUrl(httpMatch);
-	try {
-		const url = new URL(trimmed);
-		// Dropbox and Drive serve HTTPS; arbitrary file hosts keep their scheme.
-		if (isKnownDirectDownloadHost(url.hostname)) url.protocol = 'https:';
-		if (!urlLooksLikeDirectDownload(url)) return null;
-		return {
-			url: normalizeDirectDownloadParsedUrl(url),
-			provider: 'direct',
-		};
-	} catch {
-		return null;
+	// Descriptions often list social links before the download link.
+	for (const [httpMatch] of value.matchAll(/https?:\/\/[^\s<>"')\]]+/gi)) {
+		try {
+			const url = new URL(trimExtractedUrl(httpMatch));
+			// Dropbox and Drive serve HTTPS; arbitrary file hosts keep their scheme.
+			if (isKnownDirectDownloadHost(url.hostname)) url.protocol = 'https:';
+			if (!urlLooksLikeDirectDownload(url)) continue;
+			return {
+				url: normalizeDirectDownloadParsedUrl(url),
+				provider: 'direct',
+			};
+		} catch {}
 	}
+	return null;
 }
 
 /**

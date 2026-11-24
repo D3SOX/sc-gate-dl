@@ -8,13 +8,152 @@ import {
 	CancellableBrowserLaunch,
 } from './browserLaunch';
 import { DirectDownloader } from './directDownload';
+import { urlLooksLikeDirectDownload } from './directLinkRules';
 import type { ProgressCallback } from './hypeddit';
 import Selectors from './selectors';
-import { waitForSoundcloudLogin } from './soundcloudLogin';
+import { signInToSoundcloud, waitForSoundcloudLogin } from './soundcloudLogin';
+import {
+	completeSpotifyAuthorization,
+	injectSpotifyCookies,
+	missingSpotifyCookiesError,
+} from './spotifyAuth';
 import type { HypedditConfig } from './types';
 import { isBandcampUrl, loadCookies, timeout, trimExtractedUrl } from './utils';
 
 const SC_AUTHORIZE_RE = /secure\.soundcloud\.com\/authorize/i;
+const SPOTIFY_FOLLOW_LINK = 'a[href*="/auth/spotify-follow/"]';
+
+export type PumpyoursoundStep = {
+	kind: string;
+	done: boolean;
+	/** `id` of the step's `<li>`, e.g. `facebook_follow` or `facebook_share`. */
+	slot: string | null;
+};
+
+/**
+ * Honor-system confirm links, keyed by step kind (or `<li>` id for the two
+ * Facebook steps). The page always contains the share confirm link inside
+ * `#facebook-share-modal`, even when the gate has no Facebook share step.
+ */
+const MARK_COMPLETE_SELECTORS = new Map([
+	['instagram', '[data-href*="/auth/instagram-follow/"]'],
+	['youtube', 'a[href*="/auth/youtube-follow/"]'],
+	// Like is either an `/auth/facebook-like/` AJAX link on the button or the
+	// "Continue & Close" link of the like modal.
+	[
+		'facebook_follow',
+		'#facebook_follow [data-href*="/auth/facebook-like/"], a[href*="do=markFacebookStepAsComplete"]:not([href*="type=share"])',
+	],
+	[
+		'facebook_share',
+		'a[href*="do=markFacebookStepAsComplete"][href*="type=share"]',
+	],
+]);
+
+export function pumpyoursoundMarkCompleteSelector(
+	step: PumpyoursoundStep,
+): string | null {
+	const key = step.kind === 'facebook' ? step.slot : step.kind;
+	return (key && MARK_COMPLETE_SELECTORS.get(key)) || null;
+}
+
+const FILE_HOST_UA =
+	'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36';
+const GOOGLE_DOC_RE = /^https:\/\/docs\.google\.com\/document\/d\/([\w-]+)/i;
+const MEDIAFIRE_FILE_RE =
+	/^https?:\/\/(?:www\.)?mediafire\.com\/(?:file|download)\//i;
+
+/** First link in a Google Doc's text that points at a file or file host. */
+export function findFileLinkInText(text: string): string | null {
+	for (const match of text.matchAll(/https?:\/\/[^\s<>"']+/g)) {
+		const link = trimExtractedUrl(match[0]);
+		try {
+			if (
+				MEDIAFIRE_FILE_RE.test(link) ||
+				isBandcampUrl(link) ||
+				urlLooksLikeDirectDownload(new URL(link))
+			) {
+				return link;
+			}
+		} catch {
+			// not a URL
+		}
+	}
+	return null;
+}
+
+/** The direct `downloadNNNN.mediafire.com` URL behind a MediaFire file page. */
+export function findMediafireDirectUrl(html: string): string | null {
+	return (
+		html.match(/https:\/\/download\d*\.mediafire\.com\/[^\s"'<>]+/)?.[0] ?? null
+	);
+}
+
+async function fetchText(url: string): Promise<string> {
+	const response = await fetch(url, {
+		headers: { 'User-Agent': FILE_HOST_UA },
+		signal: AbortSignal.timeout(30_000),
+	});
+	if (!response.ok) {
+		throw new Error(`Fetching ${url} failed (${response.status})`);
+	}
+	return response.text();
+}
+
+/**
+ * Some fangates link a Google Doc (with the real link inside) or a MediaFire
+ * page instead of the file. Follows those to something the downloaders take.
+ */
+export async function resolvePumpyoursoundFileLink(
+	url: string,
+	read: (url: string) => Promise<string> = fetchText,
+): Promise<string> {
+	let current = url;
+	for (let hop = 0; hop < 3; hop++) {
+		const docId = current.match(GOOGLE_DOC_RE)?.[1];
+		if (docId) {
+			const text = await read(
+				`https://docs.google.com/document/d/${docId}/export?format=txt`,
+			);
+			const link = findFileLinkInText(text);
+			if (!link) {
+				throw new Error(
+					`PumpYourSound download link is a Google Doc without a file link: ${current}`,
+				);
+			}
+			console.log(`PumpYourSound: Google Doc links ${link}`);
+			current = link;
+			continue;
+		}
+		if (MEDIAFIRE_FILE_RE.test(current)) {
+			const direct = findMediafireDirectUrl(await read(current));
+			if (!direct) {
+				throw new Error(
+					`PumpYourSound download link is a MediaFire page without a download link: ${current}`,
+				);
+			}
+			return direct;
+		}
+		return current;
+	}
+	return current;
+}
+
+function isFacebookUrl(url: string): boolean {
+	try {
+		return /(^|\.)facebook\.com$/i.test(new URL(url).hostname);
+	} catch {
+		return false;
+	}
+}
+
+function isSpotifyAccountsUrl(url: string): boolean {
+	try {
+		return new URL(url).hostname === 'accounts.spotify.com';
+	} catch {
+		return false;
+	}
+}
 
 /**
  * PumpYourSound fangate downloader.
@@ -22,10 +161,16 @@ const SC_AUTHORIZE_RE = /secure\.soundcloud\.com\/authorize/i;
  * Flow (from live repro):
  * 1. Complete SC Follow via SC.connect popup → Allow →
  *    `/?do=mySoundcloud*` → `/auth/soundcloud-events/`
- * 2. Mark Instagram/YouTube/Facebook via `/auth/...` AJAX (popup can be closed)
- * 3. Optional SC comment via `/auth/sc-comment/`
- * 4. POST free-download form → 303 `/fangate/download/{id}?downloadLink=...`
- * 5. Fetch `downloadLink` / `data-redirect-link` via DirectDownloader
+ * 2. Mark Instagram/YouTube/Facebook like/share via their honor-system
+ *    confirm links (`/auth/...` or `?do=markFacebookStepAsComplete`)
+ * 3. Spotify Follow via same-tab Spotify OAuth (`/auth/spotify-follow/`)
+ * 4. Optional SC comment via `/auth/sc-comment/`
+ * 5. POST free-download form → 303 `/fangate/download/{id}?downloadLink=...`
+ * 6. Fetch `downloadLink` / `data-redirect-link` (Google Doc and MediaFire
+ *    links resolved first) via DirectDownloader, or hand Bandcamp links to
+ *    BandcampGateDownloader
+ *
+ * Every step waits for the page's late-bound handlers (`#preloader` hidden).
  */
 export class PumpyoursoundDownloader {
 	private browser!: Browser;
@@ -36,6 +181,7 @@ export class PumpyoursoundDownloader {
 	private downloadFilename: string | null = null;
 	private config: HypedditConfig;
 	private progressCallback: ProgressCallback | null = null;
+	private spotifyCookiesLoaded = false;
 
 	constructor(config: HypedditConfig) {
 		this.config = config;
@@ -65,40 +211,11 @@ export class PumpyoursoundDownloader {
 		const browserContext = this.browser.defaultBrowserContext();
 		const soundCloudCookies = await loadCookies('soundcloud-cookies.json');
 		await browserContext.setCookie(...soundCloudCookies);
+		this.spotifyCookiesLoaded = await injectSpotifyCookies(this.browser);
 	}
 
 	async prepareLogins() {
-		const soundCloudPage = await this.browser.newPage();
-		await soundCloudPage.setViewport({ width: 1920, height: 1080 });
-		await soundCloudPage.goto('https://soundcloud.com/messages');
-
-		try {
-			await soundCloudPage.waitForSelector(
-				Selectors.SOUNDCLOUD_CAPTCHA_CONTAINER,
-				{ timeout: 5_000 },
-			);
-			console.log(
-				'PumpYourSound: SoundCloud captcha present during login warm-up; solve it in the browser window if needed.',
-			);
-			await soundCloudPage.waitForSelector(
-				Selectors.SOUNDCLOUD_CAPTCHA_CONTAINER,
-				{ hidden: true, timeout: 120_000 },
-			);
-		} catch {
-			// no captcha
-		}
-
-		await soundCloudPage.waitForSelector(Selectors.SOUNDCLOUD_LIBRARY_LINK, {
-			timeout: 30_000,
-		});
-		await Promise.all([
-			soundCloudPage.click(Selectors.SOUNDCLOUD_LIBRARY_LINK),
-			soundCloudPage.waitForNavigation({ waitUntil: 'domcontentloaded' }),
-		]);
-		await soundCloudPage.waitForFunction(() =>
-			window.location.href.includes('/you/library'),
-		);
-		await soundCloudPage.close();
+		await signInToSoundcloud(this.browser);
 	}
 
 	async downloadAudio(
@@ -126,11 +243,17 @@ export class PumpyoursoundDownloader {
 			await this.dismissOverlays(page);
 			await this.completeGateSteps(page);
 
-			const fileUrl = await this.submitAndReadDownloadLink(page);
+			const fileUrl = await resolvePumpyoursoundFileLink(
+				await this.submitAndReadDownloadLink(page),
+			);
 			if (isBandcampUrl(fileUrl)) {
+				// The download page redirects to the link itself after a countdown,
+				// which would race the Bandcamp navigation.
+				await page.goto('about:blank').catch(() => {});
 				const bandcamp = new BandcampGateDownloader(
 					page,
 					this.progressCallback ?? undefined,
+					this.config.browserMode === 'headed',
 				);
 				this.bandcampDownloader = bandcamp;
 				const result = await bandcamp.downloadAudio(fileUrl, options);
@@ -190,6 +313,7 @@ export class PumpyoursoundDownloader {
 		const deadline = Date.now() + 240_000;
 		let loops = 0;
 		while (Date.now() < deadline && loops++ < 14) {
+			await this.waitForGateReady(page);
 			const status = await this.readStepStatus(page);
 			console.log('PumpYourSound steps:', status);
 
@@ -199,9 +323,10 @@ export class PumpyoursoundDownloader {
 
 			const needSc = status.some((s) => s.kind === 'soundcloud' && !s.done);
 			const needComment = status.some((s) => s.kind === 'comment' && !s.done);
+			const needSpotify = status.some((s) => s.kind === 'spotify' && !s.done);
 			// Twitter is listed on some fangates but has no mark-complete control yet —
 			// leave it out so it surfaces as unsupported instead of a false social miss.
-			const needSocial = status.some(
+			const socialIndex = status.findIndex(
 				(s) =>
 					(s.kind === 'instagram' ||
 						s.kind === 'facebook' ||
@@ -220,20 +345,26 @@ export class PumpyoursoundDownloader {
 				continue;
 			}
 
-			if (needSocial) {
+			const social = status[socialIndex];
+			if (social) {
 				this.emitProgress(
 					'handling_gates',
 					'Handling PumpYourSound social step...',
 					55,
 					{ currentGate: 'social' },
 				);
-				const clicked = await this.handleSocialMarkComplete(page);
-				if (!clicked) {
-					throw new Error(
-						'PumpYourSound social step is incomplete but no mark-complete control was found.',
-					);
-				}
-				await timeout(1_200);
+				await this.handleSocialMarkComplete(page, social, socialIndex);
+				continue;
+			}
+
+			if (needSpotify) {
+				this.emitProgress(
+					'handling_gates',
+					'Following on Spotify for PumpYourSound...',
+					60,
+					{ currentGate: 'sp' },
+				);
+				await this.handleSpotifyFollow(page);
 				continue;
 			}
 
@@ -268,17 +399,80 @@ export class PumpyoursoundDownloader {
 		}
 	}
 
-	private async readStepStatus(
-		page: Page,
-	): Promise<{ kind: string; done: boolean }[]> {
+	/**
+	 * The site binds its click handlers (social AJAX, SC.connect, nette) late,
+	 * via require.js, and hides `#preloader` once that's done and again after
+	 * every nette request. Clicks before that only open the social popup.
+	 */
+	private async waitForGateReady(page: Page) {
+		await page
+			.waitForFunction(
+				() => {
+					const preloader = document.querySelector('#preloader');
+					return (
+						document.readyState === 'complete' &&
+						!!document.querySelector('.fangateStep') &&
+						(!preloader || getComputedStyle(preloader).display === 'none')
+					);
+				},
+				{ timeout: 30_000 },
+			)
+			.catch(() => {
+				console.log(
+					'PumpYourSound: page scripts not ready after 30s, continuing',
+				);
+			});
+	}
+
+	private async readStepStatus(page: Page): Promise<PumpyoursoundStep[]> {
 		return page.evaluate(() => {
 			return Array.from(document.querySelectorAll('.fangateStep')).map((el) => {
 				const cls = el.className;
 				const kind =
 					cls.match(/fangateStep--([a-z]+)/i)?.[1]?.toLowerCase() || 'unknown';
-				return { kind, done: el.classList.contains('done') };
+				return {
+					kind,
+					done: el.classList.contains('done'),
+					slot: el.closest('li')?.id || null,
+				};
 			});
 		});
+	}
+
+	/**
+	 * `/auth/spotify-follow/` redirects the gate tab to Spotify's consent page;
+	 * the callback follows the artist and redirects back to the fangate.
+	 */
+	private async handleSpotifyFollow(page: Page) {
+		if (!this.spotifyCookiesLoaded) {
+			throw missingSpotifyCookiesError('PumpYourSound');
+		}
+		const href = await page
+			.$eval(SPOTIFY_FOLLOW_LINK, (a) => (a as HTMLAnchorElement).href)
+			.catch(() => null);
+		if (!href) {
+			throw new Error('PumpYourSound Spotify Follow link not found.');
+		}
+		await page.goto(href, { waitUntil: 'domcontentloaded', timeout: 60_000 });
+		if (isSpotifyAccountsUrl(page.url())) {
+			const result = await completeSpotifyAuthorization(this.browser);
+			console.log(`PumpYourSound: Spotify authorization ${result}`);
+		}
+		await page.waitForFunction(
+			() =>
+				/(^|\.)pumpyoursound\.com$/.test(location.hostname) &&
+				!location.pathname.startsWith('/auth/') &&
+				!!document.querySelector('.fangateStep'),
+			{ timeout: 60_000 },
+		);
+		const done = await page.$('.fangateStep--spotify.done');
+		if (!done) {
+			throw new Error(
+				`PumpYourSound Spotify step is still incomplete after Spotify authorization (back on ${page.url()}).`,
+			);
+		}
+		await done.dispose();
+		console.log('PumpYourSound: spotify step marked done');
 	}
 
 	private async handleSoundcloudFollow(page: Page) {
@@ -384,7 +578,8 @@ export class PumpyoursoundDownloader {
 				if (!SC_AUTHORIZE_RE.test(candidate.url())) continue;
 				const needsLogin = await candidate
 					.evaluate(async () => {
-						const loginRe = /sign in or create an account/i;
+						const loginRe =
+							/sign in or create an account|create an account or sign in/i;
 						if (!loginRe.test(document.body?.innerText || '')) return false;
 						await new Promise((r) => setTimeout(r, 1_500));
 						const text = document.body?.innerText || '';
@@ -478,55 +673,71 @@ export class PumpyoursoundDownloader {
 		return 'miss';
 	}
 
-	private async handleSocialMarkComplete(page: Page): Promise<boolean> {
-		const href = await page.evaluate(() => {
-			const candidates: { sel: string; step: string }[] = [
-				{ sel: '#instagram_follow a[data-href]', step: 'instagram' },
-				{ sel: '.instagram_follow_box[data-href]', step: 'instagram' },
-				{ sel: '#facebook_follow a[data-href]', step: 'facebook' },
-				{ sel: 'a[href*="youtube-follow"]', step: 'youtube' },
-				{
-					sel: 'a[href*="markFacebookStepAsComplete"]',
-					step: 'facebook',
-				},
-			];
-			for (const { sel, step } of candidates) {
-				const el = document.querySelector<HTMLElement>(sel);
-				if (!el) continue;
-				const stepEl =
-					document.querySelector(`.fangateStep--${step}:not(.done)`) ||
-					el.closest('li')?.querySelector('.fangateStep:not(.done)');
-				if (!stepEl && step !== 'facebook') {
-					// Skip always-present modal links when that step isn't on the fangate.
-					if (
-						step === 'youtube' &&
-						!document.querySelector('.fangateStep--youtube:not(.done)')
-					) {
-						continue;
-					}
-				}
-				if (
-					document.querySelector(`.fangateStep--${step}.done`) &&
-					step !== 'facebook'
-				) {
-					continue;
-				}
-				if (stepEl?.classList.contains('done')) continue;
-				el.click();
-				return el.getAttribute('data-href') || el.getAttribute('href');
-			}
-			return null;
-		});
-		if (!href) return false;
+	/**
+	 * Clicks the step's own confirm link (the site's jQuery/nette handlers send
+	 * the AJAX request) and waits until that step shows `.done`.
+	 */
+	private async handleSocialMarkComplete(
+		page: Page,
+		step: PumpyoursoundStep,
+		index: number,
+	) {
+		const label = step.slot ?? step.kind;
+		const selector = pumpyoursoundMarkCompleteSelector(step);
+		const href = selector
+			? await page.evaluate((sel) => {
+					const el = document.querySelector<HTMLElement>(sel);
+					if (!el) return null;
+					el.click();
+					return el.getAttribute('data-href') || el.getAttribute('href');
+				}, selector)
+			: null;
+		if (!href) {
+			throw new Error(
+				`PumpYourSound ${label} step is incomplete but no mark-complete control was found.`,
+			);
+		}
 		console.log('PumpYourSound social mark-complete:', href);
-		await timeout(2_000);
+		await this.waitForStepDone(page, index, label);
 		for (const p of await this.browser.pages(true)) {
 			if (p === page || p.isClosed()) continue;
 			if (/instagram\.com|youtube\.com|facebook\.com/i.test(p.url())) {
 				await p.close().catch(() => {});
 			}
 		}
-		return true;
+	}
+
+	/** Waits for step `index` to show `.done`, reloading once if it does not. */
+	private async waitForStepDone(page: Page, index: number, label: string) {
+		for (const reload of [false, true]) {
+			if (reload) {
+				await page
+					.reload({ waitUntil: 'domcontentloaded', timeout: 60_000 })
+					.catch(() => {});
+			}
+			const deadline = Date.now() + 10_000;
+			while (Date.now() < deadline) {
+				if (isFacebookUrl(page.url())) {
+					throw new Error(
+						`PumpYourSound ${label} step redirected to Facebook sign-in, which is not supported.`,
+					);
+				}
+				const done = await page
+					.evaluate(
+						(i) =>
+							document
+								.querySelectorAll('.fangateStep')
+								[i]?.classList.contains('done') ?? false,
+						index,
+					)
+					.catch(() => false);
+				if (done) return;
+				await timeout(400);
+			}
+		}
+		throw new Error(
+			`PumpYourSound ${label} step did not complete after clicking its mark-complete control.`,
+		);
 	}
 
 	private async submitAndReadDownloadLink(page: Page): Promise<string> {

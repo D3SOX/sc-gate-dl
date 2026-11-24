@@ -145,7 +145,7 @@ describe('resolveGateProviderUrl', () => {
 				'https://drive.google.com/file/d/abcdefghijklmnopqrstuvwx/view?usp=sharing',
 			),
 		).toEqual({
-			url: 'https://drive.google.com/uc?export=download&id=abcdefghijklmnopqrstuvwx',
+			url: 'https://drive.usercontent.google.com/download?id=abcdefghijklmnopqrstuvwx&export=download&confirm=t',
 			provider: 'direct',
 		});
 	});
@@ -156,7 +156,7 @@ describe('resolveGateProviderUrl', () => {
 				'https://drive.google.com/file/d/abcdefghijklmnopqrstuvwx/view?usp=sharing&resourcekey=abc-123',
 			),
 		).toEqual({
-			url: 'https://drive.google.com/uc?export=download&id=abcdefghijklmnopqrstuvwx&resourcekey=abc-123',
+			url: 'https://drive.usercontent.google.com/download?id=abcdefghijklmnopqrstuvwx&export=download&confirm=t&resourcekey=abc-123',
 			provider: 'direct',
 		});
 	});
@@ -280,6 +280,20 @@ describe('extractGateUrl', () => {
 			url: 'https://www.mypresskit.info/gate/dj-felge-rihanna-umbrella-dj-felge-x-kluge-edit',
 			provider: 'mypresskit',
 			type: 'purchase_url',
+		});
+	});
+
+	test('finds a Drive link listed after social links in the description', () => {
+		expect(
+			extractGateUrl({
+				purchase_url: null,
+				description:
+					'Telegram: https://t.me/artist\nDownload: https://drive.google.com/file/d/12P4JEdeKZ97NjRDpN7DuTeuJp95KL4y9/view?usp=sharing',
+			} as unknown as Parameters<typeof extractGateUrl>[0]),
+		).toEqual({
+			url: 'https://drive.usercontent.google.com/download?id=12P4JEdeKZ97NjRDpN7DuTeuJp95KL4y9&export=download&confirm=t',
+			provider: 'direct',
+			type: 'description',
 		});
 	});
 });

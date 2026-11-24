@@ -1,12 +1,20 @@
 import { afterAll, beforeAll, describe, expect, spyOn, test } from 'bun:test';
 import type { Browser, Page } from 'puppeteer';
+import { BandcampGateDownloader } from './bandcampGate';
 import { launchAppBrowser } from './browserLaunch';
+import { DirectDownloader } from './directDownload';
 import { GaterushDownloader } from './gaterush';
 import Selectors from './selectors';
+import * as utils from './utils';
 
 // Replays the redesigned gate's DOM and delayed step replacement without
 // submitting personal data or performing social actions against live services.
-const fixture = (steps: string[], rejectEmail = false) => `
+const fixture = (
+	steps: string[],
+	rejectEmail = false,
+	rewardIsLink = false,
+) => `
+<script>window.__GATE__ = { slug: 'fixture', rewardIsLink: ${rewardIsLink} };</script>
 <div id="cookieModal" hidden>
   <input id="cookieAdToggle" type="checkbox" checked>
   <button id="cookieRejectAll">Reject all</button>
@@ -42,12 +50,14 @@ const fixture = (steps: string[], rejectEmail = false) => `
       'instagram-visit': '<button class="list-btn svc-instagram">Open Instagram</button><button class="list-btn svc-instagram">Open Instagram</button>',
       'instagram-confirm': '<button class="list-btn svc-instagram">Follow</button><button class="list-btn svc-instagram">Follow</button>',
       'instagram-pair': '<div class="follow-pair"><button class="btn-instagram" data-open>Open Instagram</button><button data-confirm disabled>I followed</button></div>',
+      spotify: '<div class="follow-pair"><button class="btn btn-spotify" data-open>Open Spotify</button><button class="btn btn-glass" data-confirm disabled>I followed</button></div>',
+      'spotify-skip': '<div class="follow-pair"><button class="btn btn-spotify" data-open>Open Spotify</button><button class="btn btn-glass" data-confirm disabled>I followed</button></div>',
       'instagram-empty': '<button class="btn-instagram" data-open>Open Instagram</button><button data-confirm disabled>I followed</button>',
       'instagram-required': '<button class="btn-instagram" data-open>Open Instagram</button><button data-confirm disabled>I followed</button>'
     }[step];
-    const optionalInstagram = step === 'instagram' || step === 'instagram-empty';
-    stage.innerHTML = '<div class="step"><h2 class="step-title">' + step + '</h2><div data-body>' + content + '</div>' + (optionalInstagram ? '<button data-skip>Skip this step</button>' : '') + '</div>';
-    if (optionalInstagram) stage.querySelector('[data-skip]').onclick = advance;
+    const optional = step === 'instagram' || step === 'instagram-empty' || step === 'spotify-skip';
+    stage.innerHTML = '<div class="step"><h2 class="step-title">' + step + '</h2><div data-body>' + content + '</div>' + (optional ? '<button type="button" class="skip" data-skip>Skip this step</button>' : '') + '</div>';
+    if (optional) stage.querySelector('[data-skip]').onclick = advance;
     if (step === 'instagram-confirm') {
       for (const button of stage.querySelectorAll('.list-btn')) {
         button.onclick = () => {
@@ -62,14 +72,17 @@ const fixture = (steps: string[], rejectEmail = false) => `
           };
         };
       }
-    } else if (step === 'instagram-pair') {
+    } else if (step === 'instagram-pair' || step === 'spotify' || step === 'spotify-skip') {
       const open = stage.querySelector('[data-open]');
       const confirm = stage.querySelector('[data-confirm]');
       open.onclick = () => {
-        window.open('about:blank#instagram-visit');
+        document.body.dataset.opened = (document.body.dataset.opened || '') + step + ' ';
+        window.open(step === 'instagram-pair' ? 'about:blank#instagram-visit' : 'about:blank#spotify');
         open.disabled = true;
         open.classList.add('done');
-        setTimeout(() => { confirm.disabled = false; }, 100);
+        // GateRush swaps the label for a spinner until its confirm delay ends.
+        confirm.innerHTML = '<span class="confirm-spin"></span>';
+        setTimeout(() => { confirm.disabled = false; confirm.textContent = 'I followed'; }, 100);
       };
       confirm.onclick = () => {
         if (confirm.disabled) throw new Error('Confirmed before publisher wait');
@@ -174,6 +187,7 @@ describe('GateRush redesigned gate', () => {
 			comment: 'Test comment',
 		});
 		let downloaded = false;
+		let opened = '';
 		let alerted = false;
 		downloader.setProgressCallback((_stage, _message, _percent, extra) => {
 			if (!extra?.requiresAttention) return;
@@ -200,6 +214,7 @@ describe('GateRush redesigned gate', () => {
 				downloaded = await gate.evaluate(
 					() => document.body.dataset.downloaded === 'true',
 				);
+				opened = await gate.evaluate(() => document.body.dataset.opened ?? '');
 			},
 		});
 		try {
@@ -213,6 +228,7 @@ describe('GateRush redesigned gate', () => {
 					pages.every((p) => !p.url().includes('#instagram-visit')),
 				).toBeTrue();
 			}
+			return opened;
 		} finally {
 			await context.close();
 		}
@@ -248,5 +264,131 @@ describe('GateRush redesigned gate', () => {
 
 	test('uses the delayed Done control after visiting each Instagram account', async () => {
 		await runGate(['instagram-confirm', 'instagram-pair']);
+	}, 15_000);
+
+	test('opens and confirms the Spotify follow after the other steps', async () => {
+		const opened = await runGate([
+			'email',
+			'soundcloud',
+			'instagram-pair',
+			'spotify',
+		]);
+		expect(opened).toBe('instagram-pair spotify ');
+	}, 15_000);
+
+	test('skips a Spotify step the gate allows to skip', async () => {
+		expect(await runGate(['spotify-skip'])).toBe('');
+	}, 15_000);
+
+	async function runLinkReward(
+		location: string,
+		status = 302,
+		directDownload: () => Promise<string> = async () => 'direct.wav',
+	) {
+		const context = await browser.createBrowserContext();
+		const page = await context.newPage();
+		const requested: string[] = [];
+		await page.setRequestInterception(true);
+		page.on('request', (request) => {
+			// Redirect targets are left to the downloader, which must not load them.
+			if (request.redirectChain().length) return;
+			const url = new URL(request.url());
+			requested.push(url.pathname);
+			if (url.pathname === '/download/fixture') {
+				void request
+					.respond({
+						status,
+						headers: status === 302 ? { location } : {},
+						contentType: 'text/html',
+						body: 'Locked',
+					})
+					.catch(() => {});
+				return;
+			}
+			// The downloader turns interception off again once it read the link.
+			void request
+				.respond({
+					status: 200,
+					contentType: 'text/html',
+					body: fixture([], false, true),
+				})
+				.catch(() => {});
+		});
+		const downloader = new GaterushDownloader({
+			browserMode: 'headless',
+			comment: '',
+		});
+		Object.assign(downloader, {
+			browser: { newPage: async () => page, pages: () => context.pages() },
+		});
+		const bandcamp = spyOn(
+			BandcampGateDownloader.prototype,
+			'downloadAudio',
+		).mockResolvedValue({ filename: 'bandcamp.wav', method: 'gate' });
+		const direct = spyOn(
+			DirectDownloader.prototype,
+			'downloadAudio',
+		).mockImplementation(directDownload);
+		// Unknown pages are resolved over the network; keep this test offline.
+		const resolve = spyOn(utils, 'resolveGateUrlOrFollow').mockImplementation(
+			async (url) => utils.resolveGateProviderUrl(url),
+		);
+		try {
+			const filename = await downloader.downloadAudio(
+				'https://gaterush.me/fixture',
+				{ matchTitle: 'Fixture' },
+			);
+			return {
+				filename,
+				requested,
+				bandcamp: bandcamp.mock.calls,
+				direct: direct.mock.calls,
+			};
+		} finally {
+			bandcamp.mockRestore();
+			direct.mockRestore();
+			resolve.mockRestore();
+			await context.close();
+		}
+	}
+
+	test('hands a Bandcamp link reward to the Bandcamp downloader', async () => {
+		const result = await runLinkReward('https://artist.bandcamp.com/track/x');
+		expect(result.filename).toBe('bandcamp.wav');
+		expect(result.bandcamp).toEqual([
+			['https://artist.bandcamp.com/track/x', { matchTitle: 'Fixture' }],
+		]);
+		expect(result.direct).toEqual([]);
+		expect(result.requested.filter((p) => p === '/download/fixture')).toEqual([
+			'/download/fixture',
+		]);
+	}, 15_000);
+
+	test('downloads a direct link reward over HTTP', async () => {
+		const result = await runLinkReward(
+			'https://www.dropbox.com/s/abc/file.wav?dl=0',
+		);
+		expect(result.filename).toBe('direct.wav');
+		expect(result.direct).toEqual([
+			['https://www.dropbox.com/s/abc/file.wav?dl=1'],
+		]);
+		expect(result.bandcamp).toEqual([]);
+	}, 15_000);
+
+	test('names an unlocked page that is no supported source', async () => {
+		// KtzRIn unlocks a Laylo drop, which only texts the file to fans.
+		await expect(
+			runLinkReward('https://laylo.com/remk/LWywAQ', 302, async () => {
+				throw new Error('Direct download returned HTML instead of a file');
+			}),
+		).rejects.toThrow(
+			'GateRush unlocked https://laylo.com/remk/LWywAQ, which is neither a direct download nor a supported source.',
+		);
+	}, 15_000);
+
+	test('reports a link reward the gate did not unlock', async () => {
+		await expect(runLinkReward('', 403)).rejects.toThrow(
+			'GateRush did not unlock the link reward (HTTP 403)',
+		);
 	}, 15_000);
 });

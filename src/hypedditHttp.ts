@@ -13,7 +13,25 @@ import { sanitizeFilenamePart } from './utils';
 // can be satisfied without a browser. Steps that are actually verified server-side
 // (e.g. Spotify `sp`, which needs a real OAuth authorization) are intentionally
 // excluded so the caller falls back to the browser flow.
-const BROWSERLESS_STEPS = new Set(['email', 'sc', 'ig', 'tk', 'yt', 'fb']);
+const BROWSERLESS_STEPS = new Set([
+	'email',
+	'sc',
+	'ig',
+	'tk',
+	'yt',
+	'fb',
+	'dn',
+]);
+// Gates whose step markup decides whether they are client-side: X/Twitter is
+// either per-account visit buttons (`#twitter_status`, completed by
+// `#skipper_tw_next`) or an OAuth connect (`#login_to_tw`) that the page never
+// declares as skipped.
+const BROWSERLESS_WHEN_MARKUP: Record<string, RegExp> = {
+	tw: /\bid\s*=\s*["']twitter_status["']/,
+};
+// The page's "Skip donation" link only advances the slide; it adds nothing to
+// skip_gate_steps[], so neither do we.
+const UNDECLARED_STEPS = new Set(['dn']);
 
 /** Config errors must not fall through as "try the browser" — browser fails the same way. */
 export class BrowserlessConfigError extends Error {
@@ -31,6 +49,7 @@ interface GateData {
 	csrfToken: string;
 	gvt: string;
 	uid: string;
+	/** Flat `#nwSteps`, sent back as `steps` like the page does. */
 	steps: string[];
 	wrndk: string;
 	fanGateId: string;
@@ -88,6 +107,64 @@ function parseGateData(html: string): GateData | null {
 	};
 }
 
+/**
+ * Either-or step groups, e.g. `[['email'], ['sc', 'yt', 'sp'], ['ig']]`.
+ * `#nwSteps` is flat; `#steps_select` holds the groups the visible steps list
+ * shows, after the download slide: `dw,email,sc|yt|sp,ig`. The page's
+ * jumpGate() indexes it by the slide's data-group.
+ */
+export function parseStepGroups(html: string): string[][] {
+	const groups = (matchHiddenInput(html, 'steps_select') ?? '')
+		.split(',')
+		.filter((group) => group && group !== 'dw')
+		.map((group) => group.split('|').filter(Boolean));
+	if (groups.length) return groups;
+	return (matchHiddenInput(html, 'nwSteps') ?? '')
+		.split(',')
+		.filter(Boolean)
+		.map((step) => [step]);
+}
+
+export interface BrowserlessPlan {
+	/** Alternative picked for each group, in page order. */
+	chosen: string[];
+	/** What the page would collect in skip_gate_steps[] for these choices. */
+	skipGateSteps: string[];
+}
+
+/**
+ * Pick one browserless alternative per either-or group, or return the groups
+ * that need a browser. Email is the last resort in a group so no address is
+ * submitted when another alternative works.
+ */
+export function planBrowserlessGate(
+	html: string,
+): BrowserlessPlan | { unsupported: string[] } {
+	const capable = (step: string) =>
+		BROWSERLESS_STEPS.has(step) ||
+		(BROWSERLESS_WHEN_MARKUP[step]?.test(html) ?? false);
+	const chosen: string[] = [];
+	const skipGateSteps: string[] = [];
+	const unsupported: string[] = [];
+	for (const group of parseStepGroups(html)) {
+		const options = group.filter(capable);
+		const pick = options.find((step) => step !== 'email') ?? options[0];
+		if (!pick) {
+			unsupported.push(group.join('|'));
+			continue;
+		}
+		chosen.push(pick);
+		// jumpGate() declares the alternatives not taken as skipped, and each
+		// client-side step's Next/skip button declares the step itself.
+		for (const step of group) {
+			if (step === pick && (step === 'email' || UNDECLARED_STEPS.has(step)))
+				continue;
+			skipGateSteps.push(step);
+		}
+	}
+	return unsupported.length ? { unsupported } : { chosen, skipGateSteps };
+}
+
 // Smart-link selection pages list multiple platforms; follow the Hypeddit anchor.
 function findSmartLinkHypedditUrl(html: string): string | null {
 	const anchor = html.match(
@@ -136,24 +213,23 @@ export class HypedditHttpDownloader {
 			}
 			this.csrfToken = gate.csrfToken;
 
-			const unsupported = gate.steps.filter(
-				(step) => !BROWSERLESS_STEPS.has(step),
-			);
-			if (unsupported.length) {
+			const plan = planBrowserlessGate(html);
+			if ('unsupported' in plan) {
 				console.log(
-					`Browserless: gate has steps requiring a browser (${unsupported.join(', ')}), falling back`,
+					`Browserless: gate has steps requiring a browser (${plan.unsupported.join(', ')}), falling back`,
 				);
 				return null;
 			}
+			const needsEmail = plan.chosen.includes('email');
 
-			if (gate.steps.includes('email') && !this.config.email) {
+			if (needsEmail && !this.config.email) {
 				throw new BrowserlessConfigError(
 					'This Hypeddit gate requires an email. Set HYPEDDIT_EMAIL in your .env file.',
 				);
 			}
 
 			console.log(
-				`Browserless: attempting HTTP download for gates [${gate.steps.join(', ')}]`,
+				`Browserless: attempting HTTP download for gates [${plan.chosen.join(', ')}]`,
 			);
 			this.progressCallback?.(
 				'handling_gates',
@@ -166,7 +242,7 @@ export class HypedditHttpDownloader {
 				uid: gate.uid,
 			});
 
-			if (gate.steps.includes('email')) {
+			if (needsEmail) {
 				await this.post('/verifyEmailAddress', finalUrl, {
 					validateEmailAddress: this.config.email as string,
 					fan_gate_id: gate.fanGateId,
@@ -176,7 +252,12 @@ export class HypedditHttpDownloader {
 				});
 			}
 
-			const downloadUrl = await this.requestDownload(gate, finalUrl);
+			const downloadUrl = await this.requestDownload(
+				gate,
+				plan.skipGateSteps,
+				needsEmail,
+				finalUrl,
+			);
 			if (!downloadUrl) {
 				console.log(
 					'Browserless: server did not grant download, falling back to browser',
@@ -204,6 +285,8 @@ export class HypedditHttpDownloader {
 
 	private async requestDownload(
 		gate: GateData,
+		skipGateSteps: string[],
+		withEmail: boolean,
 		referer: string,
 	): Promise<string | null> {
 		const body = new URLSearchParams({
@@ -216,7 +299,7 @@ export class HypedditHttpDownloader {
 			page: 'nonsingle',
 			is_skippable: gate.isSkippable,
 			steps: gate.steps.join(','),
-			email: this.config.email ?? '',
+			email: withEmail ? (this.config.email ?? '') : '',
 			download_action: 'DOWNLOAD',
 			wrndk: gate.wrndk,
 			is_mobile: '',
@@ -225,12 +308,7 @@ export class HypedditHttpDownloader {
 			adcode: '',
 			gvf: '0',
 		});
-		// Every non-email step is a client-side gate; declare it as skipped.
-		for (const step of gate.steps) {
-			if (step !== 'email') {
-				body.append('skip_gate_steps[]', step);
-			}
-		}
+		for (const step of skipGateSteps) body.append('skip_gate_steps[]', step);
 
 		const response = await this.post('/gate/download/ul', referer, body);
 		const result = (await response.json()) as {

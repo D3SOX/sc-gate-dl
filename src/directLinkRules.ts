@@ -6,6 +6,9 @@
 export const AUDIO_OR_ARCHIVE_EXT_RE =
 	/\.(mp3|wav|flac|aiff|aif|m4a|aac|ogg|opus|zip|rar)(\?|$)/i;
 
+/** Drive share links and the download host they are rewritten to. */
+const DRIVE_HOST_RE = /(?:^|\.)drive(?:\.usercontent)?\.google\.com$/i;
+
 /** Google Drive file IDs are long URL-safe tokens. */
 const DRIVE_FILE_ID_RE = /^[a-zA-Z0-9_-]{10,}$/;
 
@@ -14,7 +17,7 @@ export function isKnownDirectDownloadHost(hostname: string): boolean {
 	return (
 		/(?:^|\.)dropbox\.com$/i.test(host) ||
 		/(?:^|\.)dropboxusercontent\.com$/i.test(host) ||
-		/(?:^|\.)drive\.google\.com$/i.test(host)
+		DRIVE_HOST_RE.test(host)
 	);
 }
 
@@ -37,7 +40,7 @@ export function urlLooksLikeDirectDownload(url: URL): boolean {
 	) {
 		return true;
 	}
-	if (/(?:^|\.)drive\.google\.com$/i.test(host)) {
+	if (DRIVE_HOST_RE.test(host)) {
 		return extractDriveFileId(url) !== null;
 	}
 	if (AUDIO_OR_ARCHIVE_EXT_RE.test(url.pathname)) return true;
@@ -55,16 +58,18 @@ export function normalizeDirectDownloadParsedUrl(url: URL): string {
 		parsed.searchParams.set('dl', '1');
 		return parsed.toString();
 	}
-	if (/(?:^|\.)drive\.google\.com$/i.test(url.hostname)) {
+	if (DRIVE_HOST_RE.test(url.hostname)) {
 		const id = extractDriveFileId(url);
 		if (!id) {
 			throw new Error(
 				`Malformed Google Drive link (missing valid file id): ${url}`,
 			);
 		}
-		const download = new URL('https://drive.google.com/uc');
-		download.searchParams.set('export', 'download');
+		// `confirm=t` skips the virus-scan page Drive shows for large files.
+		const download = new URL('https://drive.usercontent.google.com/download');
 		download.searchParams.set('id', id);
+		download.searchParams.set('export', 'download');
+		download.searchParams.set('confirm', 't');
 		// Link-shared files may require resourcekey alongside the file id.
 		let resourceKey: string | null = null;
 		for (const [key, value] of url.searchParams) {

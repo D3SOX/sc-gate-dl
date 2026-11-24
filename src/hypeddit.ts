@@ -12,15 +12,9 @@ import { DirectDownloader } from './directDownload';
 import { inspectHypedditPage } from './hypedditLinks';
 import Selectors from './selectors';
 import { visitSocialPopup } from './socialPopup';
-import { waitForSoundcloudLogin } from './soundcloudLogin';
+import { signInToSoundcloud, waitForSoundcloudLogin } from './soundcloudLogin';
 import type { HypedditConfig, JobProgress, JobStage } from './types';
-import {
-	isBandcampUrl,
-	loadCookies,
-	REPO_URL,
-	timeout,
-	writeBrowserCookies,
-} from './utils';
+import { isBandcampUrl, loadCookies, REPO_URL, timeout } from './utils';
 
 export type ProgressCallback = (
 	stage: JobStage,
@@ -28,6 +22,27 @@ export type ProgressCallback = (
 	percent: number,
 	extra?: Partial<JobProgress>,
 ) => void;
+
+// Steps that selectors.ts does not cover yet; markup from live gates.
+const DN_STEP = '#step_dn';
+// "Skip donation" only advances the slide, like the page's Next buttons.
+const DN_SKIP_LINK = '#step_dn a.myCarouselSocialSection';
+const DN_SKIPPER_BUTTON = '#skipper_dn';
+const TW_STEP = '#step_tw';
+const TW_SKIPPER_BUTTON = '#skipper_tw';
+const TW_STATUS_UNDONE_BUTTON = '#twitter_status a.undone';
+const TW_NEXT_BUTTON = '#skipper_tw_next';
+
+// Steps that may need someone at the remote browser, with their skip button.
+const MANUAL_STEPS = {
+	bc: { step: Selectors.BC_STEP, skip: Selectors.BC_SKIPPER_BUTTON },
+	ig: { step: '#step_ig', skip: Selectors.IG_SKIPPER_BUTTON },
+	// X OAuth connect (`#login_to_tw`) needs an X account.
+	tw: { step: TW_STEP, skip: TW_SKIPPER_BUTTON },
+	// Apple Music (MusicKit) and Deezer authorize the fan's own account.
+	ap: { step: '#step_ap', skip: '#skipper_ap' },
+	dz: { step: '#step_dz', skip: '#skipper_dz' },
+} as const;
 
 interface GateDefinition {
 	name: string;
@@ -87,6 +102,30 @@ export class HypedditDownloader {
 			label: 'Facebook',
 			difficulty: 2,
 			handler: (p) => this.handleFacebookSlide(p),
+		},
+		{
+			name: 'tw',
+			label: 'X (Twitter)',
+			difficulty: 4,
+			handler: (p) => this.handleTwitterSlide(p),
+		},
+		{
+			name: 'dn',
+			label: 'Donation',
+			difficulty: 1,
+			handler: (p) => this.handleDonationSlide(p),
+		},
+		{
+			name: 'ap',
+			label: 'Apple Music',
+			difficulty: 5,
+			handler: (p) => this.handleOptionalSocialSlide(p, 'Apple Music', 'ap'),
+		},
+		{
+			name: 'dz',
+			label: 'Deezer',
+			difficulty: 5,
+			handler: (p) => this.handleOptionalSocialSlide(p, 'Deezer', 'dz'),
 		},
 		{
 			name: 'bc',
@@ -194,13 +233,13 @@ export class HypedditDownloader {
 			throw new Error('Track bounding box not found');
 		}
 
-		// Calculate absolute coordinates on the main page
-		// Start from the center of the slider handle (iframe position + slider position)
-		const startX = iframeBox.x + sliderBox.x + sliderBox.width / 2;
-		const startY = iframeBox.y + sliderBox.y + sliderBox.height / 2;
-		// End at the right edge of the track (iframe position + track position + track width - half slider width)
-		const endX =
-			iframeBox.x + trackBox.x + trackBox.width - sliderBox.width / 2;
+		// Puppeteer reports boxes relative to the main page, also inside the
+		// captcha iframe, so they need no iframe offset.
+		// Start from the center of the slider handle
+		const startX = sliderBox.x + sliderBox.width / 2;
+		const startY = sliderBox.y + sliderBox.height / 2;
+		// End at the right edge of the track
+		const endX = trackBox.x + trackBox.width - sliderBox.width / 2;
 		const endY = startY; // Keep same Y position
 
 		console.log('Dragging slider from', startX, 'to', endX);
@@ -239,47 +278,9 @@ export class HypedditDownloader {
 	}
 
 	async prepareLogins() {
-		// for the login to be available from the cookies we have to open the soundcloud page
-		// in a new tab first and do some interaction
-		const soundCloudPage = await this.browser.newPage();
-		soundCloudPage.setViewport({ width: 1920, height: 1080 });
-		await soundCloudPage.goto('https://soundcloud.com/messages');
-		let captchaFrameFound = false;
-		try {
-			await soundCloudPage.waitForSelector(
-				Selectors.SOUNDCLOUD_CAPTCHA_CONTAINER,
-				{ timeout: 5_000 },
-			);
-			captchaFrameFound = true;
-		} catch {
-			// No challenge container frame found, skip captcha handling
-			console.log('No captcha frame found, skipping captcha handling');
-		}
-		if (captchaFrameFound) {
-			await this.handlePossibleCaptcha(soundCloudPage);
-		}
-
-		await soundCloudPage.waitForSelector(Selectors.SOUNDCLOUD_LIBRARY_LINK, {
-			timeout: 10 * 60_000,
+		await signInToSoundcloud(this.browser, {
+			solveCaptcha: (page) => this.handlePossibleCaptcha(page),
 		});
-		await Promise.all([
-			soundCloudPage.click(Selectors.SOUNDCLOUD_LIBRARY_LINK),
-			soundCloudPage.waitForNavigation({ waitUntil: 'domcontentloaded' }),
-		]);
-		// wait until page url includes /you/library
-		await soundCloudPage.waitForFunction(() =>
-			window.location.href.includes('/you/library'),
-		);
-		const soundCloudCookies = await this.browser
-			.defaultBrowserContext()
-			.cookies()
-			.then((cookies) =>
-				cookies.filter((cookie) =>
-					/(^|\.)soundcloud\.com$/i.test(cookie.domain.replace(/^\./, '')),
-				),
-			);
-		await writeBrowserCookies(soundCloudCookies);
-		await soundCloudPage.close();
 
 		if (this.spotifyCookiesExists) {
 			const spotifyPage = await this.browser.newPage();
@@ -433,6 +434,57 @@ export class HypedditDownloader {
 		}
 		await page.type(Selectors.EMAIL_ADDRESS_INPUT, this.config.email);
 		await nextButton.click();
+		await this.waitForEmailAccepted(page);
+	}
+
+	// Hypeddit checks the address (/verifyEmailAddress) before it moves the
+	// slide on. Until then the email slide covers the next step's buttons.
+	private async waitForEmailAccepted(page: Page) {
+		const outcome = () =>
+			page
+				.waitForFunction(
+					() => {
+						const step = document.querySelector('#step_email');
+						if (!step || step.closest('.move-left')) return 'accepted';
+						const captcha = document.querySelector('#gatePreviewCaptcha');
+						if (captcha && !captcha.classList.contains('hide'))
+							return 'captcha';
+						const error = Array.from(
+							step.querySelectorAll<HTMLElement>(
+								'.hype-invalid-feedback, .error-msg',
+							),
+							(element) => element.innerText.trim(),
+						).find(Boolean);
+						return error ? `error:${error}` : false;
+					},
+					{ timeout: 30_000 },
+				)
+				.then((handle) => handle.jsonValue() as Promise<string>);
+		let result = await outcome().catch(() => 'timeout');
+		if (result === 'captcha') {
+			await page.bringToFront();
+			this.emitProgress(
+				'handling_gates',
+				'Solve the Hypeddit captcha in the remote browser and press Next to continue.',
+				50,
+				{ currentGate: 'email', browserActive: true, requiresAttention: true },
+			);
+			result = await page
+				.waitForSelector('.move-left #step_email', { timeout: 120_000 })
+				.then(() => 'accepted')
+				.catch(() => 'timeout');
+			this.emitProgress('handling_gates', 'Email step completed.', 50, {
+				currentGate: 'email',
+				browserActive: true,
+				requiresAttention: false,
+			});
+		}
+		if (result === 'accepted') return;
+		if (result.startsWith('error:'))
+			throw new Error(
+				`Hypeddit rejected the email step (${result.slice(6)}). Check HYPEDDIT_EMAIL and HYPEDDIT_NAME.`,
+			);
+		throw new Error('Hypeddit did not accept the email step in time.');
 	}
 
 	// Handles gates that list individual action buttons (follow/like/repost/...)
@@ -603,9 +655,64 @@ export class HypedditDownloader {
 			await skip.click();
 			return;
 		}
+		if (
+			await this.visitPopupButtons(
+				page,
+				Selectors.IG_STATUS_UNDONE_BUTTON,
+				Selectors.IG_NEXT_BUTTON,
+			)
+		)
+			return;
+		await this.handleOptionalSocialSlide(page, 'Instagram', 'ig');
+	}
+
+	// X shows either per-account visit buttons, marked done on click like
+	// Instagram, or an OAuth connect that only someone with an X account can do.
+	private async handleTwitterSlide(page: Page) {
+		await page.waitForSelector(TW_STEP, { visible: true });
+		const skip = await page.$(TW_SKIPPER_BUTTON);
+		if (skip && (await skip.isVisible())) {
+			await skip.click();
+			return;
+		}
+		if (
+			await this.visitPopupButtons(
+				page,
+				TW_STATUS_UNDONE_BUTTON,
+				TW_NEXT_BUTTON,
+			)
+		)
+			return;
+		await this.handleOptionalSocialSlide(page, 'X (Twitter)', 'tw');
+	}
+
+	// Donations are optional; Hypeddit cannot verify a PayPal payment.
+	private async handleDonationSlide(page: Page) {
+		await page.waitForSelector(DN_STEP, { visible: true });
+		for (const selector of [DN_SKIP_LINK, DN_SKIPPER_BUTTON]) {
+			const skip = await page.$(selector);
+			if (skip && (await skip.isVisible())) {
+				await skip.evaluate((element) => (element as HTMLElement).click());
+				return;
+			}
+		}
+		throw new Error(
+			`Hypeddit donation step has no skip link. Please create an issue about this on ${REPO_URL}/issues`,
+		);
+	}
+
+	/**
+	 * Visit each pending account popup, then use the Next the page offers.
+	 * Returns false when the step needs another way through.
+	 */
+	private async visitPopupButtons(
+		page: Page,
+		undoneSelector: string,
+		nextSelector: string,
+	): Promise<boolean> {
 		let visited = false;
 		while (true) {
-			const button = await page.$(Selectors.IG_STATUS_UNDONE_BUTTON);
+			const button = await page.$(undoneSelector);
 			if (!button) break;
 			try {
 				if (!(await button.isVisible())) break;
@@ -625,17 +732,15 @@ export class HypedditDownloader {
 		}
 		const next = visited
 			? await page
-					.waitForSelector(Selectors.IG_NEXT_BUTTON, {
+					.waitForSelector(nextSelector, {
 						visible: true,
 						timeout: 10_000,
 					})
 					.catch(() => null)
-			: await page.$(Selectors.IG_NEXT_BUTTON);
-		if (next && (await next.isVisible())) {
-			await next.evaluate((element) => (element as HTMLElement).click());
-			return;
-		}
-		await this.handleOptionalSocialSlide(page, 'Instagram', 'ig');
+			: await page.$(nextSelector);
+		if (!next || !(await next.isVisible())) return false;
+		await next.evaluate((element) => (element as HTMLElement).click());
+		return true;
 	}
 
 	private async handleTiktokSlide(page: Page) {
@@ -688,11 +793,9 @@ export class HypedditDownloader {
 	private async handleOptionalSocialSlide(
 		page: Page,
 		label: string,
-		gate: 'bc' | 'ig',
+		gate: keyof typeof MANUAL_STEPS,
 	) {
-		const stepSelector = gate === 'bc' ? Selectors.BC_STEP : '#step_ig';
-		const skipSelector =
-			gate === 'bc' ? Selectors.BC_SKIPPER_BUTTON : Selectors.IG_SKIPPER_BUTTON;
+		const { step: stepSelector, skip: skipSelector } = MANUAL_STEPS[gate];
 		await page.waitForSelector(stepSelector, { visible: true });
 		const skip = await page.$(skipSelector);
 		if (skip && (await skip.isVisible())) {
@@ -707,11 +810,15 @@ export class HypedditDownloader {
 			50,
 			{ currentGate: gate, browserActive: true, requiresAttention: true },
 		);
+		// A finished slide moves left (opacity 0) instead of being hidden. The
+		// losing wait ends with its timeout or the page.
 		try {
-			await page.waitForSelector(stepSelector, {
-				hidden: true,
-				timeout: 120_000,
-			});
+			await Promise.race([
+				page.waitForSelector(stepSelector, { hidden: true, timeout: 120_000 }),
+				page.waitForSelector(`.move-left ${stepSelector}`, {
+					timeout: 120_000,
+				}),
+			]);
 		} catch (cause) {
 			throw new Error(
 				`Complete the ${label} step in the remote browser, then retry the gate download.`,
@@ -827,6 +934,7 @@ export class HypedditDownloader {
 				const bandcamp = new BandcampGateDownloader(
 					page,
 					this.progressCallback ?? undefined,
+					this.config.browserMode === 'headed',
 				);
 				this.destinationDownloader = bandcamp;
 				const result = await bandcamp.downloadAudio(
@@ -992,14 +1100,18 @@ export class HypedditDownloader {
 		}
 	}
 
+	private gateDifficulty(gateName: string): number {
+		const difficulty =
+			this.getGateDefinition(gateName)?.difficulty ?? Number.MAX_SAFE_INTEGER;
+		// Without cookies the Spotify handler fails; a manual step can still pass.
+		return gateName === 'sp' && !this.spotifyCookiesExists ? 6 : difficulty;
+	}
+
 	private pickPreferredGate(candidates: string[]): string {
 		if (!candidates.length)
 			throw new Error('No preferred gate could be selected from OR gate group');
 		return candidates.reduce((best, curr) =>
-			(this.getGateDefinition(curr)?.difficulty ?? Number.MAX_SAFE_INTEGER) <
-			(this.getGateDefinition(best)?.difficulty ?? Number.MAX_SAFE_INTEGER)
-				? curr
-				: best,
+			this.gateDifficulty(curr) < this.gateDifficulty(best) ? curr : best,
 		);
 	}
 

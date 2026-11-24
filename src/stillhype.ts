@@ -1,17 +1,20 @@
 import { mkdir, rm } from 'node:fs/promises';
 import { basename, join } from 'node:path';
 import { Presets, SingleBar } from 'cli-progress';
-import type { Browser, HTTPResponse, Page } from 'puppeteer';
+import type { Browser, ElementHandle, HTTPResponse, Page } from 'puppeteer';
 import { CancellableBrowserLaunch } from './browserLaunch';
 import { filenameFromContentDisposition } from './contentDisposition';
+import { DirectDownloader } from './directDownload';
 import { reserveDownloadFilename } from './downloadRename';
 import type { ProgressCallback } from './hypeddit';
 import { safeFetch } from './safeOutboundUrl';
 import Selectors from './selectors';
-import { waitForSoundcloudLogin } from './soundcloudLogin';
+import { visitSocialPopup } from './socialPopup';
+import { signInToSoundcloud, waitForSoundcloudLogin } from './soundcloudLogin';
 import type { HypedditConfig } from './types';
 import {
 	loadCookies,
+	resolveGateUrlOrFollow,
 	safeDecodeURIComponent,
 	sanitizeFilenamePart,
 	timeout,
@@ -20,13 +23,47 @@ import {
 const STILLHYPE_ORIGIN_RE = /stillhype\.io/i;
 const SC_AUTHORIZE_RE = /secure\.soundcloud\.com\/authorize/i;
 const SC_OAUTH_CALLBACK_RE = /\/api\/oauth\/soundcloud/i;
+// Separate steps show their own label ("Follow Maяcek on SoundCloud"); a
+// bundle shows "Connect" until the fan has a SoundCloud token.
 const SC_STEP_BUTTON_RE =
-	/^(Follow|Like|Repost|Comment) on SoundCloud$|^Tap to confirm\s*[—–-]\s*already connected$/i;
+	/^(Follow|Like|Repost|Comment)\b.*\bon SoundCloud$|^Connect$|^Tap to confirm\s*[—–-]\s*already connected$/i;
+// instagram/tiktok/twitter/youtube_follow list one "Follow <account> ↗" button
+// per account; website_visit shows "Visit website ↗". Both open a new tab.
+// Done accounts keep their button with a check icon in front.
+const SOCIAL_BUTTON_RE = /^(Follow .+|Visit website) ↗$/;
+// With enhancedFollow a visit only unlocks a confirm form: after a countdown
+// the fan types their own handle and presses "I've followed", which the
+// server checks (/api/gate/mark-complete).
+const HANDLE_INPUT = 'input[aria-label^="Your "][aria-label$=" handle"]';
+const CONFIRM_FOLLOW_RE = /^I['’]ve followed$/i;
 const UNLOCK_BUTTON_RE = /^(Unlock download|Download again)$/i;
 const SKIP_EMAIL_RE = /^Skip for now$/i;
 const USER_AGENT =
 	'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36';
 const MAX_DOWNLOAD_BYTES = 512 * 1024 * 1024;
+
+export type SocialPlatform = 'instagram' | 'tiktok' | 'twitter' | 'youtube';
+/** The fan's own accounts, which enhanced follow steps ask for. */
+export type StillhypeSocialHandles = Partial<Record<SocialPlatform, string>>;
+
+/** Account names from `.env`; unset ones are asked for in the remote browser. */
+export function socialHandlesFromEnv(
+	env: Record<string, string | undefined> = process.env,
+): StillhypeSocialHandles {
+	return {
+		instagram: env.INSTAGRAM_HANDLE,
+		tiktok: env.TIKTOK_HANDLE,
+		twitter: env.X_HANDLE,
+		youtube: env.YOUTUBE_HANDLE,
+	};
+}
+
+const PLATFORM_BY_INPUT_NAME: Record<string, SocialPlatform> = {
+	Instagram: 'instagram',
+	TikTok: 'tiktok',
+	X: 'twitter',
+	YouTube: 'youtube',
+};
 
 function isNavigationError(error: unknown): boolean {
 	const message = error instanceof Error ? error.message : String(error);
@@ -49,12 +86,20 @@ export class StillhypeDownloader {
 	private readonly browserLaunch = new CancellableBrowserLaunch();
 	private downloadFilename: string | null = null;
 	private config: HypedditConfig;
+	private readonly socialHandles: StillhypeSocialHandles;
 	private progressCallback: ProgressCallback | null = null;
 	private cancelPendingDownloadWait: (() => void) | null = null;
 	private readonly downloadAbortController = new AbortController();
+	/** The gate unlocks the artist's own link instead of a StillHype file. */
+	private externalDownload = false;
+	private directDownloader: DirectDownloader | null = null;
 
-	constructor(config: HypedditConfig) {
+	constructor(
+		config: HypedditConfig,
+		socialHandles: StillhypeSocialHandles = socialHandlesFromEnv(),
+	) {
 		this.config = config;
+		this.socialHandles = socialHandles;
 	}
 
 	setProgressCallback(callback: ProgressCallback): void {
@@ -79,37 +124,7 @@ export class StillhypeDownloader {
 	}
 
 	async prepareLogins() {
-		const soundCloudPage = await this.browser.newPage();
-		await soundCloudPage.setViewport({ width: 1920, height: 1080 });
-		await soundCloudPage.goto('https://soundcloud.com/messages');
-
-		try {
-			await soundCloudPage.waitForSelector(
-				Selectors.SOUNDCLOUD_CAPTCHA_CONTAINER,
-				{ timeout: 5_000 },
-			);
-			console.log(
-				'StillHype: SoundCloud captcha present during login warm-up; solve it in the browser window if needed.',
-			);
-			await soundCloudPage.waitForSelector(
-				Selectors.SOUNDCLOUD_CAPTCHA_CONTAINER,
-				{ hidden: true, timeout: 120_000 },
-			);
-		} catch {
-			// no captcha
-		}
-
-		await soundCloudPage.waitForSelector(Selectors.SOUNDCLOUD_LIBRARY_LINK, {
-			timeout: 30_000,
-		});
-		await Promise.all([
-			soundCloudPage.click(Selectors.SOUNDCLOUD_LIBRARY_LINK),
-			soundCloudPage.waitForNavigation({ waitUntil: 'domcontentloaded' }),
-		]);
-		await soundCloudPage.waitForFunction(() =>
-			window.location.href.includes('/you/library'),
-		);
-		await soundCloudPage.close();
+		await signInToSoundcloud(this.browser);
 	}
 
 	async downloadAudio(url: string): Promise<string | null> {
@@ -144,19 +159,23 @@ export class StillhypeDownloader {
 			}
 
 			await this.waitForGateReady(page);
+			this.externalDownload = /is_external_download\\?"\s*:\s*true/.test(
+				await page.content().catch(() => ''),
+			);
 
-			const deadline = Date.now() + 240_000;
+			let deadline = Date.now() + 240_000;
 			let lastActionAt = 0;
 			let lastActionLabel = '';
 			let repeats = 0;
 			let oauthCompleted = false;
 			let verifyingSince: number | null = null;
 			let lastStatusLog = 0;
+			const socialAttempts = new Map<string, number>();
 
 			while (Date.now() < deadline) {
 				if (unlockUrl) {
 					page.off('response', onUnlockResponse);
-					return await this.saveFileFromUrl(unlockUrl);
+					return await this.saveUnlockedFile(unlockUrl);
 				}
 
 				page = await this.resolveLivePage(page, url);
@@ -221,6 +240,18 @@ export class StillhypeDownloader {
 					lastStatusLog = Date.now();
 				}
 
+				const social = await this.handleSocialStep(page);
+				if (social) {
+					console.log(`StillHype step: ${social}`);
+					const attempts = (socialAttempts.get(social) ?? 0) + 1;
+					socialAttempts.set(social, attempts);
+					if (attempts > 5)
+						throw new Error(`StillHype stalled retrying “${social}”.`);
+					// Waiting for a handle typed in the remote browser counts as progress.
+					deadline = Math.max(deadline, Date.now() + 120_000);
+					continue;
+				}
+
 				await this.fillCommentIfNeeded(page);
 
 				const clicked = await this.clickNextSoundcloudStep(page);
@@ -270,7 +301,7 @@ export class StillhypeDownloader {
 
 			if (unlockUrl) {
 				page.off('response', onUnlockResponse);
-				return await this.saveFileFromUrl(unlockUrl);
+				return await this.saveUnlockedFile(unlockUrl);
 			}
 
 			throw new Error(
@@ -288,6 +319,7 @@ export class StillhypeDownloader {
 		this.cancelPendingDownloadWait?.();
 		this.cancelPendingDownloadWait = null;
 		this.downloadAbortController.abort();
+		await this.directDownloader?.close();
 		await this.browserLaunch.close();
 	}
 
@@ -316,6 +348,10 @@ export class StillhypeDownloader {
 				(stepRe: string, unlockRe: string) => {
 					const stepPattern = new RegExp(stepRe, 'i');
 					const unlockPattern = new RegExp(unlockRe, 'i');
+					// The steps list counts "0 OF 3 DONE" (CSS uppercases it). A
+					// required email step shows no button the patterns know.
+					if (/\d+\s+of\s+\d+\s+done/i.test(document.body?.innerText ?? ''))
+						return true;
 					return Array.from(document.querySelectorAll('button')).some((btn) => {
 						const text = (btn.textContent || '').trim();
 						return (
@@ -528,6 +564,170 @@ export class StillhypeDownloader {
 			currentGate: 'email',
 		});
 		await timeout(800);
+	}
+
+	/**
+	 * Visit the active social or website step's next account. Only the active
+	 * step renders its buttons, so this never jumps ahead of a locked step.
+	 */
+	private async handleSocialStep(page: Page): Promise<string | null> {
+		if (page.isClosed()) return null;
+		try {
+			if (await this.hasFollowConfirm(page)) {
+				await this.confirmSocialFollow(page);
+				return 'confirm follow';
+			}
+			const found = await page.evaluateHandle((pattern: string) => {
+				const socialPattern = new RegExp(pattern);
+				return (
+					Array.from(document.querySelectorAll('button')).find(
+						(button) =>
+							socialPattern.test((button.textContent || '').trim()) &&
+							!button.disabled &&
+							!button.querySelector('svg') &&
+							button.checkVisibility(),
+					) ?? null
+				);
+			}, SOCIAL_BUTTON_RE.source);
+			const button = found.asElement() as ElementHandle<Element> | null;
+			if (!button) {
+				await found.dispose();
+				return null;
+			}
+			let label: string;
+			try {
+				label = await button.evaluate((el) => (el.textContent || '').trim());
+				this.emitProgress('handling_gates', `StillHype: ${label}`, 45, {
+					currentGate: 'social',
+				});
+				// The site counts the click; the tab it opens only needs closing.
+				await visitSocialPopup(page, button);
+			} finally {
+				await button.dispose();
+			}
+			const confirm = await page
+				.waitForSelector(HANDLE_INPUT, { visible: true, timeout: 2_000 })
+				.catch(() => null);
+			if (confirm) {
+				await confirm.dispose();
+				await this.confirmSocialFollow(page);
+			}
+			return label;
+		} catch (error) {
+			if (isNavigationError(error)) return null;
+			throw error;
+		}
+	}
+
+	private async hasFollowConfirm(page: Page): Promise<boolean> {
+		const visible = await this.safeEvaluate(
+			page,
+			(selector: string) =>
+				Array.from(document.querySelectorAll<HTMLElement>(selector)).some(
+					(input) => input.checkVisibility(),
+				),
+			HANDLE_INPUT,
+		);
+		return visible === true;
+	}
+
+	private async confirmSocialFollow(page: Page) {
+		const inputName =
+			(await this.safeEvaluate(
+				page,
+				(selector: string) =>
+					document
+						.querySelector(selector)
+						?.getAttribute('aria-label')
+						?.replace(/^Your | handle$/g, '') ?? '',
+				HANDLE_INPUT,
+			)) ?? '';
+		const platform = PLATFORM_BY_INPUT_NAME[inputName];
+		const handle = platform ? this.socialHandles[platform]?.trim() : undefined;
+		if (!handle) {
+			await this.waitForManualFollowConfirm(page, inputName || 'social');
+			return;
+		}
+
+		await this.safeEvaluate(
+			page,
+			(selector: string, value: string) => {
+				const setter = Object.getOwnPropertyDescriptor(
+					window.HTMLInputElement.prototype,
+					'value',
+				)?.set;
+				for (const input of document.querySelectorAll<HTMLInputElement>(
+					selector,
+				)) {
+					if (input.value === value) continue;
+					setter?.call(input, value);
+					input.dispatchEvent(new Event('input', { bubbles: true }));
+				}
+			},
+			HANDLE_INPUT,
+			handle,
+		);
+
+		// The button counts down first and restarts it when the server says
+		// "too soon"; a rejected handle shows an alert.
+		const deadline = Date.now() + 60_000;
+		while (Date.now() < deadline) {
+			const state = await this.safeEvaluate(
+				page,
+				(selector: string, confirmRe: string) => {
+					const pending = Array.from(
+						document.querySelectorAll<HTMLElement>(selector),
+					).some((input) => input.checkVisibility());
+					if (!pending) return 'done';
+					const alert = Array.from(
+						document.querySelectorAll<HTMLElement>('[role="alert"]'),
+					).find((el) => el.checkVisibility() && el.textContent?.trim());
+					if (alert) return `error:${alert.textContent?.trim()}`;
+					const confirmPattern = new RegExp(confirmRe, 'i');
+					const button = Array.from(document.querySelectorAll('button')).find(
+						(el) =>
+							confirmPattern.test((el.textContent || '').trim()) &&
+							!el.disabled,
+					);
+					button?.click();
+					return button ? 'clicked' : 'waiting';
+				},
+				HANDLE_INPUT,
+				CONFIRM_FOLLOW_RE.source,
+			);
+			if (state === 'done') return;
+			if (state?.startsWith('error:'))
+				throw new Error(
+					`StillHype did not accept your ${inputName} handle: ${state.slice(6)}`,
+				);
+			await timeout(state === 'clicked' ? 1_000 : 300);
+		}
+		throw new Error(
+			`StillHype did not confirm the ${inputName} follow in time.`,
+		);
+	}
+
+	private async waitForManualFollowConfirm(page: Page, platform: string) {
+		await page.bringToFront().catch(() => {});
+		this.emitProgress(
+			'handling_gates',
+			`Type your own ${platform} handle in the remote browser and confirm the follow to continue.`,
+			50,
+			{ currentGate: 'social', browserActive: true, requiresAttention: true },
+		);
+		const deadline = Date.now() + 5 * 60_000;
+		while (await this.hasFollowConfirm(page)) {
+			if (Date.now() > deadline)
+				throw new Error(
+					`Confirm the ${platform} follow in the remote browser, then retry the gate download.`,
+				);
+			await timeout(500);
+		}
+		this.emitProgress('handling_gates', `${platform} follow confirmed.`, 50, {
+			currentGate: 'social',
+			browserActive: true,
+			requiresAttention: false,
+		});
 	}
 
 	private async fillCommentIfNeeded(page: Page) {
@@ -878,7 +1078,7 @@ export class StillhypeDownloader {
 		this.emitProgress('handling_gates', 'Unlocking StillHype download...', 75);
 
 		if (knownUnlockUrl) {
-			return await this.saveFileFromUrl(knownUnlockUrl);
+			return await this.saveUnlockedFile(knownUnlockUrl);
 		}
 
 		let unlockUrl: string | null = null;
@@ -1035,7 +1235,7 @@ export class StillhypeDownloader {
 				pBar.stop();
 				page.off('response', onResponse);
 				await client.detach().catch(() => {});
-				return await this.saveFileFromUrl(fileUrl);
+				return await this.saveUnlockedFile(fileUrl);
 			}
 
 			return await downloadCompletePromise;
@@ -1048,6 +1248,28 @@ export class StillhypeDownloader {
 			page.off('response', onResponse);
 			await client.detach().catch(() => {});
 		}
+	}
+
+	/**
+	 * External-download gates unlock the artist's own link (Drive, Dropbox, …),
+	 * which the site just opens; fetch it like any other direct link.
+	 */
+	private async saveUnlockedFile(url: string): Promise<string> {
+		if (!this.externalDownload) return this.saveFileFromUrl(url);
+		const destination = await resolveGateUrlOrFollow(url).catch(() => null);
+		if (destination?.provider === 'direct') {
+			const direct = new DirectDownloader();
+			this.directDownloader = direct;
+			if (this.progressCallback)
+				direct.setProgressCallback(this.progressCallback);
+			this.downloadFilename = await direct.downloadAudio(destination.url);
+			return this.downloadFilename;
+		}
+		if (destination)
+			throw new Error(
+				`StillHype unlocked an external ${destination.provider} link (${destination.url}). Download that link as its own job.`,
+			);
+		return this.saveFileFromUrl(url);
 	}
 
 	private async saveFileFromUrl(downloadUrl: string): Promise<string> {
@@ -1094,6 +1316,13 @@ export class StillhypeDownloader {
 		if (!response.ok || !response.body) {
 			throw new Error(
 				`StillHype file download failed (${response.status} ${response.statusText})`,
+			);
+		}
+		// A file host's preview page must not end up saved as audio.
+		if (/text\/html/i.test(response.headers.get('content-type') ?? '')) {
+			await response.body.cancel().catch(() => {});
+			throw new Error(
+				`StillHype download returned a web page instead of a file: ${finalUrl}`,
 			);
 		}
 
