@@ -160,6 +160,10 @@ function existingJobArtwork(job: Job): Artwork | null {
  * Tag and convert a job's downloaded file, or only rename it for original
  * output and preserved MP3 metadata. Returns the final downloads/ filename.
  */
+function isCoverless(filename: string): boolean {
+	return ['.ogg', '.aac', '.opus'].includes(extname(filename).toLowerCase());
+}
+
 async function finalizeJobFile(
 	job: Job,
 	metadata: Metadata,
@@ -188,7 +192,7 @@ async function finalizeJobFile(
 			);
 		}
 	} else {
-		if (!options.artwork?.buffer) {
+		if (!options.artwork?.buffer && !isCoverless(sourceFilename)) {
 			throw new Error('No artwork available');
 		}
 		jobStore.updateProgress(
@@ -200,7 +204,7 @@ async function finalizeJobFile(
 		const outputPath = await audioProcessor.processAudio(
 			sourceFilename,
 			metadata,
-			options.artwork,
+			options.artwork ?? { buffer: new ArrayBuffer(0), fileName: '' },
 			'always',
 			job.outputFormat,
 			job.soundcloudUrl,
@@ -1800,7 +1804,11 @@ const server = Bun.serve({
 						customArtwork ||
 						jobArtwork(job) ||
 						(job.destination ? existingJobArtwork(job) : null);
-					if (!keepsFile && !artwork?.buffer) {
+					if (
+						!keepsFile &&
+						!artwork?.buffer &&
+						!isCoverless(job.outputFilename || job.downloadFilename || '')
+					) {
 						return jsonResponse(
 							{ error: 'No artwork available' },
 							{ status: 400 },
