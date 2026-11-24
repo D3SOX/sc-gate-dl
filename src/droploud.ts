@@ -21,6 +21,8 @@ type PaneKind =
 	| 'unknown';
 
 export class DroploudDownloader {
+	/** Set when the API fallback saved the repost the browser couldn't. */
+	private repostSavedViaApi = false;
 	private browser!: Browser;
 	private readonly browserLaunch = new CancellableBrowserLaunch();
 	private downloadFilename: string | null = null;
@@ -767,6 +769,7 @@ export class DroploudDownloader {
 		console.log(`Droploud SoundCloud step: ${stepTitle || 'untitled step'}`);
 
 		let repostError: Error | null = null;
+		this.repostSavedViaApi = false;
 		const openLabel = /^open track on soundcloud$/i;
 		if (await this.findPaneButton(page, openLabel)) {
 			const pagesBefore = new Set(await this.browser.pages(true));
@@ -801,10 +804,12 @@ export class DroploudDownloader {
 				// request and swaps the track for a block page; nothing gets saved then.
 				popup.off('response', onRepostResponse);
 				const live = (await this.resolveSoundcloudPage(popup)) ?? popup;
-				// A 403 only counts when no fallback (the API repost) saved it after all.
+				// The popup keeps showing the rejection even when the API fallback
+				// saved the repost afterwards; then Droploud's Verify decides.
 				blocked =
-					(lastRepostStatus === 403 && repostError !== null) ||
-					(await this.soundcloudBlocked(live));
+					!this.repostSavedViaApi &&
+					((lastRepostStatus === 403 && repostError !== null) ||
+						(await this.soundcloudBlocked(live)));
 				await this.closePage(popup);
 			}
 			if (blocked) {
@@ -1013,6 +1018,7 @@ export class DroploudDownloader {
 
 		try {
 			await soundcloud.repostTrack(trackUrl);
+			this.repostSavedViaApi = true;
 			console.log('Droploud: SoundCloud repost ensured via API GraphQL.');
 			return;
 		} catch (apiError) {
