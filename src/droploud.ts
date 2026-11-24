@@ -626,6 +626,8 @@ export class DroploudDownloader {
 					btn?.click();
 				});
 				await timeout(800);
+				opened.clear();
+				confirmationDeadline = null;
 				continue;
 			}
 

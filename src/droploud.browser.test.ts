@@ -207,6 +207,53 @@ test('opens each Instagram link once before confirming a multi-account step', as
 	);
 }, 15_000);
 
+test('opens each card again when the next social step reuses labels', async () => {
+	await page.setContent(`
+		<div class="ds-gate-pane"></div>
+		<script>
+		(() => {
+			const pane = document.querySelector('.ds-gate-pane');
+			window.openedAccounts = [];
+			function render(step) {
+				pane.innerHTML = '<h2 class="ds-gate-t">Spotify step ' + step + '</h2>' +
+					'<button data-open="0">Open Spotify</button>' +
+					'<button data-open="1">Open Spotify, Spotify 2</button>' +
+					'<button data-confirm disabled>I&#39;ve done it</button>';
+				const opened = new Set();
+				pane.querySelectorAll('[data-open]').forEach(button => {
+					button.onclick = () => {
+						window.openedAccounts.push(step + ':' + button.dataset.open);
+						opened.add(button.dataset.open);
+						if (opened.size === 2) pane.querySelector('[data-confirm]').disabled = false;
+					};
+				});
+				pane.querySelector('[data-confirm]').onclick = () => {
+					if (step === 1) render(2);
+					else pane.innerHTML = '<h2 class="ds-gate-t">Next step</h2>';
+				};
+			}
+			render(1);
+		})();
+		</script>
+	`);
+	const downloader = new DroploudDownloader({
+		comment: 'test',
+		browserMode: 'headless',
+	});
+	Object.assign(downloader, { browser, closeSocialPopup: async () => {} });
+	await (
+		downloader as unknown as { handleSocialCards(page: Page): Promise<void> }
+	).handleSocialCards(page);
+	expect(
+		await page.evaluate(
+			() => (window as unknown as { openedAccounts: string[] }).openedAccounts,
+		),
+	).toEqual(['1:0', '1:1', '2:0', '2:1']);
+	expect(await page.$eval('.ds-gate-t', (element) => element.textContent)).toBe(
+		'Next step',
+	);
+}, 20_000);
+
 test('waits for a delayed social confirmation after opening all links', async () => {
 	await page.setContent(`
 		<div class="ds-gate-pane">
