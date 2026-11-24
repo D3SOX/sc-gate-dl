@@ -394,3 +394,100 @@ describe('lossy AAC passthrough without artwork', () => {
 		expect(tags.comment).toBe('https://soundcloud.com/artist/track');
 	}, 60_000);
 });
+
+describe('retagging an MP3 copies the audio stream without re-encoding', () => {
+	let dir: string;
+	let previousCwd: string;
+
+	beforeEach(async () => {
+		dir = await mkdtemp(join(tmpdir(), 'sc-gate-dl-copy-'));
+		previousCwd = process.cwd();
+		process.chdir(dir);
+		await mkdir('downloads');
+	});
+
+	afterEach(async () => {
+		process.chdir(previousCwd);
+		await rm(dir, { recursive: true, force: true });
+	});
+
+	test('keeps the MP3 audio payload byte-identical while the title changes', async () => {
+		await runFfmpeg([
+			'-f',
+			'lavfi',
+			'-i',
+			'sine=frequency=440:duration=1',
+			'-c:a',
+			'libmp3lame',
+			'-b:a',
+			'128k',
+			'-y',
+			join('downloads', 'payload.mp3'),
+		]);
+		const before = await audioPayload(join('downloads', 'payload.mp3'));
+
+		const output = await new AudioProcessor('ffmpeg', 'ffprobe').processAudio(
+			'payload.mp3',
+			{ title: 'Retitled' },
+			{ buffer: new ArrayBuffer(0), fileName: 'none.jpg' },
+			'never',
+			'mp3-320',
+		);
+
+		expect(await audioPayload(output)).toEqual(before);
+		expect((await formatTags(output)).title).toBe('Retitled');
+	}, 60_000);
+});
+
+describe('a failed retag keeps the original MP3', () => {
+	let dir: string;
+	let previousCwd: string;
+
+	beforeEach(async () => {
+		dir = await mkdtemp(join(tmpdir(), 'sc-gate-dl-fail-'));
+		previousCwd = process.cwd();
+		process.chdir(dir);
+		await mkdir('downloads');
+	});
+
+	afterEach(async () => {
+		process.chdir(previousCwd);
+		await rm(dir, { recursive: true, force: true });
+	});
+
+	test('leaves the original MP3 byte-identical when FFmpeg fails during the retag', async () => {
+		await runFfmpeg([
+			'-f',
+			'lavfi',
+			'-i',
+			'sine=frequency=440:duration=1',
+			'-c:a',
+			'libmp3lame',
+			'-b:a',
+			'128k',
+			'-y',
+			join('downloads', 'original.mp3'),
+		]);
+		const before = await Bun.file(join('downloads', 'original.mp3')).bytes();
+		const failingFfmpeg = join(dir, 'failing-ffmpeg');
+		await writeFile(
+			failingFfmpeg,
+			'#!/bin/sh\necho "retag broke" >&2\nexit 1\n',
+		);
+		await chmod(failingFfmpeg, 0o755);
+
+		await expect(
+			new AudioProcessor(failingFfmpeg, 'ffprobe').processAudio(
+				'original.mp3',
+				{ title: 'Changed' },
+				{ buffer: new ArrayBuffer(0), fileName: 'none.jpg' },
+				'never',
+				'mp3-320',
+			),
+		).rejects.toThrow();
+
+		expect(await Bun.file(join('downloads', 'original.mp3')).bytes()).toEqual(
+			before,
+		);
+	}, 60_000);
+});
