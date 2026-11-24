@@ -191,7 +191,7 @@ export class DroploudDownloader {
 					65,
 					{ currentGate: 'sc' },
 				);
-				await this.handleRepostVerify(page, options.trackUrl ?? url);
+				await this.handleRepostVerify(page, options.trackUrl ?? '');
 				continue;
 			}
 
@@ -500,6 +500,11 @@ export class DroploudDownloader {
 		page: Page,
 		trackUrl: string,
 	): Promise<void> {
+		if (!trackUrl) {
+			throw new Error(
+				'Droploud: no SoundCloud track URL was given, so the repost target is unknown. Enter the track URL and retry.',
+			);
+		}
 		if (await this.isTrackAlreadyReposted(trackUrl)) return;
 		if (await this.repostViaPageFetch(page, trackUrl)) return;
 		throw new Error(

@@ -274,3 +274,36 @@ test('does not repost again when the track is already reposted', async () => {
 
 	expect(repostAttempted).toBe(false);
 });
+
+test('never uses the gate URL as the repost target when no track URL is given', async () => {
+	const downloader = new DroploudDownloader({
+		comment: 'test',
+		browserMode: 'headless',
+	});
+	const targets: string[] = [];
+	Object.assign(downloader, {
+		handleRepostVerify: async (_page: Page, trackUrl: string) => {
+			targets.push(trackUrl);
+			throw new Error('stop');
+		},
+	});
+	Object.assign(downloader, {
+		browser: {
+			newPage: async () => ({
+				setViewport: async () => {},
+				goto: async () => {},
+				waitForNetworkIdle: async () => {},
+				close: async () => {},
+			}),
+		},
+		dismissCookieBanner: async () => {},
+		startGateIfNeeded: async () => {},
+		detectPaneKind: async () => 'repost_verify',
+	});
+
+	await downloader
+		.downloadAudio('https://droploud.com/gate/abc')
+		.catch(() => undefined);
+
+	expect(targets.some((target) => target.includes('droploud.com'))).toBe(false);
+});
