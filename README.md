@@ -326,7 +326,9 @@ PartOf=sc-gate-dl.target
 
 [Service]
 Type=simple
-ExecStart=/usr/bin/Xvfb :99 -screen 0 1920x1080x24 -nolisten tcp \
+# -noreset keeps the display up when its last client disconnects, so a
+# restarted x11vnc can connect right away.
+ExecStart=/usr/bin/Xvfb :99 -noreset -screen 0 1920x1080x24 -nolisten tcp \
   -auth /home/YOUR_USER/.local/state/sc-gate-dl/xauthority
 Restart=on-failure
 RestartSec=2
@@ -348,6 +350,8 @@ ExecStart=/usr/bin/x11vnc -display :99 \
   -forever -shared -localhost -usepw -rfbport 5900 -noxdamage -repeat
 Restart=on-failure
 RestartSec=2
+# x11vnc exits with 2 when stopped; that is not a failure.
+SuccessExitStatus=2
 ```
 
 `sc-gate-novnc.service`:
@@ -365,6 +369,8 @@ ExecStart=/home/YOUR_USER/.local/share/sc-gate-dl/noVNC/utils/novnc_proxy \
   --listen 6080 --vnc localhost:5900
 Restart=on-failure
 RestartSec=2
+# novnc_proxy exits with 143 (SIGTERM) when stopped; that is not a failure.
+SuccessExitStatus=143
 ```
 
 `sc-gate-app.service`:
