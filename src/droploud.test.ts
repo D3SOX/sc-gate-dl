@@ -307,3 +307,56 @@ test('never uses the gate URL as the repost target when no track URL is given', 
 
 	expect(targets.some((target) => target.includes('droploud.com'))).toBe(false);
 });
+
+test('reposts when the track is not yet reposted', async () => {
+	const downloader = new DroploudDownloader({
+		comment: 'test',
+		browserMode: 'headless',
+	});
+	let repostAttempted = false;
+	Object.assign(downloader, {
+		isTrackAlreadyReposted: async () => false,
+		repostViaPageFetch: async () => {
+			repostAttempted = true;
+			return true;
+		},
+	});
+	const gate = downloader as unknown as {
+		ensureRepostBeforeVerify(page: Page, trackUrl: string): Promise<void>;
+	};
+
+	await gate.ensureRepostBeforeVerify(
+		{} as Page,
+		'https://soundcloud.com/artist/track',
+	);
+
+	expect(repostAttempted).toBe(true);
+});
+
+test('does not repost when the signed-in account cannot be checked', async () => {
+	const downloader = new DroploudDownloader({
+		comment: 'test',
+		browserMode: 'headless',
+	});
+	let repostAttempted = false;
+	Object.assign(downloader, {
+		isTrackAlreadyReposted: async () => {
+			throw new Error('account unavailable');
+		},
+		repostViaPageFetch: async () => {
+			repostAttempted = true;
+			return true;
+		},
+	});
+	const gate = downloader as unknown as {
+		ensureRepostBeforeVerify(page: Page, trackUrl: string): Promise<void>;
+	};
+
+	await expect(
+		gate.ensureRepostBeforeVerify(
+			{} as Page,
+			'https://soundcloud.com/artist/track',
+		),
+	).rejects.toThrow('could not be reposted');
+	expect(repostAttempted).toBe(false);
+});

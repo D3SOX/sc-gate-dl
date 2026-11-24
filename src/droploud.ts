@@ -489,11 +489,7 @@ export class DroploudDownloader {
 	}
 
 	private async isTrackAlreadyReposted(trackUrl: string): Promise<boolean> {
-		try {
-			return await new SoundcloudClient().isTrackReposted(trackUrl);
-		} catch {
-			return false;
-		}
+		return new SoundcloudClient().isTrackReposted(trackUrl);
 	}
 
 	private async ensureRepostBeforeVerify(
@@ -505,7 +501,15 @@ export class DroploudDownloader {
 				'Droploud: no SoundCloud track URL was given, so the repost target is unknown. Enter the track URL and retry.',
 			);
 		}
-		if (await this.isTrackAlreadyReposted(trackUrl)) return;
+		let alreadyReposted: boolean;
+		try {
+			alreadyReposted = await this.isTrackAlreadyReposted(trackUrl);
+		} catch {
+			throw new Error(
+				'Droploud: the SoundCloud track could not be reposted before verification. Confirm the connected account and retry.',
+			);
+		}
+		if (alreadyReposted) return;
 		if (await this.repostViaPageFetch(page, trackUrl)) return;
 		throw new Error(
 			'Droploud: the SoundCloud track could not be reposted before verification. Confirm the connected account and retry.',
