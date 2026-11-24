@@ -160,6 +160,8 @@ function existingJobArtwork(job: Job): Artwork | null {
  * Tag and convert a job's downloaded file, or only rename it for original
  * output and preserved MP3 metadata. Returns the final downloads/ filename.
  */
+class ConversionError extends Error {}
+
 function isCoverless(filename: string): boolean {
 	return ['.ogg', '.aac', '.opus'].includes(extname(filename).toLowerCase());
 }
@@ -201,14 +203,22 @@ async function finalizeJobFile(
 			'Processing audio...',
 			95,
 		);
-		const outputPath = await audioProcessor.processAudio(
-			sourceFilename,
-			metadata,
-			options.artwork ?? { buffer: new ArrayBuffer(0), fileName: '' },
-			'always',
-			job.outputFormat,
-			job.soundcloudUrl,
-		);
+		let outputPath: string;
+		try {
+			outputPath = await audioProcessor.processAudio(
+				sourceFilename,
+				metadata,
+				options.artwork ?? { buffer: new ArrayBuffer(0), fileName: '' },
+				'always',
+				job.outputFormat,
+				job.soundcloudUrl,
+			);
+		} catch (error) {
+			const message = error instanceof Error ? error.message : String(error);
+			throw new ConversionError(
+				`Conversion of ${sourceFilename} failed: ${message}. Files kept: ${join('./downloads', sourceFilename)}`,
+			);
+		}
 		outputFilename = basename(outputPath);
 		// Conversion may have deleted the source, so point the job at the new
 		// file before the rename that can still fail.
@@ -283,11 +293,13 @@ async function finishUnattendedJob(
 		});
 		jobStore.updateProgress(job.id, 'ready', 'Saved to library', 100);
 	} catch (error) {
-		// Nobody finishes a failed unattended job by hand, so drop its files.
-		await cleanupCancelledDownloadArtifacts({
-			filenames: [job.downloadFilename, job.outputFilename],
-			sweepIncomplete: false,
-		});
+		// A failed conversion keeps the source so it can be recovered.
+		if (!(error instanceof ConversionError)) {
+			await cleanupCancelledDownloadArtifacts({
+				filenames: [job.downloadFilename, job.outputFilename],
+				sweepIncomplete: false,
+			});
+		}
 		jobStore.update(job.id, { downloadFilename: null, outputFilename: null });
 		throw error;
 	}
@@ -924,14 +936,17 @@ function wrapRoutes<Path extends string>(
 }
 
 const TEST_FIXTURE_JOB_ENV = 'SC_GATE_DL_TEST_FIXTURE_JOB';
+const TEST_FIXTURE_JOB_FORMAT_ENV = 'SC_GATE_DL_TEST_FIXTURE_JOB_FORMAT';
 
 /** Test hook: seed one job waiting for tags so HTTP tests need no live gate. */
 function seedFixtureJob(): string | null {
 	const fixture = process.env[TEST_FIXTURE_JOB_ENV];
 	if (!fixture) return null;
+	const format = (process.env[TEST_FIXTURE_JOB_FORMAT_ENV] ??
+		'mp3-320') as Job['outputFormat'];
 	const job = jobStore.create(
 		'https://soundcloud.com/lister_aus/lister-nik-sitz-anavax-dj-got',
-		'mp3-320',
+		format,
 		'client',
 	);
 	jobStore.update(job.id, {
