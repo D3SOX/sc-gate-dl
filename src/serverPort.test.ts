@@ -68,3 +68,29 @@ describe('SC_GATE_DL_PORT selects the listening port', () => {
 		}
 	}, 20_000);
 });
+
+describe('SC_GATE_DL_PORT default', () => {
+	test('listens on port 3000 when the setting is absent', async () => {
+		const env: Record<string, string> = {
+			...(process.env as Record<string, string>),
+			SC_COMMENT: 'test-comment',
+		};
+		delete env.SC_GATE_DL_PORT;
+		const proc = spawn(['bun', 'run', './src/server.ts'], {
+			env,
+			stdout: 'ignore',
+			stderr: 'ignore',
+		});
+		try {
+			let response: Response | undefined;
+			for (let attempt = 0; attempt < 100 && !response; attempt += 1) {
+				response = await fetch('http://127.0.0.1:3000/').catch(() => undefined);
+				if (!response) await Bun.sleep(100);
+			}
+			expect(response).toBeDefined();
+		} finally {
+			proc.kill();
+			await proc.exited;
+		}
+	}, 20_000);
+});
