@@ -316,6 +316,7 @@ test('reposts when the track is not yet reposted', async () => {
 	let repostAttempted = false;
 	Object.assign(downloader, {
 		isTrackAlreadyReposted: async () => false,
+		signedInAccountOwnsTrack: async () => true,
 		repostViaPageFetch: async () => {
 			repostAttempted = true;
 			return true;
@@ -358,5 +359,32 @@ test('does not repost when the signed-in account cannot be checked', async () =>
 			'https://soundcloud.com/artist/track',
 		),
 	).rejects.toThrow('could not be reposted');
+	expect(repostAttempted).toBe(false);
+});
+
+test('does not repost through a reachable account that does not own the track', async () => {
+	const downloader = new DroploudDownloader({
+		comment: 'test',
+		browserMode: 'headless',
+	});
+	let repostAttempted = false;
+	Object.assign(downloader, {
+		isTrackAlreadyReposted: async () => false,
+		signedInAccountOwnsTrack: async () => false,
+		repostViaPageFetch: async () => {
+			repostAttempted = true;
+			return true;
+		},
+	});
+	const gate = downloader as unknown as {
+		ensureRepostBeforeVerify(page: Page, trackUrl: string): Promise<void>;
+	};
+
+	await expect(
+		gate.ensureRepostBeforeVerify(
+			{} as Page,
+			'https://soundcloud.com/artist/track',
+		),
+	).rejects.toThrow('does not own this track');
 	expect(repostAttempted).toBe(false);
 });

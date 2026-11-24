@@ -492,6 +492,14 @@ export class DroploudDownloader {
 		return new SoundcloudClient().isTrackReposted(trackUrl);
 	}
 
+	/** Repost only from the account that owns the track; a different account stays untouched. */
+	private async signedInAccountOwnsTrack(trackUrl: string): Promise<boolean> {
+		const client = new SoundcloudClient();
+		const track = await client.getTrack(trackUrl);
+		const me = await client.getMe();
+		return String(me.id) === String(track.user.id);
+	}
+
 	private async ensureRepostBeforeVerify(
 		page: Page,
 		trackUrl: string,
@@ -510,6 +518,11 @@ export class DroploudDownloader {
 			);
 		}
 		if (alreadyReposted) return;
+		if (!(await this.signedInAccountOwnsTrack(trackUrl))) {
+			throw new Error(
+				'Droploud: the signed-in SoundCloud account does not own this track, so it was not reposted. Sign in with the track owner account or repost manually.',
+			);
+		}
 		if (await this.repostViaPageFetch(page, trackUrl)) return;
 		throw new Error(
 			'Droploud: the SoundCloud track could not be reposted before verification. Confirm the connected account and retry.',
