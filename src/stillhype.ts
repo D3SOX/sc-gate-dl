@@ -170,7 +170,10 @@ export class StillhypeDownloader {
 			let oauthCompleted = false;
 			let verifyingSince: number | null = null;
 			let lastStatusLog = 0;
-			const socialAttempts = new Map<string, number>();
+			// Visit buttons share one label, so count retries only while the
+			// gate's "N OF M DONE" progress stays the same.
+			let lastSocialKey = '';
+			let socialRepeats = 0;
 
 			while (Date.now() < deadline) {
 				if (unlockUrl) {
@@ -243,9 +246,11 @@ export class StillhypeDownloader {
 				const social = await this.handleSocialStep(page);
 				if (social) {
 					console.log(`StillHype step: ${social}`);
-					const attempts = (socialAttempts.get(social) ?? 0) + 1;
-					socialAttempts.set(social, attempts);
-					if (attempts > 5)
+					const progress = (await this.readGateStatus(page)).split(' | ')[0];
+					const key = `${social}@${progress}`;
+					socialRepeats = key === lastSocialKey ? socialRepeats + 1 : 1;
+					lastSocialKey = key;
+					if (socialRepeats > 5)
 						throw new Error(`StillHype stalled retrying “${social}”.`);
 					// Waiting for a handle typed in the remote browser counts as progress.
 					deadline = Math.max(deadline, Date.now() + 120_000);

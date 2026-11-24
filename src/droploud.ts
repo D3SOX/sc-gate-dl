@@ -784,8 +784,10 @@ export class DroploudDownloader {
 				// request and swaps the track for a block page; nothing gets saved then.
 				popup.off('response', onRepostResponse);
 				const live = (await this.resolveSoundcloudPage(popup)) ?? popup;
+				// A 403 only counts when no fallback (the API repost) saved it after all.
 				blocked =
-					lastRepostStatus === 403 || (await this.soundcloudBlocked(live));
+					(lastRepostStatus === 403 && repostError !== null) ||
+					(await this.soundcloudBlocked(live));
 				await this.closePage(popup);
 			}
 			if (blocked) {
