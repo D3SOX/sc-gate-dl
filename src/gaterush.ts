@@ -780,6 +780,8 @@ export class GaterushDownloader {
 			resolveLink = resolve;
 			rejectLink = reject;
 		});
+		// It can reject before it is awaited; `await link` still throws.
+		link.catch(() => {});
 		const onRequest = (request: HTTPRequest) => {
 			if (request.isInterceptResolutionHandled()) return;
 			if (request.redirectChain()[0]?.url() === downloadUrl) {
@@ -799,14 +801,15 @@ export class GaterushDownloader {
 					),
 				);
 		};
-		const timer = setTimeout(
-			() => rejectLink(new Error('GateRush did not open the link reward.')),
-			30_000,
-		);
-		await page.setRequestInterception(true);
-		page.on('request', onRequest);
-		page.on('response', onResponse);
+		let timer: ReturnType<typeof setTimeout> | undefined;
 		try {
+			timer = setTimeout(
+				() => rejectLink(new Error('GateRush did not open the link reward.')),
+				30_000,
+			);
+			await page.setRequestInterception(true);
+			page.on('request', onRequest);
+			page.on('response', onResponse);
 			await page.evaluate((href) => window.location.assign(href), downloadUrl);
 			const destination = await link;
 			if (new URL(destination).hostname === new URL(downloadUrl).hostname) {

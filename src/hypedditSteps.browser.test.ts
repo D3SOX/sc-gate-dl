@@ -127,10 +127,15 @@ describe('Hypeddit X, either-or and donation steps', () => {
 			comment: '',
 		});
 		const attention: string[] = [];
+		// A failing fixture callback must fail this test, not go unhandled.
+		let callbackFailed!: (error: unknown) => void;
+		const callbackFailure = new Promise<never>((_, reject) => {
+			callbackFailed = reject;
+		});
 		downloader.setProgressCallback((_stage, _message, _percent, extra) => {
 			if (!extra?.requiresAttention) return;
 			attention.push(String(extra.currentGate));
-			void onAttention(page);
+			onAttention(page).catch(callbackFailed);
 		});
 		const result: {
 			finished?: { skipped: string[]; slides: string[] };
@@ -153,9 +158,10 @@ describe('Hypeddit X, either-or and donation steps', () => {
 				Object.assign(downloader, { downloadFilename: 'track.mp3' });
 			},
 		});
-		const filename = await downloader.downloadAudio(
-			'https://hypeddit.com/fixture',
-		);
+		const filename = await Promise.race([
+			downloader.downloadAudio('https://hypeddit.com/fixture'),
+			callbackFailure,
+		]);
 		return { filename, attention, finished: result.finished };
 	}
 

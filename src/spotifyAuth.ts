@@ -7,7 +7,16 @@ export const SPOTIFY_COOKIES_FILE = 'spotify-cookies.json';
 /** Loads spotify-cookies.json into the browser. False when the file is missing. */
 export async function injectSpotifyCookies(browser: Browser): Promise<boolean> {
 	if (!(await Bun.file(SPOTIFY_COOKIES_FILE).exists())) return false;
-	const cookies = await loadCookies(SPOTIFY_COOKIES_FILE);
+	let cookies: Awaited<ReturnType<typeof loadCookies>>;
+	try {
+		cookies = await loadCookies(SPOTIFY_COOKIES_FILE);
+	} catch (error) {
+		// Spotify is optional; a broken export must not stop SoundCloud-only gates.
+		console.warn(
+			`Ignoring ${SPOTIFY_COOKIES_FILE}: ${error instanceof Error ? error.message : String(error)}`,
+		);
+		return false;
+	}
 	await browser.defaultBrowserContext().setCookie(...cookies);
 	return cookies.length > 0;
 }
@@ -72,8 +81,10 @@ export async function completeSpotifyAuthorization(
 			.catch(() => null);
 		if (accept && !clicked) {
 			await authPage.bringToFront().catch(() => {});
-			await accept.click().catch(() => {});
-			clicked = true;
+			clicked = await accept.click().then(
+				() => true,
+				() => false,
+			);
 		}
 		await timeout(250);
 	}

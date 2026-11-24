@@ -10,6 +10,7 @@ import {
 import { DirectDownloader } from './directDownload';
 import { urlLooksLikeDirectDownload } from './directLinkRules';
 import type { ProgressCallback } from './hypeddit';
+import { safeFetch } from './safeOutboundUrl';
 import Selectors from './selectors';
 import { signInToSoundcloud, waitForSoundcloudLogin } from './soundcloudLogin';
 import {
@@ -89,15 +90,28 @@ export function findMediafireDirectUrl(html: string): string | null {
 	);
 }
 
+/** Like the direct downloader, checks every redirect hop against private hosts. */
 async function fetchText(url: string): Promise<string> {
-	const response = await fetch(url, {
-		headers: { 'User-Agent': FILE_HOST_UA },
-		signal: AbortSignal.timeout(30_000),
-	});
-	if (!response.ok) {
-		throw new Error(`Fetching ${url} failed (${response.status})`);
+	const signal = AbortSignal.timeout(30_000);
+	let current = url;
+	for (let hop = 0; hop <= 10; hop++) {
+		const { response } = await safeFetch(current, {
+			headers: { 'User-Agent': FILE_HOST_UA },
+			signal,
+		});
+		const location = response.headers.get('location');
+		if (response.status >= 300 && response.status < 400 && location) {
+			await response.body?.cancel();
+			current = new URL(location, current).toString();
+			continue;
+		}
+		if (!response.ok) {
+			await response.body?.cancel();
+			throw new Error(`Fetching ${url} failed (${response.status})`);
+		}
+		return response.text();
 	}
-	return response.text();
+	throw new Error(`Fetching ${url} redirected too often.`);
 }
 
 /**
@@ -409,9 +423,9 @@ export class PumpyoursoundDownloader {
 			.waitForFunction(
 				() => {
 					const preloader = document.querySelector('#preloader');
+					// Steps are server-rendered, so an email-only gate has none to wait for.
 					return (
 						document.readyState === 'complete' &&
-						!!document.querySelector('.fangateStep') &&
 						(!preloader || getComputedStyle(preloader).display === 'none')
 					);
 				},

@@ -296,6 +296,8 @@ describe('StillHype social and website steps', () => {
 		try {
 			const gate = await runGate(context, [instagram], {
 				enhanced: true,
+				// Without this, INSTAGRAM_HANDLE from .env would answer the form.
+				handles: {},
 				onAttention: async (page) => {
 					const input = 'input[aria-label="Your Instagram handle"]';
 					await page.$eval(input, (el) => {

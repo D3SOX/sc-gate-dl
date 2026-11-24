@@ -644,9 +644,14 @@ export class DownloadgaterDownloader {
 		const pagesBefore = new Set(await this.browser.pages(true));
 
 		const clicked = await page.evaluate(() => {
-			const btn = Array.from(document.querySelectorAll('button')).find((el) =>
-				/connect.*soundcloud/i.test(el.textContent || ''),
-			) as HTMLButtonElement | undefined;
+			// "Connect & Follow on Spotify" is the Spotify step, not this one.
+			const btn = Array.from(document.querySelectorAll('button')).find((el) => {
+				const text = el.textContent || '';
+				return (
+					/connect.*soundcloud/i.test(text) ||
+					(/connect & (follow|repost)/i.test(text) && !/spotify/i.test(text))
+				);
+			}) as HTMLButtonElement | undefined;
 			if (!btn || btn.disabled) return false;
 			btn.click();
 			return true;

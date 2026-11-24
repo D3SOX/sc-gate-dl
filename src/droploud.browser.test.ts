@@ -28,7 +28,7 @@ const fixture = (
   const data = document.body.dataset;
   const stage = document.querySelector('.dltg-stage');
   let index = 0;
-  let revealed = false;
+  let revealed = steps.length === 0;
   let pane = '';
   document.querySelector('.dligb-follow').onclick = () => { data.banner = 'clicked'; };
   for (const button of document.querySelectorAll('.dw-cookie-card button')) {
@@ -161,7 +161,7 @@ const fixture = (
         advance(80);
       };
     } else if (!revealed) {
-      primary.onclick = () => { revealed = true; render(); };
+      primary.onclick = () => { data.reveal = 'clicked'; revealed = true; render(); };
     } else if (index >= steps.length) {
       primary.onclick = () => { data.downloaded = 'true'; };
     } else if (honor[step]) {
@@ -346,6 +346,7 @@ describe('Droploud redesigned gate', () => {
 	test('downloads right away when the gate is already unlocked', async () => {
 		const result = await runGate([]);
 		expect(result.state.downloaded).toBe('true');
+		expect(result.state.reveal).toBeUndefined();
 	}, 30_000);
 
 	test('reports the email error Droploud shows', async () => {

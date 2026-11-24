@@ -346,6 +346,12 @@ export class HypedditDownloader {
 			).map((div) => div.classList.item(0));
 		}, Selectors.ALL_STEPS_CHILD_DIVS);
 		console.log('Hypeddit gates found', rawGateNames);
+		// Only an either-or group with Spotify needs to know about its skip.
+		this.spotifySkippable =
+			rawGateNames.some(
+				(name) => name?.includes('|') && name.split('|').includes('sp'),
+			) &&
+			(await page.$(Selectors.SP_SKIPPER_BUTTON).catch(() => null)) !== null;
 
 		const normalizedGates = rawGateNames.flatMap((rawGateName) => {
 			if (!rawGateName) {
@@ -470,14 +476,23 @@ export class HypedditDownloader {
 				{ currentGate: 'email', browserActive: true, requiresAttention: true },
 			);
 			result = await page
-				.waitForSelector('.move-left #step_email', { timeout: 120_000 })
+				.waitForFunction(
+					() => {
+						const step = document.querySelector('#step_email');
+						return !step || !!step.closest('.move-left');
+					},
+					{ timeout: 120_000 },
+				)
 				.then(() => 'accepted')
 				.catch(() => 'timeout');
-			this.emitProgress('handling_gates', 'Email step completed.', 50, {
-				currentGate: 'email',
-				browserActive: true,
-				requiresAttention: false,
-			});
+			this.emitProgress(
+				'handling_gates',
+				result === 'accepted'
+					? 'Email step completed.'
+					: 'Hypeddit email step timed out.',
+				50,
+				{ currentGate: 'email', browserActive: true, requiresAttention: false },
+			);
 		}
 		if (result === 'accepted') return;
 		if (result.startsWith('error:'))
@@ -1100,11 +1115,19 @@ export class HypedditDownloader {
 		}
 	}
 
+	/** Set per post: whether its Spotify step offers a skip button. */
+	private spotifySkippable = false;
+
 	private gateDifficulty(gateName: string): number {
 		const difficulty =
 			this.getGateDefinition(gateName)?.difficulty ?? Number.MAX_SAFE_INTEGER;
-		// Without cookies the Spotify handler fails; a manual step can still pass.
-		return gateName === 'sp' && !this.spotifyCookiesExists ? 6 : difficulty;
+		// Without cookies the Spotify handler fails unless the gate offers a skip;
+		// a manual step can still pass.
+		return gateName === 'sp' &&
+			!this.spotifyCookiesExists &&
+			!this.spotifySkippable
+			? 6
+			: difficulty;
 	}
 
 	private pickPreferredGate(candidates: string[]): string {

@@ -34,7 +34,9 @@ function gatePage(accept: boolean) {
     const error = document.querySelector('.name_error_email');
     error.textContent = '';
     setTimeout(() => {
-      if (${accept}) document.querySelector('#email_to_downloads_next').closest('.fangate-slider-content').classList.add('move-left');
+      const filled = document.querySelector('#email_name').value === 'Fan' &&
+        document.querySelector('#email_address').value === 'fan@example.test';
+      if (${accept} && filled) document.querySelector('#email_to_downloads_next').closest('.fangate-slider-content').classList.add('move-left');
       else error.textContent = 'Please enter a valid email address.';
     }, 1500);
   };
@@ -86,7 +88,7 @@ describe('Hypeddit email step', () => {
 			);
 			return { filename, emailSlideOnDonation: seen.emailSlideOnDonation };
 		} finally {
-			await context.close();
+			await context.close().catch(() => {});
 		}
 	}
 

@@ -1262,6 +1262,9 @@ export class StillhypeDownloader {
 	private async saveUnlockedFile(url: string): Promise<string> {
 		if (!this.externalDownload) return this.saveFileFromUrl(url);
 		const destination = await resolveGateUrlOrFollow(url).catch(() => null);
+		// close() can't reach a downloader that doesn't exist yet.
+		if (this.downloadAbortController.signal.aborted)
+			throw new Error('Download cancelled');
 		if (destination?.provider === 'direct') {
 			const direct = new DirectDownloader();
 			this.directDownloader = direct;

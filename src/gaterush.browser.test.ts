@@ -288,6 +288,14 @@ describe('GateRush redesigned gate', () => {
 		const context = await browser.createBrowserContext();
 		const page = await context.newPage();
 		const requested: string[] = [];
+		const aborted: string[] = [];
+		page.on('requestfailed', (request) => {
+			if (
+				request.redirectChain().length &&
+				request.failure()?.errorText === 'net::ERR_ABORTED'
+			)
+				aborted.push(request.url());
+		});
 		await page.setRequestInterception(true);
 		page.on('request', (request) => {
 			// Redirect targets are left to the downloader, which must not load them.
@@ -341,6 +349,7 @@ describe('GateRush redesigned gate', () => {
 			return {
 				filename,
 				requested,
+				aborted,
 				bandcamp: bandcamp.mock.calls,
 				direct: direct.mock.calls,
 			};
@@ -362,6 +371,8 @@ describe('GateRush redesigned gate', () => {
 		expect(result.requested.filter((p) => p === '/download/fixture')).toEqual([
 			'/download/fixture',
 		]);
+		// The browser must not load the destination itself.
+		expect(result.aborted).toEqual(['https://artist.bandcamp.com/track/x']);
 	}, 15_000);
 
 	test('downloads a direct link reward over HTTP', async () => {

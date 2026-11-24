@@ -206,7 +206,8 @@ async function assertOnline(liveCase: LiveCase) {
 			signal: AbortSignal.timeout(30_000),
 		}).catch(() => null);
 		await file?.body?.cancel();
-		if (file?.headers.get('content-type')?.includes('text/html')) {
+		// Anti-bot answers (403, 429) fall through to the real test.
+		if (file?.ok && file.headers.get('content-type')?.includes('text/html')) {
 			throw offline(liveCase, 'Dropbox returned a page instead of the file');
 		}
 	}

@@ -565,7 +565,8 @@ export function findKnownGateInHtml(
 	html: string,
 	baseUrl?: string,
 ): { url: string; provider: GateProvider } | null {
-	const normalized = html.replace(/\\\//g, '/');
+	// Decode &amp; first so a share link keeps query params like resourcekey.
+	const normalized = html.replace(/\\\//g, '/').replace(/&amp;/g, '&');
 	const direct = matchKnownDownloadGateUrl(normalized);
 	if (direct && direct.provider !== 'bandcamp') return direct;
 

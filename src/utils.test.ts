@@ -299,6 +299,18 @@ describe('extractGateUrl', () => {
 });
 
 describe('findKnownGateInHtml', () => {
+	test('keeps an HTML-encoded Drive resource key after a social link', () => {
+		expect(
+			findKnownGateInHtml(
+				'<a href="https://instagram.com/artist">IG</a><a href="https://drive.google.com/file/d/abcdefghijklmnopqrstuvwx/view?usp=sharing&amp;resourcekey=abc-123">DL</a>',
+				'https://linktr.ee/artist',
+			),
+		).toEqual({
+			url: 'https://drive.usercontent.google.com/download?id=abcdefghijklmnopqrstuvwx&export=download&confirm=t&resourcekey=abc-123',
+			provider: 'direct',
+		});
+	});
+
 	test('follows a smart-link Bandcamp homepage to its newest album', () => {
 		const smartLinkHtml = `
 			<a href="https://unrelated.bandcamp.com/">Unrelated</a>

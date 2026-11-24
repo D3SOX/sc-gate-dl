@@ -401,26 +401,30 @@ export class DroploudDownloader {
 		label: RegExp,
 		trusted = false,
 	): Promise<boolean> {
-		const found = await this.findPaneButton(page, label);
-		if (!found?.enabled) return false;
-		if (!trusted) {
-			return page.evaluate(
-				(selector, index) => {
-					const button =
-						document.querySelectorAll<HTMLButtonElement>(selector)[index];
-					button?.click();
-					return !!button;
-				},
-				Selectors.DROPLOUD_PANE_BUTTONS,
-				found.index,
-			);
-		}
+		// Match and click the same element, so a re-rendered pane can't swap
+		// in another action between the lookup and the click.
 		const handles = await page.$$(Selectors.DROPLOUD_PANE_BUTTONS);
 		try {
-			const handle = handles[found.index];
-			if (!handle) return false;
-			await handle.click({ delay: 40 });
-			return true;
+			for (const handle of handles) {
+				const usable = await handle
+					.evaluate(
+						(button, source, flags) =>
+							new RegExp(source, flags).test(
+								(button.textContent || '').replace(/\s+/g, ' ').trim(),
+							) &&
+							!(button as HTMLButtonElement).disabled &&
+							button.getAttribute('aria-disabled') !== 'true' &&
+							button.getAttribute('aria-busy') !== 'true',
+						label.source,
+						label.flags,
+					)
+					.catch(() => false);
+				if (!usable) continue;
+				if (trusted) await handle.click({ delay: 40 });
+				else await handle.evaluate((button) => (button as HTMLElement).click());
+				return true;
+			}
+			return false;
 		} finally {
 			for (const handle of handles) await handle.dispose();
 		}
