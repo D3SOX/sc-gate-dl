@@ -765,6 +765,26 @@ describe('finishCliDownload with real FFmpeg output', () => {
 		expect(cover?.disposition?.attached_pic).toBe(1);
 	});
 
+	test('encodes a lossless FLAC to M4A without a cover when artwork retrieval fails', async () => {
+		await makeFlacSource('Song.flac');
+
+		await finish('Song.flac', {
+			format: 'm4a-aac',
+			bitrateSetting: '256',
+			stepOverrides: {
+				fetchArtwork: async () => {
+					throw new Error('artwork host down');
+				},
+			},
+		});
+
+		const output = await probe(join(destination, 'Song.m4a'));
+		expect(audioStream(output)?.codec_name).toBe('aac');
+		expect(
+			output.streams?.find((stream) => stream.codec_type === 'video'),
+		).toBeUndefined();
+	});
+
 	test('keeps a lossless FLAC output without using the common bitrate', async () => {
 		await makeFlacSource('Song.flac');
 

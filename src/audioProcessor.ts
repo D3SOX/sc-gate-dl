@@ -340,6 +340,7 @@ export class AudioProcessor {
 						losslessHandling,
 						bitrateKbps,
 						sourceUrl,
+						artwork.buffer.byteLength > 0,
 					);
 					await this.maybeRemoveSource(
 						inputPath,
@@ -665,6 +666,7 @@ export class AudioProcessor {
 		losslessHandling: 'prompt' | 'always' | 'never',
 		bitrateKbps: number,
 		sourceUrl?: string,
+		hasArtwork = true,
 	): Promise<string> {
 		const replacingM4a =
 			extname(filename).toLowerCase() === '.m4a' &&
@@ -686,29 +688,34 @@ export class AudioProcessor {
 				});
 
 		const coverCodec = m4aCoverCodec(artworkPath);
+		const coverArgs = hasArtwork
+			? [
+					'-i',
+					artworkPath,
+					'-map',
+					'1:v',
+					'-c:v',
+					coverCodec,
+					'-disposition:v',
+					'attached_pic',
+					'-metadata:s:v',
+					'title=Album cover',
+					'-metadata:s:v',
+					'comment=Cover (front)',
+				]
+			: [];
 		const args = [
 			'-i',
 			inputPath,
-			'-i',
-			artworkPath,
+			...coverArgs,
 			'-map',
 			'0:a',
-			'-map',
-			'1:v',
 			'-c:a',
 			'aac',
 			'-profile:a',
 			'aac_low',
 			'-b:a',
 			`${bitrateKbps}k`,
-			'-c:v',
-			coverCodec,
-			'-disposition:v',
-			'attached_pic',
-			'-metadata:s:v',
-			'title=Album cover',
-			'-metadata:s:v',
-			'comment=Cover (front)',
 			'-movflags',
 			'+faststart',
 		];
