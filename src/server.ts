@@ -918,6 +918,30 @@ function wrapRoutes<Path extends string>(
 	return wrapped as Bun.Serve.Routes<undefined, Path>;
 }
 
+const TEST_FIXTURE_JOB_ENV = 'SC_GATE_DL_TEST_FIXTURE_JOB';
+
+/** Test hook: seed one job waiting for tags so HTTP tests need no live gate. */
+function seedFixtureJob(): string | null {
+	const fixture = process.env[TEST_FIXTURE_JOB_ENV];
+	if (!fixture) return null;
+	const job = jobStore.create(
+		'https://soundcloud.com/lister_aus/lister-nik-sitz-anavax-dj-got',
+		'mp3-320',
+		'client',
+	);
+	jobStore.update(job.id, {
+		downloadFilename: fixture,
+		outputFilename: fixture,
+		artworkBuffer: null,
+		artworkFileName: null,
+	});
+	jobStore.updateProgress(job.id, 'waiting_metadata', 'Check the tags', 100);
+	return job.id;
+}
+
+const fixtureJobId = seedFixtureJob();
+if (fixtureJobId) console.log(`[test-fixture] job ${fixtureJobId}`);
+
 const server = Bun.serve({
 	port: API_PORT,
 	// Increase idle timeout for long-running operations (browser automation, downloads)
