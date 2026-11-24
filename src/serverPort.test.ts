@@ -23,7 +23,7 @@ async function startWithPort(value: string | undefined) {
 }
 
 describe('SC_GATE_DL_PORT validation', () => {
-	test.each(['abc', '3.5', '-1', '65536', ' '])(
+	test.each(['abc', '3.5', '-1', '65536', ' ', '0'])(
 		'rejects the invalid value %p at startup and names the setting',
 		async (value) => {
 			const { stderr, exitCode } = await startWithPort(value);
