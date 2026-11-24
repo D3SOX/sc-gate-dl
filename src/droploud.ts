@@ -404,24 +404,37 @@ export class DroploudDownloader {
 		// Match and click the same element, so a re-rendered pane can't swap
 		// in another action between the lookup and the click.
 		const handles = await page.$$(Selectors.DROPLOUD_PANE_BUTTONS);
-		try {
-			for (const handle of handles) {
-				const usable = await handle
-					.evaluate(
-						(button, source, flags) =>
+		// Untrusted clicks check and click in one call. A trusted click is a
+		// separate input event, so it re-checks right before clicking.
+		const usable = (handle: (typeof handles)[number], click: boolean) =>
+			handle
+				.evaluate(
+					(button, source, flags, click) => {
+						const ok =
 							new RegExp(source, flags).test(
 								(button.textContent || '').replace(/\s+/g, ' ').trim(),
 							) &&
 							!(button as HTMLButtonElement).disabled &&
 							button.getAttribute('aria-disabled') !== 'true' &&
-							button.getAttribute('aria-busy') !== 'true',
-						label.source,
-						label.flags,
-					)
-					.catch(() => false);
-				if (!usable) continue;
-				if (trusted) await handle.click({ delay: 40 });
-				else await handle.evaluate((button) => (button as HTMLElement).click());
+							button.getAttribute('aria-busy') !== 'true';
+						if (ok && click) (button as HTMLElement).click();
+						return ok;
+					},
+					label.source,
+					label.flags,
+					click,
+				)
+				.catch(() => false);
+		try {
+			for (const handle of handles) {
+				if (!trusted) {
+					if (await usable(handle, true)) return true;
+					continue;
+				}
+				if (!(await usable(handle, false))) continue;
+				await handle.scrollIntoView().catch(() => {});
+				if (!(await usable(handle, false))) return false;
+				await handle.click({ delay: 40 });
 				return true;
 			}
 			return false;
