@@ -92,3 +92,30 @@ describe('userscript format options are selectable', () => {
 		expect(panelSource).toContain(`value="${format}"`);
 	});
 });
+
+describe('generated Web UI links keep the selected format', () => {
+	function loadBuildWebuiSrc(format: string) {
+		const start = source.indexOf('\tfunction buildWebuiSrc(');
+		const end = source.indexOf('\n\tfunction loadTrackIntoPanel(', start);
+		if (start < 0 || end < 0) throw new Error('buildWebuiSrc not found');
+		const body = source.slice(start, end).trim();
+		return Function(
+			'getOutputFormat',
+			'getBrowserMode',
+			'getWebuiBase',
+			`"use strict"; ${body}; return buildWebuiSrc;`,
+		)(
+			() => format,
+			() => 'headless',
+			() => 'http://localhost:4321',
+		) as (trackUrl: string) => string;
+	}
+
+	test.each(['mp3', 'm4a-aac', 'mp3-320'])(
+		'passes %s unchanged as outputFormat',
+		(format) => {
+			const src = loadBuildWebuiSrc(format)('https://soundcloud.com/a/b');
+			expect(new URL(src).searchParams.get('outputFormat')).toBe(format);
+		},
+	);
+});
