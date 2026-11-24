@@ -145,7 +145,7 @@ describe('resolveGateProviderUrl', () => {
 				'https://drive.google.com/file/d/abcdefghijklmnopqrstuvwx/view?usp=sharing',
 			),
 		).toEqual({
-			url: 'https://drive.google.com/uc?export=download&id=abcdefghijklmnopqrstuvwx',
+			url: 'https://drive.usercontent.google.com/download?id=abcdefghijklmnopqrstuvwx&export=download&confirm=t',
 			provider: 'direct',
 		});
 	});
@@ -156,7 +156,7 @@ describe('resolveGateProviderUrl', () => {
 				'https://drive.google.com/file/d/abcdefghijklmnopqrstuvwx/view?usp=sharing&resourcekey=abc-123',
 			),
 		).toEqual({
-			url: 'https://drive.google.com/uc?export=download&id=abcdefghijklmnopqrstuvwx&resourcekey=abc-123',
+			url: 'https://drive.usercontent.google.com/download?id=abcdefghijklmnopqrstuvwx&export=download&confirm=t&resourcekey=abc-123',
 			provider: 'direct',
 		});
 	});
@@ -282,9 +282,35 @@ describe('extractGateUrl', () => {
 			type: 'purchase_url',
 		});
 	});
+
+	test('finds a Drive link listed after social links in the description', () => {
+		expect(
+			extractGateUrl({
+				purchase_url: null,
+				description:
+					'Telegram: https://t.me/artist\nDownload: https://drive.google.com/file/d/12P4JEdeKZ97NjRDpN7DuTeuJp95KL4y9/view?usp=sharing',
+			} as unknown as Parameters<typeof extractGateUrl>[0]),
+		).toEqual({
+			url: 'https://drive.usercontent.google.com/download?id=12P4JEdeKZ97NjRDpN7DuTeuJp95KL4y9&export=download&confirm=t',
+			provider: 'direct',
+			type: 'description',
+		});
+	});
 });
 
 describe('findKnownGateInHtml', () => {
+	test('keeps an HTML-encoded Drive resource key after a social link', () => {
+		expect(
+			findKnownGateInHtml(
+				'<a href="https://instagram.com/artist">IG</a><a href="https://drive.google.com/file/d/abcdefghijklmnopqrstuvwx/view?usp=sharing&amp;resourcekey=abc-123">DL</a>',
+				'https://linktr.ee/artist',
+			),
+		).toEqual({
+			url: 'https://drive.usercontent.google.com/download?id=abcdefghijklmnopqrstuvwx&export=download&confirm=t&resourcekey=abc-123',
+			provider: 'direct',
+		});
+	});
+
 	test('follows a smart-link Bandcamp homepage to its newest album', () => {
 		const smartLinkHtml = `
 			<a href="https://unrelated.bandcamp.com/">Unrelated</a>

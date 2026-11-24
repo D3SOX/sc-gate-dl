@@ -15,6 +15,13 @@ describe('SoundCloud interactive login detection', () => {
 				false,
 			),
 		).toBe(true);
+		expect(
+			isSoundcloudLoginDocument(
+				'https://secure.soundcloud.com/authorize',
+				'Create an account or sign in',
+				false,
+			),
+		).toBe(true);
 	});
 
 	test('does not interrupt an OAuth approval page or another host', () => {
