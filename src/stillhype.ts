@@ -1268,8 +1268,12 @@ export class StillhypeDownloader {
 		if (destination?.provider === 'direct') {
 			const direct = new DirectDownloader();
 			this.directDownloader = direct;
-			if (this.progressCallback)
-				direct.setProgressCallback(this.progressCallback);
+			// The gate used the browser and SoundCloud; keep offering cleanup.
+			const progress = this.progressCallback;
+			if (progress)
+				direct.setProgressCallback((stage, message, percent, extra) =>
+					progress(stage, message, percent, { ...extra, browserless: false }),
+				);
 			this.downloadFilename = await direct.downloadAudio(destination.url);
 			return this.downloadFilename;
 		}

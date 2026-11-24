@@ -42,6 +42,39 @@ test('an external download hands a share link to the direct downloader', async (
 	);
 });
 
+test('an external download keeps its progress browser-backed', async () => {
+	const direct = spyOn(
+		DirectDownloader.prototype,
+		'downloadAudio',
+	).mockImplementation(async function (this: DirectDownloader) {
+		(
+			this as unknown as {
+				progressCallback: Parameters<
+					DirectDownloader['setProgressCallback']
+				>[0];
+			}
+		).progressCallback('downloading', 'Downloading...', 10, {
+			browserless: true,
+		});
+		return 'Schnelle Beats.wav';
+	});
+	restores.push(() => direct.mockRestore());
+	const instance = new StillhypeDownloader({
+		browserMode: 'headless',
+		comment: '',
+	});
+	const seen: (boolean | undefined)[] = [];
+	instance.setProgressCallback((_stage, _message, _percent, extra) => {
+		seen.push(extra?.browserless);
+	});
+	(instance as unknown as Internals).externalDownload = true;
+	await (instance as unknown as Internals).saveUnlockedFile(
+		'https://drive.google.com/file/d/1AbCdEfGhIjKlMnOpQrStUv/view',
+	);
+	// The Web UI offers SoundCloud cleanup only for browser-backed jobs.
+	expect(seen).toEqual([false]);
+});
+
 test('a web page is never saved as audio', async () => {
 	const root = await mkdtemp(join(tmpdir(), 'stillhype-html-'));
 	const cwd = process.cwd();
