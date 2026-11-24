@@ -91,8 +91,11 @@ export function findMediafireDirectUrl(html: string): string | null {
 }
 
 /** Like the direct downloader, checks every redirect hop against private hosts. */
-async function fetchText(url: string): Promise<string> {
-	const signal = AbortSignal.timeout(30_000);
+async function fetchText(url: string, cancel?: AbortSignal): Promise<string> {
+	const timeoutSignal = AbortSignal.timeout(30_000);
+	const signal = cancel
+		? AbortSignal.any([cancel, timeoutSignal])
+		: timeoutSignal;
 	let current = url;
 	for (let hop = 0; hop <= 10; hop++) {
 		const { response } = await safeFetch(current, {
@@ -194,6 +197,8 @@ export class PumpyoursoundDownloader {
 	downloadMethod: 'gate' | 'bandcamp-stream' = 'gate';
 	private downloadFilename: string | null = null;
 	private config: HypedditConfig;
+	/** Aborted by close(), so file-link lookups stop with the job. */
+	private readonly closeController = new AbortController();
 	private progressCallback: ProgressCallback | null = null;
 	private spotifyCookiesLoaded = false;
 
@@ -259,7 +264,11 @@ export class PumpyoursoundDownloader {
 
 			const fileUrl = await resolvePumpyoursoundFileLink(
 				await this.submitAndReadDownloadLink(page),
+				(link) => fetchText(link, this.closeController.signal),
 			);
+			// close() can't reach a downloader that doesn't exist yet.
+			if (this.closeController.signal.aborted)
+				throw new Error('Download cancelled');
 			if (isBandcampUrl(fileUrl)) {
 				// The download page redirects to the link itself after a countdown,
 				// which would race the Bandcamp navigation.
@@ -302,6 +311,7 @@ export class PumpyoursoundDownloader {
 	}
 
 	async close() {
+		this.closeController.abort();
 		await this.bandcampDownloader?.close();
 		await this.directDownloader?.close();
 		await this.browserLaunch.close();

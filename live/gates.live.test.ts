@@ -205,10 +205,17 @@ async function assertOnline(liveCase: LiveCase) {
 			headers: { 'User-Agent': BROWSER_UA },
 			signal: AbortSignal.timeout(30_000),
 		}).catch(() => null);
-		await file?.body?.cancel();
-		// Anti-bot answers (403, 429) fall through to the real test.
-		if (file?.ok && file.headers.get('content-type')?.includes('text/html')) {
-			throw offline(liveCase, 'Dropbox returned a page instead of the file');
+		const page = file?.headers.get('content-type')?.includes('text/html')
+			? await file.text().catch(() => '')
+			: '';
+		await file?.body?.cancel().catch(() => {});
+		// Only Dropbox's own error pages mean removed; anything else, such as an
+		// anti-bot page, falls through to the real test.
+		const removed = page.match(
+			/<title>Dropbox - (Error|Invalid Link|File Deleted)\b/i,
+		);
+		if (removed) {
+			throw offline(liveCase, `Dropbox shows "${removed[1]}"`);
 		}
 	}
 }
