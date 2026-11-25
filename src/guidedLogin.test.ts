@@ -495,7 +495,7 @@ describe('prepareCliLogins', () => {
 			},
 			log: (line) => logs.push(line),
 			...options,
-		}).then(() => ({ logs, questions, logins }));
+		}).then((soundcloud) => ({ logs, questions, logins, soundcloud }));
 	}
 
 	test('prints one status line and asks nothing when all is fine', async () => {
@@ -565,5 +565,18 @@ describe('prepareCliLogins', () => {
 		});
 		expect(result.questions).toEqual([]);
 		expect(result.logins).toEqual([['soundcloud', 'spotify']]);
+	});
+
+	test('returns the SoundCloud login state after the login', async () => {
+		const states: SoundcloudLoginState[] = ['missing', 'valid'];
+		const saved = await run({
+			force: true,
+			checkSoundcloud: async () => states.shift() ?? 'valid',
+		});
+		expect(saved.soundcloud).toBe('valid');
+
+		const failed = await run({ force: true, soundcloud: 'missing' });
+		expect(failed.logins).toEqual([['soundcloud']]);
+		expect(failed.soundcloud).toBe('missing');
 	});
 });

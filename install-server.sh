@@ -50,6 +50,8 @@ main() {
 		step "Cloning sc-gate-dl to $app_dir"
 		git clone "$repo_url" "$app_dir"
 	fi
+	# systemd needs an absolute WorkingDirectory.
+	app_dir=$(cd "$app_dir" && pwd)
 	(cd "$app_dir" && "$bun" install --frozen-lockfile)
 
 	step "Configuring .env"
@@ -105,22 +107,23 @@ main() {
 	systemctl --user start sc-gate-dl.target
 
 	local host
-	host=$(ip -4 -o route get 1.1.1.1 2>/dev/null | sed -n 's/.* src \([0-9.]*\).*/\1/p')
+	host=$(ip -4 -o route get 1.1.1.1 2>/dev/null | sed -n 's/.* src \([0-9.]*\).*/\1/p' || true)
 	host=${host:-$(uname -n)}
 
 	# The API only starts with a SoundCloud login, so the first one runs here,
 	# in a browser on the virtual display that noVNC shows.
-	if ! grep -Eq '^SC_(REFRESH|OAUTH)_TOKEN=.' "$app_dir/.env"; then
+	if ! has_login "$app_dir" "$bun"; then
 		step "Logging in to SoundCloud and Spotify"
 		printf 'Open http://%s:6080/vnc.html?autoconnect=true&resize=scale in a browser\n' "$host"
 		printf 'and enter the VNC password. The sign-in windows open there.\n'
 		printf 'Press Enter to start.'
 		read -r </dev/tty
 		wait_for "the virtual display" test -S /tmp/.X11-unix/X99
-		(cd "$app_dir" && env -u WAYLAND_DISPLAY DISPLAY=:99 XAUTHORITY="$xauthority" \
-			XDG_SESSION_TYPE=x11 OZONE_PLATFORM=x11 "$bun" start --login </dev/tty)
-		grep -Eq '^SC_(REFRESH|OAUTH)_TOKEN=.' "$app_dir/.env" ||
+		# bun start --login exits with 1 when SoundCloud is still not logged in.
+		if ! (cd "$app_dir" && env -u WAYLAND_DISPLAY DISPLAY=:99 XAUTHORITY="$xauthority" \
+			XDG_SESSION_TYPE=x11 OZONE_PLATFORM=x11 "$bun" start --login </dev/tty); then
 			fail "The SoundCloud login failed, so the API can't start. Run this script again to retry."
+		fi
 		systemctl --user restart sc-gate-app.service
 	fi
 
@@ -182,8 +185,19 @@ install_packages() {
 set_env() {
 	local file=$1 key=$2 value=$3
 	if ! grep -q "^$key=" "$file"; then
+		# Don't append to a last line without a newline.
+		if [ -s "$file" ] && [ -n "$(tail -c 1 "$file")" ]; then
+			echo >>"$file"
+		fi
 		printf '%s=%s\n' "$key" "$value" >>"$file"
 	fi
+}
+
+# True when .env holds the SoundCloud login the API needs to start, as the app
+# parses it.
+has_login() {
+	(cd "$1" && env -u SC_CLIENT_ID -u SC_OAUTH_TOKEN -u SC_REFRESH_TOKEN "$2" -e \
+		"import { hasSoundcloudLogin } from './src/soundcloud'; process.exit(hasSoundcloudLogin() ? 0 : 1);")
 }
 
 write_units() {

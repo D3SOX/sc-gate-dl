@@ -480,6 +480,7 @@ export interface CliLoginOptions {
 /**
  * CLI start check. A broken SoundCloud login offers the guided login; Spotify
  * is only needed by some gates, so a missing Spotify login is just a warning.
+ * Returns the SoundCloud login state after any login.
  */
 export async function prepareCliLogins({
 	force,
@@ -489,7 +490,7 @@ export async function prepareCliLogins({
 	login = (providers) => runGuidedLogin(providers),
 	confirm,
 	log = console.log,
-}: CliLoginOptions): Promise<void> {
+}: CliLoginOptions): Promise<SoundcloudLoginState> {
 	const check = async () => {
 		const [soundcloud, spotify] = await Promise.all([
 			checkSoundcloud(),
@@ -536,7 +537,10 @@ export async function prepareCliLogins({
 		if (after.spotify !== 'present') {
 			log(`Spotify gates need a Spotify login. ${LOGIN_HINT}`);
 		}
-	} else if (broken.spotify) {
+		return after.soundcloud;
+	}
+	if (broken.spotify) {
 		log(`Spotify gates need a Spotify login. ${LOGIN_HINT}`);
 	}
+	return before.soundcloud;
 }
