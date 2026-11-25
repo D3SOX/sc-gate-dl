@@ -9,10 +9,7 @@ import {
 	SoundcloudClient,
 	type SoundcloudLoginState,
 } from './soundcloud';
-import {
-	signInToSoundcloud,
-	throwIfSoundcloudBlocked,
-} from './soundcloudLogin';
+import { signInToSoundcloud, soundcloudBlockHint } from './soundcloudLogin';
 import { SPOTIFY_COOKIES_FILE } from './spotifyAuth';
 import { timeout, writeBrowserCookies } from './utils';
 
@@ -172,11 +169,9 @@ export async function captureSoundcloudApiLogin(
 			);
 			const context = browser.defaultBrowserContext();
 			const deadline = Date.now() + 10 * 60_000;
+			const hintIfBlocked = soundcloudBlockHint(page);
 			for (;;) {
-				const text = await page
-					.evaluate(() => document.body?.innerText || '')
-					.catch(() => '');
-				throwIfSoundcloudBlocked(page.url(), text);
+				await hintIfBlocked();
 				const cookies = await context.cookies().catch(() => []);
 				const signedIn = cookies.some(
 					(cookie) =>
@@ -214,15 +209,17 @@ export async function captureSoundcloudApiLogin(
 /**
  * The API login comes from a throwaway profile, and the gate browser signs in
  * on its own like Initialize logins (which saves soundcloud-cookies.json), so
- * each keeps its own refresh-token chain.
+ * each keeps its own refresh-token chain. The gate browser opens only after
+ * the throwaway one closed: CloakBrowser's free tier kills a second browser
+ * running at the same time.
  */
 export async function loginToSoundcloud(
-	gateBrowser: Browser,
+	gateBrowser: () => Promise<Browser>,
 	captureApiLogin: () => Promise<SoundcloudSession> = captureSoundcloudApiLogin,
 ): Promise<SoundcloudSession> {
 	const session = await captureApiLogin();
 	console.log('Now sign in to SoundCloud for the gate browser...');
-	await signInToSoundcloud(gateBrowser);
+	await signInToSoundcloud(await gateBrowser());
 	return session;
 }
 
@@ -282,7 +279,9 @@ export async function saveSoundcloudSession(
 
 export interface GuidedLoginOptions {
 	openBrowser?: () => Promise<Browser>;
-	soundcloud?: (browser: Browser) => Promise<SoundcloudSession>;
+	soundcloud?: (
+		gateBrowser: () => Promise<Browser>,
+	) => Promise<SoundcloudSession>;
 	spotify?: (browser: Browser) => Promise<void>;
 	envPath?: string;
 	env?: Partial<Record<string, string>>;
@@ -291,8 +290,9 @@ export interface GuidedLoginOptions {
 
 /**
  * Logs in to each provider in a visible browser with the shared
- * `./browser-data` profile. One provider failing does not stop the other.
- * Returns the providers that logged in. Never logs a token.
+ * `./browser-data` profile, opened when a provider first needs it. One
+ * provider failing does not stop the other. Returns the providers that logged
+ * in. Never logs a token.
  */
 export async function runGuidedLogin(
 	providers: LoginProvider[],
@@ -307,23 +307,26 @@ export async function runGuidedLogin(
 	}: GuidedLoginOptions = {},
 ): Promise<LoginProvider[]> {
 	const done: LoginProvider[] = [];
-	let browser: Browser;
-	try {
-		browser = await openBrowser();
-	} catch (error) {
-		log(`Could not open the login browser: ${errorMessage(error)}`);
-		return done;
-	}
+	// Assigned in gateBrowser, so keep TypeScript from narrowing it to null.
+	let browser = null as Promise<Browser> | null;
+	const gateBrowser = () => {
+		browser ??= openBrowser();
+		return browser;
+	};
 	try {
 		for (const provider of providers) {
 			try {
 				if (provider === 'soundcloud') {
-					await saveSoundcloudSession(await soundcloud(browser), envPath, env);
+					await saveSoundcloudSession(
+						await soundcloud(gateBrowser),
+						envPath,
+						env,
+					);
 					log(
 						`✓ SoundCloud: saved the login to ${envPath}. Restart a running sc-gate-dl server to use it.`,
 					);
 				} else {
-					await spotify(browser);
+					await spotify(await gateBrowser());
 					log(`✓ Spotify: saved the login to ${SPOTIFY_COOKIES_FILE}.`);
 				}
 				done.push(provider);
@@ -332,7 +335,7 @@ export async function runGuidedLogin(
 			}
 		}
 	} finally {
-		await browser.close().catch(() => {});
+		await browser?.then((opened) => opened.close()).catch(() => {});
 	}
 	return done;
 }

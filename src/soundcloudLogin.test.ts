@@ -2,6 +2,7 @@ import { describe, expect, spyOn, test } from 'bun:test';
 import type { Cookie, Page } from 'puppeteer';
 import {
 	isSoundcloudLoginDocument,
+	soundcloudBlockHint,
 	throwIfSoundcloudBlocked,
 	waitForSoundcloudLogin,
 } from './soundcloudLogin';
@@ -58,6 +59,44 @@ describe('SoundCloud interactive login detection', () => {
 			),
 		).not.toThrow();
 	});
+
+	test('reports a DataDome hard block shown in its captcha frame', () => {
+		const frame = (type: string) =>
+			`https://geo.captcha-delivery.com/captcha/?initialCid=a&cid=b&t=${type}&referer=https%3A%2F%2Fapi-auth.soundcloud.com%2F`;
+		expect(() =>
+			throwIfSoundcloudBlocked('https://soundcloud.com/signin', '', [
+				'https://soundcloud.com/signin',
+				frame('bv'),
+			]),
+		).toThrow('SoundCloud blocked');
+		// A solvable captcha (`t=fe`) is left to the user.
+		expect(() =>
+			throwIfSoundcloudBlocked('https://soundcloud.com/signin', '', [
+				frame('fe'),
+			]),
+		).not.toThrow();
+	});
+});
+
+describe('soundcloudBlockHint', () => {
+	test('hints to reload once per block while someone signs in', async () => {
+		const states = [false, true, true, false, true];
+		let current = false;
+		const page = {
+			url: () => 'https://soundcloud.com/signin',
+			frames: () => [],
+			evaluate: async () =>
+				current ? 'You have been blocked.' : 'Sign in or create an account',
+		} as unknown as Page;
+		const lines: string[] = [];
+		const hint = soundcloudBlockHint(page, (line) => lines.push(line));
+		for (const blocked of states) {
+			current = blocked;
+			await hint();
+		}
+		expect(lines).toHaveLength(2);
+		expect(lines[0]).toContain('Reload the page');
+	});
 });
 
 describe('SoundCloud login persistence', () => {
@@ -78,6 +117,7 @@ describe('SoundCloud login persistence', () => {
 			isClosed: () => false,
 			url: () => 'https://secure.soundcloud.com/authorize',
 			bringToFront: async () => {},
+			frames: () => [],
 			evaluate: async () => ({
 				text: ++checks === 1 ? 'Sign in or create an account' : 'Allow',
 				hasApproval: checks > 1,
@@ -113,6 +153,7 @@ describe('SoundCloud login persistence', () => {
 			isClosed: () => false,
 			url: () => 'https://secure.soundcloud.com/authorize',
 			bringToFront: async () => {},
+			frames: () => [],
 			evaluate: async () => ({
 				text:
 					++checks === 1

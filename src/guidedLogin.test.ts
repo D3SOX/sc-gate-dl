@@ -175,6 +175,50 @@ describe('runGuidedLogin', () => {
 		expect(logs[0]).toContain('SoundCloud login failed: SoundCloud blocked');
 		expect(await Bun.file(envPath).exists()).toBe(false);
 	});
+
+	test('opens the gate browser only when a login asks for it', async () => {
+		const events: string[] = [];
+		const done = await runGuidedLogin(['soundcloud'], {
+			openBrowser: async () => {
+				events.push('open gate browser');
+				return {
+					close: async () => {
+						events.push('close gate browser');
+					},
+				} as unknown as Browser;
+			},
+			soundcloud: async (gateBrowser) => {
+				events.push('API sign-in');
+				await gateBrowser();
+				await gateBrowser();
+				return { clientId: 'c', refreshToken: 'r', accessToken: null };
+			},
+			envPath: join(dir, '.env'),
+			env: {},
+			log: () => {},
+		});
+		expect(done).toEqual(['soundcloud']);
+		expect(events).toEqual([
+			'API sign-in',
+			'open gate browser',
+			'close gate browser',
+		]);
+
+		let opened = false;
+		await runGuidedLogin(['soundcloud'], {
+			openBrowser: async () => {
+				opened = true;
+				return browser;
+			},
+			soundcloud: async () => {
+				throw new Error('SoundCloud blocked this browser or network.');
+			},
+			envPath: join(dir, '.env'),
+			env: {},
+			log: () => {},
+		});
+		expect(opened).toBe(false);
+	});
 });
 
 describe('prepareCliLogins', () => {

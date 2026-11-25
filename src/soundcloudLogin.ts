@@ -23,13 +23,73 @@ export function isSoundcloudLoginDocument(
 	return isSoundcloudHost(pageUrl) && LOGIN_COPY_RE.test(text) && !hasApproval;
 }
 
+/** DataDome shows a hard block (`t=bv`) in its captcha frame, not in the page text. */
+function isDatadomeBlockFrame(frameUrl: string): boolean {
+	try {
+		const url = new URL(frameUrl);
+		return (
+			url.hostname === 'geo.captcha-delivery.com' &&
+			url.searchParams.get('t') === 'bv'
+		);
+	} catch {
+		return false;
+	}
+}
+
+export function isSoundcloudBlocked(
+	pageUrl: string,
+	text: string,
+	frameUrls: string[] = [],
+): boolean {
+	return (
+		isSoundcloudHost(pageUrl) &&
+		(/\byou have been blocked\b/i.test(text) ||
+			frameUrls.some(isDatadomeBlockFrame))
+	);
+}
+
 /** SoundCloud's block page never turns into a login, so stop instead of waiting. */
-export function throwIfSoundcloudBlocked(pageUrl: string, text: string): void {
-	if (isSoundcloudHost(pageUrl) && /\byou have been blocked\b/i.test(text)) {
+export function throwIfSoundcloudBlocked(
+	pageUrl: string,
+	text: string,
+	frameUrls: string[] = [],
+): void {
+	if (isSoundcloudBlocked(pageUrl, text, frameUrls)) {
 		throw new Error(
 			'SoundCloud blocked this browser or network. Resolve the block with SoundCloud (or use another network) before retrying.',
 		);
 	}
+}
+
+export async function isSoundcloudPageBlocked(page: Page): Promise<boolean> {
+	const text = await page
+		.evaluate(() => document.body?.innerText || '')
+		.catch(() => '');
+	return isSoundcloudBlocked(
+		page.url(),
+		text,
+		page.frames().map((frame) => frame.url()),
+	);
+}
+
+/**
+ * For a sign-in someone is doing in the window: a block can clear when the
+ * page is reloaded, so say that once per block and keep waiting.
+ */
+export function soundcloudBlockHint(
+	page: Page,
+	log: (line: string) => void = console.log,
+): () => Promise<void> {
+	let shown = false;
+	return async () => {
+		const blocked = await isSoundcloudPageBlocked(page);
+		if (blocked && !shown) {
+			log(
+				'SoundCloud blocked the sign-in. Reload the page in the browser window to try again.',
+			);
+		}
+		shown = blocked;
+	};
 }
 
 export async function isSoundcloudLoginPage(page: Page): Promise<boolean> {
@@ -47,7 +107,13 @@ export async function isSoundcloudLoginPage(page: Page): Promise<boolean> {
 				),
 		}))
 		.catch(() => null);
-	if (documentState) throwIfSoundcloudBlocked(page.url(), documentState.text);
+	if (documentState) {
+		throwIfSoundcloudBlocked(
+			page.url(),
+			documentState.text,
+			page.frames().map((frame) => frame.url()),
+		);
+	}
 	return documentState
 		? isSoundcloudLoginDocument(
 				page.url(),
@@ -153,14 +219,12 @@ export async function signInToSoundcloud(
 		// the session cookie that sign-in sets instead.
 		console.log('Sign in to SoundCloud in the browser window...');
 		const deadline = Date.now() + (options.timeoutMs ?? 10 * 60_000);
+		const hintIfBlocked = soundcloudBlockHint(page);
 		while (!(await hasSoundcloudSession(context))) {
 			if (Date.now() > deadline) {
 				throw new Error('Timed out waiting for SoundCloud sign-in.');
 			}
-			const text = await page
-				.evaluate(() => document.body?.innerText || '')
-				.catch(() => '');
-			throwIfSoundcloudBlocked(page.url(), text);
+			await hintIfBlocked();
 			await timeout(1_000);
 		}
 		await page.goto('https://soundcloud.com/you/library', {
