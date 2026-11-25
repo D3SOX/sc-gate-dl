@@ -21,7 +21,6 @@ import {
 	getFfprobeBin,
 	isLosslessFormat,
 	resolveGateUrlOrFollow,
-	unsupportedGateError,
 	validateSoundcloudUrl,
 } from './utils';
 import { YtDlpDownloader, type YtDlpDownloadOptions } from './ytdlp';

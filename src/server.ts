@@ -60,7 +60,6 @@ import {
 	getFfprobeBin,
 	isMp3Format,
 	resolveGateUrlOrFollow,
-	unsupportedGateError,
 	validateGateUrl,
 	validateSoundcloudUrl,
 } from './utils';
