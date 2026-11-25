@@ -31,15 +31,118 @@ export function findFirefox(
 	return which(setting?.trim() || 'firefox');
 }
 
-// Skip the first-run pages of the fresh profile; nothing here changes what a
-// site can see.
+// Skip the first-run pages and notification bars of the fresh profile;
+// nothing here changes what a site can see.
 const PROFILE_PREFS = [
 	'user_pref("browser.shell.checkDefaultBrowser", false);',
 	'user_pref("browser.aboutwelcome.enabled", false);',
 	'user_pref("datareporting.policy.firstRunURL", "");',
+	'user_pref("datareporting.policy.dataSubmissionPolicyBypassNotification", true);',
+	'user_pref("media.webspeech.synth.dont_notify_on_error", true);',
 	'user_pref("browser.startup.homepage_override.mstone", "ignore");',
 	'user_pref("browser.tabs.warnOnClose", false);',
 ].join('\n');
+
+/** A fresh, empty Firefox profile; the caller deletes it. */
+export async function createFirefoxProfile(
+	profileRoot: string = firefoxProfileRoot(),
+	extraPrefs: string[] = [],
+): Promise<string> {
+	await mkdir(profileRoot, { recursive: true });
+	const profile = await mkdtemp(join(profileRoot, 'sc-gate-dl-firefox-'));
+	await writeFile(
+		join(profile, 'user.js'),
+		`${[PROFILE_PREFS, ...extraPrefs].join('\n')}\n`,
+	);
+	return profile;
+}
+
+function hasCookieTable(profileDir: string): boolean {
+	const path = join(profileDir, 'cookies.sqlite');
+	if (!existsSync(path)) return false;
+	const db = new Database(path);
+	try {
+		return !!db
+			.query("SELECT 1 FROM sqlite_master WHERE name = 'moz_cookies'")
+			.get();
+	} finally {
+		db.close();
+	}
+}
+
+/**
+ * Puts cookies into a profile Firefox is not running on. A short headless
+ * start first creates the cookie database, so its layout is the one this
+ * Firefox version expects.
+ */
+export async function writeFirefoxCookies(
+	firefox: string,
+	profileDir: string,
+	cookies: CookieData[],
+): Promise<void> {
+	for (let attempt = 0; !hasCookieTable(profileDir); attempt++) {
+		if (attempt === 3) {
+			throw new Error('Firefox did not create its cookie database.');
+		}
+		const warmup = Bun.spawn(
+			[
+				firefox,
+				'--new-instance',
+				'--no-remote',
+				'--headless',
+				'--profile',
+				profileDir,
+				'about:blank',
+			],
+			{ stdin: 'ignore', stdout: 'ignore', stderr: 'ignore' },
+		);
+		const deadline = Date.now() + 30_000;
+		while (
+			!existsSync(join(profileDir, 'cookies.sqlite')) &&
+			warmup.exitCode === null &&
+			Date.now() < deadline
+		) {
+			await timeout(250);
+		}
+		// Give Firefox a moment to create the tables in the new file.
+		await timeout(2_000);
+		await stopFirefox(warmup);
+	}
+	const db = new Database(join(profileDir, 'cookies.sqlite'));
+	try {
+		const now = Date.now() * 1_000;
+		const insert = db.prepare(
+			`INSERT OR REPLACE INTO moz_cookies
+			 (originAttributes, name, value, host, path, expiry, lastAccessed, creationTime, isSecure, isHttpOnly, sameSite, schemeMap)
+			 VALUES ('', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		);
+		db.transaction(() => {
+			for (const cookie of cookies) {
+				// Session cookies get a day, enough for one run.
+				const expires =
+					cookie.expires && cookie.expires > 0
+						? cookie.expires * 1_000
+						: Date.now() + 24 * 60 * 60_000;
+				insert.run(
+					cookie.name,
+					cookie.value,
+					cookie.domain ?? '',
+					cookie.path ?? '/',
+					Math.round(expires),
+					now,
+					now,
+					cookie.secure ? 1 : 0,
+					cookie.httpOnly ? 1 : 0,
+					cookie.sameSite === 'Strict' ? 2 : cookie.sameSite === 'Lax' ? 1 : 0,
+					// Set over HTTPS.
+					2,
+				);
+			}
+		})();
+	} finally {
+		db.close();
+	}
+}
 
 interface MozCookieRow {
 	host: string;
@@ -192,11 +295,9 @@ export async function signInWithFirefox<T>(
 		profileRoot = firefoxProfileRoot(),
 	}: FirefoxSignInOptions<T>,
 ): Promise<{ result: T; cookies: CookieData[] }> {
-	await mkdir(profileRoot, { recursive: true });
-	const profile = await mkdtemp(join(profileRoot, 'sc-gate-dl-firefox-'));
+	const profile = await createFirefoxProfile(profileRoot);
 	let firefoxProcess: ReturnType<typeof Bun.spawn> | null = null;
 	try {
-		await writeFile(join(profile, 'user.js'), `${PROFILE_PREFS}\n`);
 		firefoxProcess = Bun.spawn(
 			[firefox, '--new-instance', '--no-remote', '--profile', profile, url],
 			{ stdin: 'ignore', stdout: 'ignore', stderr: 'ignore' },
@@ -227,7 +328,7 @@ export async function signInWithFirefox<T>(
 	}
 }
 
-async function stopFirefox(
+export async function stopFirefox(
 	firefoxProcess: ReturnType<typeof Bun.spawn>,
 ): Promise<void> {
 	if (firefoxProcess.exitCode !== null) return;
