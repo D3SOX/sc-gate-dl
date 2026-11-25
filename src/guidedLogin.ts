@@ -1,4 +1,6 @@
-import { readFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import type { Browser, Cookie } from 'puppeteer';
 import { launchAppBrowser } from './browserLaunch';
 import { setEnvValues } from './envFile';
@@ -7,7 +9,10 @@ import {
 	SoundcloudClient,
 	type SoundcloudLoginState,
 } from './soundcloud';
-import { saveSoundcloudLogin, signInToSoundcloud } from './soundcloudLogin';
+import {
+	signInToSoundcloud,
+	throwIfSoundcloudBlocked,
+} from './soundcloudLogin';
 import { SPOTIFY_COOKIES_FILE } from './spotifyAuth';
 import { timeout, writeBrowserCookies } from './utils';
 
@@ -141,41 +146,84 @@ async function waitFor<T>(
 }
 
 /**
- * Signs the browser in like Initialize logins (which also saves
- * soundcloud-cookies.json), then reads the API login from it.
+ * Signs in to SoundCloud in a throwaway browser profile and reads the API
+ * login from it. The profile is deleted afterwards, so no browser keeps using
+ * the refresh token: SoundCloud rotates it on every renewal, and two users of
+ * one token log each other out.
+ */
+export async function captureSoundcloudApiLogin(
+	openBrowser: (userDataDir: string) => Promise<Browser> = (userDataDir) =>
+		launchAppBrowser({ headless: false, userDataDir }),
+): Promise<SoundcloudSession> {
+	const profile = await mkdtemp(join(tmpdir(), 'sc-gate-dl-login-'));
+	try {
+		const browser = await openBrowser(profile);
+		try {
+			const page = await browser.newPage();
+			let clientId: string | null = null;
+			page.on('request', (request) => {
+				clientId ??= clientIdFromUrl(request.url());
+			});
+			await page.goto('https://soundcloud.com/signin', {
+				waitUntil: 'domcontentloaded',
+			});
+			console.log(
+				'Sign in to SoundCloud in the new browser window (login for the API)...',
+			);
+			const context = browser.defaultBrowserContext();
+			const deadline = Date.now() + 10 * 60_000;
+			for (;;) {
+				const text = await page
+					.evaluate(() => document.body?.innerText || '')
+					.catch(() => '');
+				throwIfSoundcloudBlocked(page.url(), text);
+				const cookies = await context.cookies().catch(() => []);
+				const signedIn = cookies.some(
+					(cookie) =>
+						cookie.name === 'oauth_refresh_token' &&
+						cookie.value !== '' &&
+						isCookieOf(SOUNDCLOUD_HOST_RE)(cookie),
+				);
+				if (signedIn) break;
+				if (Date.now() > deadline) {
+					throw new Error('Timed out waiting for SoundCloud sign-in.');
+				}
+				await timeout(1_000);
+			}
+			// The web client id only shows up in the requests of a loaded page.
+			if (!clientId) {
+				await page
+					.goto('https://soundcloud.com/you/library', {
+						waitUntil: 'domcontentloaded',
+					})
+					.catch(() => {});
+			}
+			return await waitFor(
+				'the SoundCloud client id',
+				async () => pickSoundcloudSession(await context.cookies(), clientId),
+				60_000,
+			);
+		} finally {
+			await browser.close().catch(() => {});
+		}
+	} finally {
+		await rm(profile, { recursive: true, force: true });
+	}
+}
+
+/**
+ * The API login comes from a throwaway profile, and the gate browser signs in
+ * on its own like Initialize logins (which saves soundcloud-cookies.json), so
+ * each keeps its own refresh-token chain.
  */
 export async function loginToSoundcloud(
-	browser: Browser,
+	gateBrowser: Browser,
+	captureApiLogin: () => Promise<SoundcloudSession> = captureSoundcloudApiLogin,
 ): Promise<SoundcloudSession> {
-	const context = browser.defaultBrowserContext();
-	// An old refresh cookie may be one SoundCloud already rotated away.
-	const stale = (await context.cookies()).filter(
-		(cookie) =>
-			cookie.name === 'oauth_refresh_token' &&
-			isCookieOf(SOUNDCLOUD_HOST_RE)(cookie),
-	);
-	if (stale.length > 0) await context.deleteCookie(...stale);
-	await signInToSoundcloud(browser);
-
-	const page = await browser.newPage();
-	try {
-		let clientId: string | null = null;
-		page.on('request', (request) => {
-			clientId ??= clientIdFromUrl(request.url());
-		});
-		await page.goto('https://soundcloud.com/you/library', {
-			waitUntil: 'domcontentloaded',
-		});
-		const session = await waitFor(
-			'the SoundCloud client id and refresh token',
-			async () => pickSoundcloudSession(await context.cookies(), clientId),
-			60_000,
-		);
-		await saveSoundcloudLogin(context);
-		return session;
-	} finally {
-		await page.close().catch(() => {});
-	}
+	const session = await captureApiLogin();
+	console.log('Now sign in to SoundCloud for the gate browser...');
+	await signInToSoundcloud(gateBrowser);
+	return session;
 }
 
 /** Waits for a fresh Spotify login and saves its cookies. */

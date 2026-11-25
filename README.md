@@ -59,7 +59,7 @@ For `HYPEDDIT_EMAIL` you can enter any valid email address (For example grab one
 
 #### Log in
 
-Run `bun start --login` and sign in to SoundCloud and Spotify in the browser window that opens. sc-gate-dl saves `SC_CLIENT_ID`, `SC_REFRESH_TOKEN` and `SC_OAUTH_TOKEN` to `.env`, the SoundCloud cookies to `soundcloud-cookies.json` and the Spotify cookies to `spotify-cookies.json`. Each `bun start` checks the logins first and offers this login when SoundCloud's is missing or rejected. Spotify is only needed for Spotify gates, so a missing Spotify login is just a warning. If an sc-gate-dl server runs in the same folder, restart it after a new login.
+Run `bun start --login` and sign in to SoundCloud and Spotify in the browser windows that open. SoundCloud asks twice: once in a throwaway window for the API login, and once for the gate browser, because the two must not share a login. sc-gate-dl saves `SC_CLIENT_ID`, `SC_REFRESH_TOKEN` and `SC_OAUTH_TOKEN` to `.env`, the SoundCloud cookies to `soundcloud-cookies.json` and the Spotify cookies to `spotify-cookies.json`. Each `bun start` checks the logins first and offers this login when SoundCloud's is missing or rejected. Spotify is only needed for Spotify gates, so a missing Spotify login is just a warning. If an sc-gate-dl server runs in the same folder, restart it after a new login.
 
 #### Get SoundCloud API Credentials manually
 
