@@ -5,8 +5,11 @@ import { join } from 'node:path';
 import type { Browser, Cookie } from 'puppeteer';
 import {
 	type CliLoginOptions,
+	captureSoundcloudApiLogin,
+	captureWithFirefox,
 	checkSpotifyCookies,
 	clientIdFromUrl,
+	FIREFOX_MISSING_WARNING,
 	type LoginProvider,
 	loginToSoundcloud,
 	loginToSpotify,
@@ -197,6 +200,76 @@ describe('login capture', () => {
 			'window closed before the Spotify sign-in',
 		);
 		expect(Date.now() - started).toBeLessThan(5_000);
+	});
+});
+
+describe('API login browser', () => {
+	const captured = {
+		session: { clientId: 'c', refreshToken: 'r', accessToken: null },
+		signInCookies: [],
+	};
+
+	test('uses Firefox when it is installed', async () => {
+		const logs: string[] = [];
+		let used = '';
+		await captureSoundcloudApiLogin({
+			firefox: () => '/usr/bin/firefox',
+			withFirefox: async (path) => {
+				used = path;
+				return captured;
+			},
+			withCloakBrowser: async () => {
+				throw new Error('CloakBrowser should not open');
+			},
+			log: (line) => logs.push(line),
+		});
+		expect(used).toBe('/usr/bin/firefox');
+		expect(logs).toEqual([]);
+	});
+
+	test('warns and falls back to CloakBrowser without Firefox', async () => {
+		const logs: string[] = [];
+		const result = await captureSoundcloudApiLogin({
+			firefox: () => null,
+			withFirefox: async () => {
+				throw new Error('Firefox should not open');
+			},
+			withCloakBrowser: async () => captured,
+			log: (line) => logs.push(line),
+		});
+		expect(result).toBe(captured);
+		expect(logs).toEqual([FIREFOX_MISSING_WARNING]);
+		expect(FIREFOX_MISSING_WARNING).toContain('Firefox is not installed');
+	});
+
+	test('the Firefox login keeps the tokens for .env and hands on only the session', async () => {
+		const cookies = [
+			{ name: 'oauth_refresh_token', value: '1%3Ar', domain: 'soundcloud.com' },
+			{ name: 'oauth_token', value: 'a', domain: 'soundcloud.com' },
+			{
+				name: '_soundcloud_session',
+				value: 's',
+				domain: 'api-auth.soundcloud.com',
+			},
+			{ name: 'datadome', value: 'd', domain: '.soundcloud.com' },
+		];
+		const result = await captureWithFirefox(
+			'/usr/bin/firefox',
+			async (_firefox, options) => {
+				const done = options.done(cookies);
+				if (!done) throw new Error('the sign-in should count as done');
+				return { result: done, cookies };
+			},
+			async () => 'web-client',
+		);
+		expect(result.session).toEqual({
+			clientId: 'web-client',
+			refreshToken: '1:r',
+			accessToken: 'a',
+		});
+		expect(result.signInCookies.map((cookie) => cookie.name)).toEqual([
+			'_soundcloud_session',
+		]);
 	});
 });
 

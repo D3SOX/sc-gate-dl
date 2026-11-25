@@ -1,9 +1,14 @@
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { Browser, Cookie, Page } from 'puppeteer';
+import type { Browser, Cookie, CookieData, Page } from 'puppeteer';
 import { launchAppBrowser } from './browserLaunch';
 import { setEnvValues } from './envFile';
+import {
+	fetchSoundcloudClientId,
+	findFirefox,
+	signInWithFirefox,
+} from './firefoxLogin';
 import {
 	hasSoundcloudLogin,
 	SoundcloudClient,
@@ -23,8 +28,10 @@ const LABELS: Record<LoginProvider, string> = {
 const LOGIN_HINT = 'Run `bun start --login` to log in.';
 const SOUNDCLOUD_HOST_RE = /(^|\.)soundcloud\.com$/i;
 const SPOTIFY_HOST_RE = /(^|\.)spotify\.com$/i;
-const isCookieOf = (host: RegExp) => (cookie: Cookie) =>
-	host.test(cookie.domain.replace(/^\./, ''));
+/** Enough of a cookie for these checks; Puppeteer and Firefox cookies fit. */
+type CookieLike = Pick<Cookie, 'name' | 'value'> & { domain?: string };
+const isCookieOf = (host: RegExp) => (cookie: CookieLike) =>
+	host.test((cookie.domain ?? '').replace(/^\./, ''));
 
 /** `bun start [--login] [url]`; unknown flags are an error. */
 export function parseCliArgs(args: string[]): {
@@ -110,7 +117,7 @@ function decodeCookie(value: string): string {
 }
 
 export function pickSoundcloudSession(
-	cookies: Cookie[],
+	cookies: CookieLike[],
 	clientId: string | null,
 ): SoundcloudSession | null {
 	const own = cookies.filter(isCookieOf(SOUNDCLOUD_HOST_RE));
@@ -132,7 +139,9 @@ export function pickSoundcloudSession(
  * browser holding it gets its own tokens without a second sign-in. DataDome's
  * cookie belongs to the browser it was issued to, so it stays behind too.
  */
-export function pickSoundcloudSignInCookies(cookies: Cookie[]): Cookie[] {
+export function pickSoundcloudSignInCookies<T extends CookieLike>(
+	cookies: T[],
+): T[] {
 	const keep = new Set(['oauth_token', 'oauth_refresh_token', 'datadome']);
 	return cookies.filter(
 		(cookie) =>
@@ -174,16 +183,70 @@ async function waitFor<T>(
 export interface CapturedSoundcloudLogin {
 	session: SoundcloudSession;
 	/** See `pickSoundcloudSignInCookies`. */
-	signInCookies: Cookie[];
+	signInCookies: CookieData[];
+}
+
+export const FIREFOX_MISSING_WARNING =
+	"⚠ Firefox is not installed, so the SoundCloud sign-in opens in CloakBrowser instead. SoundCloud's bot protection (DataDome) blocks CloakBrowser more often; install Firefox for a more reliable sign-in.";
+
+export interface ApiLoginOptions {
+	firefox?: () => string | null;
+	withFirefox?: (firefox: string) => Promise<CapturedSoundcloudLogin>;
+	withCloakBrowser?: () => Promise<CapturedSoundcloudLogin>;
+	log?: (line: string) => void;
 }
 
 /**
- * Signs in to SoundCloud in a throwaway browser profile and reads the API
- * login from it. The profile is deleted afterwards, so no browser keeps using
- * the refresh token: SoundCloud rotates it on every renewal, and two users of
- * one token log each other out.
+ * The API login, in Firefox when it is installed and in CloakBrowser
+ * otherwise. Either way the profile is thrown away afterwards, so no browser
+ * keeps using the refresh token: SoundCloud rotates it on every renewal, and
+ * two users of one token log each other out.
  */
-export async function captureSoundcloudApiLogin(
+export async function captureSoundcloudApiLogin({
+	firefox = findFirefox,
+	withFirefox = captureWithFirefox,
+	withCloakBrowser = captureWithCloakBrowser,
+	log = console.log,
+}: ApiLoginOptions = {}): Promise<CapturedSoundcloudLogin> {
+	const path = firefox();
+	if (path) return withFirefox(path);
+	log(FIREFOX_MISSING_WARNING);
+	return withCloakBrowser();
+}
+
+/** A sign-in in the user's own Firefox, which DataDome treats as a visitor. */
+export async function captureWithFirefox(
+	firefox: string,
+	signIn: typeof signInWithFirefox = signInWithFirefox,
+	clientIdLookup: () => Promise<string> = fetchSoundcloudClientId,
+): Promise<CapturedSoundcloudLogin> {
+	console.log(
+		'Sign in to SoundCloud in the Firefox window that opens (login for the API). If SoundCloud says "You have been blocked", reload the page.',
+	);
+	const clientId = clientIdLookup();
+	// Keep a failed lookup from going unhandled while the user signs in.
+	clientId.catch(() => {});
+	const signedIn = (cookies: CookieData[]) =>
+		cookies.some(
+			(cookie) =>
+				cookie.name === 'oauth_refresh_token' &&
+				cookie.value !== '' &&
+				isCookieOf(SOUNDCLOUD_HOST_RE)(cookie),
+		);
+	const { result, cookies } = await signIn(firefox, {
+		url: 'https://soundcloud.com/signin',
+		what: 'the SoundCloud sign-in',
+		done: (cookies) => (signedIn(cookies) ? cookies : null),
+	});
+	// The read after closing Firefox is the most complete one.
+	const latest = signedIn(cookies) ? cookies : result;
+	const session = pickSoundcloudSession(latest, await clientId);
+	if (!session) throw new Error('The SoundCloud login was lost before saving.');
+	return { session, signInCookies: pickSoundcloudSignInCookies(latest) };
+}
+
+/** The API login in a throwaway CloakBrowser profile, when Firefox is missing. */
+export async function captureWithCloakBrowser(
 	openBrowser: (userDataDir: string) => Promise<Browser> = (userDataDir) =>
 		launchAppBrowser({ headless: false, userDataDir }),
 ): Promise<CapturedSoundcloudLogin> {
@@ -252,8 +315,7 @@ export async function captureSoundcloudApiLogin(
  * in like Initialize logins (which saves soundcloud-cookies.json), reusing the
  * sign-in session so it gets its own tokens without asking again; each keeps
  * its own refresh-token chain. The gate browser opens only after the
- * throwaway one closed: CloakBrowser's free tier kills a second browser
- * running at the same time.
+ * sign-in window closed, so only one window waits for the user at a time.
  */
 export async function loginToSoundcloud(
 	gateBrowser: () => Promise<Browser>,
