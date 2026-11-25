@@ -19,6 +19,11 @@ export interface SoundcloudTokenRefresherOptions {
 	file?: string;
 	fetch?: (input: string, init: RequestInit) => Promise<Response>;
 	now?: () => number;
+	/** Called after each rotation; a failure here never loses the saved pair. */
+	onRefreshed?: (pair: {
+		accessToken: string;
+		refreshToken: string;
+	}) => Promise<void>;
 }
 
 /** Expiry of a JWT access token in ms, or null for classic `2-…` tokens. */
@@ -107,6 +112,14 @@ export class SoundcloudTokenRefresher {
 			seed: this.tokens.seed,
 		};
 		await this.save(this.tokens);
+		try {
+			await this.options.onRefreshed?.({
+				accessToken: this.tokens.accessToken,
+				refreshToken: this.tokens.refreshToken,
+			});
+		} catch {
+			// The pair is already in the token file; mirroring it must not fail the call.
+		}
 		return this.tokens.accessToken;
 	}
 

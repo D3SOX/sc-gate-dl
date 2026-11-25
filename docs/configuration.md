@@ -77,3 +77,26 @@ Do not set them in a real deployment.
 `CLOAKBROWSER_SUPPRESS_FONT_WARNING` is set by the code itself. `TMPDIR` is a platform
 variable. `SC_GATE_PROGRESS` is a line prefix used between the downloader and the
 server, not a setting.
+
+## SoundCloud login and where it is stored
+
+SoundCloud rotates the refresh token on every renewal, so the old one stops working
+at once. Every renewed pair is therefore written to two places in the same call:
+
+- `soundcloud-token.json` (mode 600, ignored by git) is the source of truth for the
+  running process and other processes in the same folder.
+- `.env` receives `SC_OAUTH_TOKEN` and `SC_REFRESH_TOKEN` (user-approved), so the next
+  start begins from the latest pair. The write replaces the file atomically with mode
+  600, keeps every other line and comment, and never logs a value. If the write fails
+  the run continues and the message says the login was not saved.
+
+Browser cookies stay in `soundcloud-cookies.json` and `spotify-cookies.json` (both
+ignored). They are not copied into `.env`: they are session data for the browser, not
+settings. Spotify is optional; a missing or broken `spotify-cookies.json` never blocks
+a download.
+
+When a renewal is not possible (refresh token revoked, expired or rotated elsewhere),
+the check reports `expired` or `invalid` and says to log in again and set
+`SC_REFRESH_TOKEN`. A network error or a rate limit is `unverifiable` and keeps the
+stored login. No token is ever copied by hand except after such a message.
+`SC_GATE_DL_ENV_FILE` points the writer at another file; it is meant for tests.

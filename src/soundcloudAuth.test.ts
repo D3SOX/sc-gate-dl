@@ -128,3 +128,53 @@ describe('tokenExpiresAt', () => {
 		expect(tokenExpiresAt('2-123456-789-abcdef')).toBeNull();
 	});
 });
+
+describe('onRefreshed', () => {
+	test('reports every rotated pair so it can be mirrored to .env', async () => {
+		const seen: Array<{ accessToken: string; refreshToken: string }> = [];
+		const dir = await mkdtemp(join(tmpdir(), 'sc-gate-auth-'));
+		try {
+			const refresher = new SoundcloudTokenRefresher({
+				clientId: 'cid',
+				refreshToken: 'seed',
+				file: join(dir, 'token.json'),
+				onRefreshed: async (pair) => {
+					seen.push(pair);
+				},
+				fetch: async () =>
+					new Response(
+						JSON.stringify({ access_token: 'a1', refresh_token: 'r1' }),
+						{ status: 200 },
+					),
+			});
+			await refresher.accessToken();
+			expect(seen).toEqual([{ accessToken: 'a1', refreshToken: 'r1' }]);
+		} finally {
+			await rm(dir, { recursive: true, force: true });
+		}
+	});
+
+	test('a failing onRefreshed never loses the rotated login', async () => {
+		const dir = await mkdtemp(join(tmpdir(), 'sc-gate-auth-'));
+		try {
+			const refresher = new SoundcloudTokenRefresher({
+				clientId: 'cid',
+				refreshToken: 'seed',
+				file: join(dir, 'token.json'),
+				onRefreshed: async () => {
+					throw new Error('disk full');
+				},
+				fetch: async () =>
+					new Response(
+						JSON.stringify({ access_token: 'a2', refresh_token: 'r2' }),
+						{ status: 200 },
+					),
+			});
+			expect(await refresher.accessToken()).toBe('a2');
+			const saved = JSON.parse(await readFile(join(dir, 'token.json'), 'utf8'));
+			expect(saved.refreshToken).toBe('r2');
+		} finally {
+			await rm(dir, { recursive: true, force: true });
+		}
+	});
+});

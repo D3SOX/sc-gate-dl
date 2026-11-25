@@ -6,6 +6,7 @@ import Soundcloud, {
 	type SoundcloudTrackSearch,
 	type SoundcloudUser,
 } from 'soundcloud.ts';
+import { setEnvValues } from './envFile';
 import { SoundcloudTokenRefresher } from './soundcloudAuth';
 import { SoundcloudReadQueue } from './soundcloudReadQueue';
 import {
@@ -81,6 +82,11 @@ export class SoundcloudClient {
 				clientId,
 				refreshToken,
 				accessToken: oauthToken,
+				onRefreshed: (pair) =>
+					setEnvValues(process.env.SC_GATE_DL_ENV_FILE ?? '.env', {
+						SC_OAUTH_TOKEN: pair.accessToken,
+						SC_REFRESH_TOKEN: pair.refreshToken,
+					}),
 			});
 			this.tokenRefresher = envTokenRefresher;
 		}
