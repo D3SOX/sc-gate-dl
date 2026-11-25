@@ -233,6 +233,43 @@ describe('runCli entry wiring', () => {
 			expect(promptCalls).toBe(1);
 		}, 60_000);
 
+		test('writes the SoundCloud title and source comment without a prompt', async () => {
+			await runCli(
+				deps({
+					SC_GATE_DL_CLI_FORMAT: 'm4a-aac',
+					SC_GATE_DL_CLI_DIR: destination,
+				}),
+			);
+			const proc = Bun.spawn(
+				[
+					'ffprobe',
+					'-v',
+					'quiet',
+					'-print_format',
+					'json',
+					'-show_format',
+					join(destination, 'song.m4a'),
+				],
+				{ stdout: 'pipe' },
+			);
+			const info = JSON.parse(await new Response(proc.stdout).text()) as {
+				format?: { tags?: Record<string, string> };
+			};
+			expect(info.format?.tags?.title).toBe('Song');
+			expect(info.format?.tags?.comment).toBe(soundcloudUrl);
+		}, 60_000);
+
+		test('leaves an original download untouched and never prompts', async () => {
+			await runCli(
+				deps({
+					SC_GATE_DL_CLI_FORMAT: 'original',
+					SC_GATE_DL_CLI_DIR: destination,
+				}),
+			);
+			expect(promptCalls).toBe(0);
+			expect(await readdir(destination)).toEqual(['song.flac']);
+		}, 60_000);
+
 		test.each(['', 'yes'])(
 			'rejects %p before any gate action',
 			async (value) => {
