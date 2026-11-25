@@ -1,5 +1,5 @@
-import { mkdir } from 'node:fs/promises';
-import { basename, resolve } from 'node:path';
+import { mkdir, rm } from 'node:fs/promises';
+import { basename, join, resolve } from 'node:path';
 import { type FileTransfer, placeIntoDirectory } from './safeTransfer';
 
 /** Absolute library folder from `SC_GATE_DL_LIBRARY_DIR`, or null when unset. */
@@ -28,4 +28,21 @@ export async function moveIntoLibrary(
 		transfer,
 	});
 	return basename(target);
+}
+
+/**
+ * Move into the library, then undo the copy when the job was cancelled in the
+ * meantime. Only the copy this call created is removed, never an older file.
+ */
+export async function moveIntoLibraryUnlessCancelled(
+	sourcePath: string,
+	libraryDir: string,
+	isCancelled: () => boolean,
+): Promise<string> {
+	const name = await moveIntoLibrary(sourcePath, libraryDir);
+	if (isCancelled()) {
+		await rm(join(libraryDir, name), { force: true });
+		throw new Error('Download cancelled');
+	}
+	return name;
 }

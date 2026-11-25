@@ -28,7 +28,10 @@ import {
 } from './jobOptions';
 import { JobQueue } from './jobQueue';
 import { jobStore } from './jobStore';
-import { libraryDirFromEnv, moveIntoLibrary } from './libraryDestination';
+import {
+	libraryDirFromEnv,
+	moveIntoLibraryUnlessCancelled,
+} from './libraryDestination';
 import { MypresskitDownloader } from './mypresskit';
 import { PumpyoursoundDownloader } from './pumpyoursound';
 import { parseArtworkUrl, parseSearchQuery, toSearchResponse } from './search';
@@ -282,14 +285,11 @@ async function finishUnattendedJob(
 			'Saving to library...',
 			98,
 		);
-		const libraryFilename = await moveIntoLibrary(
+		const libraryFilename = await moveIntoLibraryUnlessCancelled(
 			join('./downloads', filename),
 			LIBRARY_DIR,
+			() => jobStore.isCancelled(job.id),
 		);
-		if (jobStore.isCancelled(job.id)) {
-			await rm(join(LIBRARY_DIR, libraryFilename), { force: true });
-			throw new Error('Download cancelled');
-		}
 		jobStore.update(job.id, {
 			libraryFilename,
 			outputFilename: null,

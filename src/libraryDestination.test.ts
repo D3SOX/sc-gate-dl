@@ -12,7 +12,11 @@ import {
 } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { libraryDirFromEnv, moveIntoLibrary } from './libraryDestination';
+import {
+	libraryDirFromEnv,
+	moveIntoLibrary,
+	moveIntoLibraryUnlessCancelled,
+} from './libraryDestination';
 
 describe('libraryDirFromEnv', () => {
 	test('is null when unset or blank', () => {
@@ -155,5 +159,34 @@ describe('moveIntoLibrary', () => {
 			names.map((name) => readFile(join(library, name), 'utf8')),
 		);
 		expect(contents.sort()).toEqual(['first', 'second']);
+	});
+
+	test('a job cancelled during the move leaves no library copy and keeps an existing file', async () => {
+		await Bun.write(join(library, 'Artist - Title.mp3'), 'existing');
+		const source = join(downloads, 'Artist - Title.mp3');
+		await writeFile(source, 'new');
+
+		await expect(
+			moveIntoLibraryUnlessCancelled(source, library, () => true),
+		).rejects.toThrow('Download cancelled');
+
+		expect(await readdir(library)).toEqual(['Artist - Title.mp3']);
+		expect(await readFile(join(library, 'Artist - Title.mp3'), 'utf8')).toBe(
+			'existing',
+		);
+	});
+
+	test('a job that is not cancelled keeps its library copy', async () => {
+		const source = join(downloads, 'Song.mp3');
+		await writeFile(source, 'audio');
+
+		const name = await moveIntoLibraryUnlessCancelled(
+			source,
+			library,
+			() => false,
+		);
+
+		expect(name).toBe('Song.mp3');
+		expect(await readdir(library)).toEqual(['Song.mp3']);
 	});
 });
