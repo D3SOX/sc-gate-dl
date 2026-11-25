@@ -597,7 +597,7 @@ export class MypresskitDownloader {
 		await oauthPage.bringToFront().catch(() => {});
 
 		await waitForSoundcloudLogin(oauthPage, {
-			interactive: this.config.browserMode !== 'headless',
+			interactive: this.config.browserMode === 'headed',
 			onWaiting: () => {
 				this.emitProgress(
 					'handling_gates',
