@@ -1,7 +1,7 @@
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { Browser, Cookie, CookieData, Page } from 'puppeteer';
+import type { Browser, Cookie, CookieData, Page, Target } from 'puppeteer';
 import { launchAppBrowser } from './browserLaunch';
 import { setEnvValues } from './envFile';
 import {
@@ -122,22 +122,28 @@ function decodeCookie(value: string): string {
 	}
 }
 
-export function pickSoundcloudSession(
+function pickSoundcloudTokens(
 	cookies: CookieLike[],
-	clientId: string | null,
-): SoundcloudSession | null {
+): Omit<SoundcloudSession, 'clientId'> | null {
 	const own = cookies.filter(isCookieOf(SOUNDCLOUD_HOST_RE));
 	const value = (name: string) =>
 		own.find((cookie) => cookie.name === name && cookie.value)?.value;
 	const refreshToken = value('oauth_refresh_token');
 	const accessToken = value('oauth_token');
-	return clientId && refreshToken
+	return refreshToken
 		? {
-				clientId,
 				refreshToken: decodeCookie(refreshToken),
 				accessToken: accessToken ? decodeCookie(accessToken) : null,
 			}
 		: null;
+}
+
+export function pickSoundcloudSession(
+	cookies: CookieLike[],
+	clientId: string | null,
+): SoundcloudSession | null {
+	const tokens = pickSoundcloudTokens(cookies);
+	return clientId && tokens ? { clientId, ...tokens } : null;
 }
 
 /** `sp_dc` is Spotify's long-lived login cookie; it only exists after a login. */
@@ -172,7 +178,8 @@ async function waitFor<T>(
 }
 
 export interface CapturedSoundcloudLogin {
-	session: SoundcloudSession;
+	/** A null client id is read from the gate browser's requests later. */
+	session: Omit<SoundcloudSession, 'clientId'> & { clientId: string | null };
 	/** See `pickSoundcloudSignInCookies`. */
 	signInCookies: CookieData[];
 }
@@ -209,14 +216,20 @@ export async function captureWithFirefox(
 		firefox: string,
 	) => Promise<CookieData[]> = signInToSoundcloudInFirefox,
 	clientIdLookup: () => Promise<string> = fetchSoundcloudClientId,
+	log: (line: string) => void = console.log,
 ): Promise<CapturedSoundcloudLogin> {
-	console.log('This first sign-in is the login for the API.');
-	const clientId = clientIdLookup();
-	// Keep a failed lookup from going unhandled while the user signs in.
-	clientId.catch(() => {});
+	log('This first sign-in is the login for the API.');
+	// Looked up meanwhile; a failure must not cost the sign-in.
+	const clientId = clientIdLookup().catch(() => null);
 	const cookies = await signIn(firefox);
-	const session = pickSoundcloudSession(cookies, await clientId);
-	if (!session) throw new Error('The SoundCloud login was lost before saving.');
+	const tokens = pickSoundcloudTokens(cookies);
+	if (!tokens) throw new Error('The SoundCloud login was lost before saving.');
+	const session = { ...tokens, clientId: await clientId };
+	if (!session.clientId) {
+		log(
+			"Could not read SoundCloud's client id from soundcloud.com; it is taken from the gate browser's sign-in instead.",
+		);
+	}
 	return { session, signInCookies: pickSoundcloudSignInCookies(cookies) };
 }
 
@@ -302,8 +315,33 @@ export async function loginToSoundcloud(
 ): Promise<SoundcloudSession> {
 	const { session, signInCookies } = await captureApiLogin();
 	console.log('Now the gate browser takes over that SoundCloud session...');
-	await signIn(await gateBrowser(), { signInCookies });
-	return session;
+	const browser = await gateBrowser();
+	// The gate browser's SoundCloud requests carry the web client id too.
+	let seenClientId: string | null = null;
+	const watch = (page: Page | null) =>
+		page?.on('request', (request) => {
+			seenClientId ??= clientIdFromUrl(request.url());
+		});
+	const onTarget = (target: Target) => {
+		target
+			.page()
+			.then(watch)
+			.catch(() => {});
+	};
+	const needClientId = !session.clientId;
+	if (needClientId) browser.on('targetcreated', onTarget);
+	try {
+		await signIn(browser, { signInCookies });
+	} finally {
+		if (needClientId) browser.off('targetcreated', onTarget);
+	}
+	const clientId = session.clientId ?? seenClientId;
+	if (!clientId) {
+		throw new Error(
+			'Could not read the SoundCloud client id. Run `bun start --login` again.',
+		);
+	}
+	return { ...session, clientId };
 }
 
 /** Waits for a fresh Spotify login and saves its cookies. */

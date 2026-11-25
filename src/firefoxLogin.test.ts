@@ -4,8 +4,10 @@ import { chmod, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
+	fetchProxy,
 	fetchSoundcloudClientId,
 	findFirefox,
+	firefoxProfileRoot,
 	readFirefoxCookies,
 	signInWithFirefox,
 	soundcloudClientIdFromPage,
@@ -183,4 +185,24 @@ setInterval(() => {}, 1000);
 			}),
 		).rejects.toThrow('Firefox closed before the test sign-in finished.');
 	});
+});
+
+test('the profile goes where Snap Firefox can read it', () => {
+	expect(firefoxProfileRoot('/home/u', () => true)).toBe(
+		'/home/u/snap/firefox/common',
+	);
+	expect(firefoxProfileRoot('/home/u', () => false)).toBe(tmpdir());
+});
+
+test('the client id lookup uses an HTTP proxy but not a SOCKS one', () => {
+	expect(fetchProxy({ CLOAKBROWSER_PROXY: 'http://proxy:8080' })).toBe(
+		'http://proxy:8080',
+	);
+	expect(
+		fetchProxy({ SC_API_PROXY: 'https://a:1', PROXY_URL: 'http://b:2' }),
+	).toBe('https://a:1');
+	expect(fetchProxy({ CLOAKBROWSER_PROXY: 'socks5://127.0.0.1:1080' })).toBe(
+		undefined,
+	);
+	expect(fetchProxy({})).toBe(undefined);
 });

@@ -1,6 +1,7 @@
 import { Database } from 'bun:sqlite';
+import { existsSync } from 'node:fs';
 import { copyFile, mkdtemp, rm, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { CookieData } from 'puppeteer';
 import { timeout } from './utils';
@@ -115,9 +116,26 @@ export function soundcloudClientIdFromPage(html: string): string | null {
 	);
 }
 
+/**
+ * The configured proxy, when Bun's fetch can use it: it takes HTTP(S)
+ * proxies but not SOCKS.
+ */
+export function fetchProxy(
+	env: NodeJS.ProcessEnv = process.env,
+): string | undefined {
+	const proxy =
+		env.SC_API_PROXY?.trim() ||
+		env.CLOAKBROWSER_PROXY?.trim() ||
+		env.PROXY_URL?.trim();
+	return proxy && /^https?:\/\//i.test(proxy) ? proxy : undefined;
+}
+
 export async function fetchSoundcloudClientId(
 	fetchPage: (url: string) => Promise<Response> = (url) =>
-		fetch(url, { signal: AbortSignal.timeout(30_000) }),
+		fetch(url, {
+			signal: AbortSignal.timeout(30_000),
+			proxy: fetchProxy(),
+		}),
 ): Promise<string> {
 	const response = await fetchPage('https://soundcloud.com/');
 	const clientId = response.ok
@@ -129,6 +147,18 @@ export async function fetchSoundcloudClientId(
 		);
 	}
 	return clientId;
+}
+
+/**
+ * Ubuntu's Snap Firefox cannot read the host's /tmp; its own folder in the
+ * home directory works for it and for any other Firefox.
+ */
+export function firefoxProfileRoot(
+	home: string = homedir(),
+	exists: (path: string) => boolean = existsSync,
+): string {
+	const snapFolder = join(home, 'snap', 'firefox', 'common');
+	return exists(snapFolder) ? snapFolder : tmpdir();
 }
 
 export interface FirefoxSignInOptions<T> {
@@ -156,7 +186,9 @@ export async function signInWithFirefox<T>(
 		pollMs = 1_000,
 	}: FirefoxSignInOptions<T>,
 ): Promise<{ result: T; cookies: CookieData[] }> {
-	const profile = await mkdtemp(join(tmpdir(), 'sc-gate-dl-firefox-'));
+	const profile = await mkdtemp(
+		join(firefoxProfileRoot(), 'sc-gate-dl-firefox-'),
+	);
 	let firefoxProcess: ReturnType<typeof Bun.spawn> | null = null;
 	try {
 		await writeFile(join(profile, 'user.js'), `${PROFILE_PREFS}\n`);

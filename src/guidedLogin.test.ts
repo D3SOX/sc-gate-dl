@@ -150,7 +150,7 @@ describe('login capture', () => {
 			},
 		);
 
-		expect(result).toBe(session);
+		expect(result).toEqual(session);
 		expect(events).toEqual([
 			'API sign-in',
 			'open gate browser',
@@ -269,6 +269,90 @@ describe('API login browser', () => {
 		expect(result.signInCookies.map((cookie) => cookie.name)).toEqual([
 			'_soundcloud_session',
 		]);
+	});
+});
+
+describe('client id after a Firefox sign-in', () => {
+	const firefoxCookies = [
+		{ name: 'oauth_refresh_token', value: 'r', domain: 'soundcloud.com' },
+		{
+			name: '_soundcloud_session',
+			value: 's',
+			domain: 'api-auth.soundcloud.com',
+		},
+	];
+
+	test('a failed lookup keeps the sign-in', async () => {
+		const logs: string[] = [];
+		const result = await captureWithFirefox(
+			'/usr/bin/firefox',
+			async () => firefoxCookies,
+			async () => {
+				throw new Error('HTTP 403');
+			},
+			(line) => logs.push(line),
+		);
+		expect(result.session).toEqual({
+			clientId: null,
+			refreshToken: 'r',
+			accessToken: null,
+		});
+		expect(logs.join('\n')).toContain("from the gate browser's sign-in");
+	});
+
+	/** A gate browser whose sign-in page requests the SoundCloud API. */
+	function gateBrowser(requestUrl: string) {
+		const handlers = new Map<string, (target: unknown) => void>();
+		const browser = {
+			on: (event: string, handler: (target: unknown) => void) => {
+				handlers.set(event, handler);
+			},
+			off: (event: string) => {
+				handlers.delete(event);
+			},
+		} as unknown as Browser;
+		const signIn = async () => {
+			let onRequest: ((request: { url: () => string }) => void) | undefined;
+			const page = {
+				on: (_event: string, handler: typeof onRequest) => {
+					onRequest = handler;
+				},
+			};
+			handlers.get('targetcreated')?.({ page: async () => page });
+			await Bun.sleep(0);
+			onRequest?.({ url: () => requestUrl });
+		};
+		return { browser, signIn, handlers };
+	}
+
+	test("the gate browser's requests supply a missing client id", async () => {
+		const gate = gateBrowser(
+			'https://api-v2.soundcloud.com/me?client_id=gate-client',
+		);
+		const session = await loginToSoundcloud(
+			async () => gate.browser,
+			async () => ({
+				session: { clientId: null, refreshToken: 'r', accessToken: null },
+				signInCookies: [],
+			}),
+			gate.signIn,
+		);
+		expect(session.clientId).toBe('gate-client');
+		expect(gate.handlers.size).toBe(0);
+	});
+
+	test('without any client id the login fails clearly', async () => {
+		const gate = gateBrowser('https://soundcloud.com/signin');
+		await expect(
+			loginToSoundcloud(
+				async () => gate.browser,
+				async () => ({
+					session: { clientId: null, refreshToken: 'r', accessToken: null },
+					signInCookies: [],
+				}),
+				gate.signIn,
+			),
+		).rejects.toThrow('Could not read the SoundCloud client id');
 	});
 });
 
