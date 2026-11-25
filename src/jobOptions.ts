@@ -45,6 +45,7 @@ export function parseUnattendedJobOptions(
 	body: { browserMode?: unknown; reviewTags?: unknown },
 	destination: JobDestination | null,
 	availableModes: readonly BrowserMode[],
+	reviewTagsDefault = false,
 ): UnattendedJobOptions | string {
 	let browserMode: BrowserMode | undefined;
 	if (body.browserMode !== undefined) {
@@ -58,7 +59,9 @@ export function parseUnattendedJobOptions(
 	if (body.reviewTags && !destination) {
 		return 'reviewTags needs a destination. Web UI jobs always stop for tags';
 	}
-	return { browserMode, reviewTags: body.reviewTags === true };
+	const reviewTags =
+		body.reviewTags ?? (destination ? reviewTagsDefault : false);
+	return { browserMode, reviewTags: reviewTags === true };
 }
 
 /** `SC_GATE_DL_REVIEW_TAGS`: unset means automatic processing (false). */

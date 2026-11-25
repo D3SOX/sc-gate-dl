@@ -23,6 +23,7 @@ import {
 	needsSourceLosslessProbe,
 	parseBrowserMode,
 	parseOutputFormat,
+	parseReviewTagsSetting,
 	parseUnattendedJobOptions,
 } from './jobOptions';
 import { JobQueue } from './jobQueue';
@@ -111,6 +112,9 @@ function parseApiPort(value: string | undefined): number {
 }
 
 const API_PORT = parseApiPort(process.env.SC_GATE_DL_PORT);
+const REVIEW_TAGS_DEFAULT = parseReviewTagsSetting(
+	process.env.SC_GATE_DL_REVIEW_TAGS,
+);
 
 const soundcloudClient = new SoundcloudClient();
 const audioProcessor = new AudioProcessor(ffmpegBin, ffprobeBin, AUDIO_BITRATE);
@@ -994,6 +998,7 @@ const server = Bun.serve({
 				browserViewUrl: BROWSER_VIEW_URL ?? null,
 				search: true,
 				libraryDestination: LIBRARY_DIR !== null,
+				reviewTagsDefault: REVIEW_TAGS_DEFAULT,
 			}),
 
 		'/api/search': {
@@ -1182,6 +1187,7 @@ const server = Bun.serve({
 						{ browserMode, reviewTags },
 						destination ?? null,
 						availableBrowserModes,
+						REVIEW_TAGS_DEFAULT,
 					);
 					if (typeof options === 'string') {
 						return jsonResponse({ error: options }, { status: 400 });

@@ -113,3 +113,37 @@ describe('parseReviewTagsSetting', () => {
 		},
 	);
 });
+
+describe('parseUnattendedJobOptions with a configured review default', () => {
+	test('an omitted reviewTags uses the default for jobs with a destination', () => {
+		expect(parseUnattendedJobOptions({}, 'library', linuxModes, true)).toEqual({
+			browserMode: undefined,
+			reviewTags: true,
+		});
+	});
+
+	test('an explicit reviewTags overrides the default in both directions', () => {
+		expect(
+			parseUnattendedJobOptions(
+				{ reviewTags: false },
+				'client',
+				linuxModes,
+				true,
+			),
+		).toMatchObject({ reviewTags: false });
+		expect(
+			parseUnattendedJobOptions(
+				{ reviewTags: true },
+				'client',
+				linuxModes,
+				false,
+			),
+		).toMatchObject({ reviewTags: true });
+	});
+
+	test('a job without a destination ignores the default', () => {
+		expect(parseUnattendedJobOptions({}, null, linuxModes, true)).toMatchObject(
+			{ reviewTags: false },
+		);
+	});
+});
