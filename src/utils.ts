@@ -837,6 +837,7 @@ function buyModuleUrl(permalinkUrl: string): string {
 async function fetchBuyModuleHtml(url: string): Promise<string> {
 	const response = await fetch(url, {
 		headers: { 'user-agent': 'Mozilla/5.0 Chrome/126.0 Safari/537.36' },
+		redirect: 'error',
 		signal: AbortSignal.timeout(15_000),
 	});
 	if (!response.ok) throw new Error(`HTTP ${response.status}`);

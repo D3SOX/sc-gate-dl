@@ -389,7 +389,7 @@ export class HypedditHttpDownloader {
 			succeeded = true;
 		} finally {
 			if (!succeeded) {
-				bar.stop();
+				bar.stop(false);
 				try {
 					await writer.end();
 				} catch {

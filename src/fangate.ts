@@ -290,7 +290,7 @@ async function saveFangateFile(link: string, referer: string): Promise<string> {
 		await writer.end();
 		completed = true;
 	} finally {
-		bar.stop();
+		bar.stop(completed);
 		if (!completed) {
 			await Promise.resolve(writer.end()).catch(() => {});
 			await rm(target, { force: true }).catch(() => {});

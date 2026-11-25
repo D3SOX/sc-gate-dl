@@ -2,7 +2,8 @@ import { Presets, SingleBar } from 'cli-progress';
 
 export interface DownloadBar {
 	update(receivedBytes: number): void;
-	stop(): void;
+	/** Pass false when the download failed or was cancelled. Only the first call counts. */
+	stop(completed?: boolean): void;
 }
 
 const mb = (bytes: number) => Number((bytes / 1024 / 1024).toFixed(2));
@@ -17,6 +18,7 @@ export function createDownloadBar(
 	write: (line: string) => void = (line) => console.log(line),
 	now: () => number = Date.now,
 ): DownloadBar {
+	let stopped = false;
 	if (totalBytes > 0) {
 		const bar = new SingleBar(
 			{
@@ -40,7 +42,11 @@ export function createDownloadBar(
 					current_mb: mb(received),
 					total_mb: mb(totalBytes),
 				}),
-			stop: () => bar.stop(),
+			stop: () => {
+				if (stopped) return;
+				stopped = true;
+				bar.stop();
+			},
 		};
 	}
 
@@ -53,6 +59,14 @@ export function createDownloadBar(
 			last = now();
 			write(`Downloading... ${mb(received)} MB`);
 		},
-		stop: () => write(`Downloaded ${mb(received)} MB`),
+		stop: (completed = true) => {
+			if (stopped) return;
+			stopped = true;
+			write(
+				completed
+					? `Downloaded ${mb(received)} MB`
+					: `Download stopped at ${mb(received)} MB`,
+			);
+		},
 	};
 }

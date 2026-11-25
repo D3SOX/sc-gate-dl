@@ -329,7 +329,7 @@ type BrowserGateDownloader = AnyDownloader & {
 	initialize(): Promise<void>;
 	downloadAudio(
 		url: string,
-		options?: BandcampGateOptions & { trackUrl?: string },
+		options?: BandcampGateOptions,
 	): Promise<string | null>;
 };
 

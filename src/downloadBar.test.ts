@@ -22,4 +22,17 @@ describe('createDownloadBar without a known size', () => {
 			'Downloaded 3 MB',
 		]);
 	});
+
+	test('stop prints once, and reports a failed download as stopped', () => {
+		const lines: string[] = [];
+		const bar = createDownloadBar(
+			0,
+			(l) => lines.push(l),
+			() => 10_000,
+		);
+		bar.update(2 * 1024 * 1024);
+		bar.stop(false);
+		bar.stop();
+		expect(lines).toEqual(['Downloading... 2 MB', 'Download stopped at 2 MB']);
+	});
 });

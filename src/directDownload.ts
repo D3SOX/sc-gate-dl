@@ -83,7 +83,7 @@ async function writeBodyWithSizeLimit(
 		await writer.end();
 		bar.stop();
 	} catch (error) {
-		bar.stop();
+		bar.stop(false);
 		try {
 			writer.end();
 		} catch {
