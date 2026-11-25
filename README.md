@@ -30,11 +30,4 @@ bun start --login
 
 ## 📚 Documentation
 
-| Page | Contents |
-| --- | --- |
-| [Installation](docs/installation.md) | Requirements, accounts, the `.env` file, and logging in |
-| [Usage](docs/usage.md) | The CLI, the Web UI and the userscript |
-| [Configuration](docs/configuration.md) | All `.env` variables and `config.json` keys |
-| [How it works](docs/how-it-works.md) | How sc-gate-dl finds and unlocks a gate, and how it converts and tags the file |
-| [Running on a server](docs/server.md) | Network access, a remote headed browser with noVNC, and Tailscale |
-| [HTTP API](docs/api.md) | Jobs, tag review, search and artwork |
+The [documentation](docs/README.md) covers installation, usage, configuration, how sc-gate-dl works, running it on a server, and the HTTP API, with the order to read them in.
