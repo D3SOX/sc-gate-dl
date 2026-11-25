@@ -74,13 +74,14 @@ export interface FirefoxSignInOptions {
 /**
  * The SoundCloud sign-in session from a Firefox sign-in. Null without Firefox
  * or when that sign-in fails; the caller's browser window remains as the way
- * to sign in.
+ * to sign in. Run it before a gate browser opens, so only Firefox waits for
+ * the user, and pass the result to `signInToSoundcloud`.
  */
-async function sessionFromFirefox({
+export async function soundcloudSessionFromFirefox({
 	firefox = findFirefox,
 	firefoxSignIn,
 	log = console.log,
-}: FirefoxSignInOptions): Promise<CookieData[] | null> {
+}: FirefoxSignInOptions = {}): Promise<CookieData[] | null> {
 	const path = firefox();
 	if (!path) {
 		if (!firefoxDisabled()) log(FIREFOX_MISSING_WARNING);
@@ -247,7 +248,7 @@ export async function waitForSoundcloudLogin(
 	options.onWaiting();
 	// Sign in in Firefox and hand the session to this page; its own window
 	// stays usable when that does not work out.
-	const session = await sessionFromFirefox(options);
+	const session = await soundcloudSessionFromFirefox(options);
 	if (session && session.length > 0) {
 		await context.setCookie(...session);
 		await page.reload({ waitUntil: 'domcontentloaded' }).catch(() => {});
@@ -295,7 +296,9 @@ export async function signInToSoundcloud(
 ): Promise<void> {
 	const log = options.log ?? console.log;
 	const session =
-		options.signInCookies ?? (await sessionFromFirefox(options)) ?? [];
+		options.signInCookies ??
+		(await soundcloudSessionFromFirefox(options)) ??
+		[];
 	const context = browser.defaultBrowserContext();
 	const staleSession = (await context.cookies()).filter(
 		(cookie) =>

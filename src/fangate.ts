@@ -1,4 +1,4 @@
-import type { Browser, Page } from 'puppeteer';
+import type { Browser, CookieData, Page } from 'puppeteer';
 import { CancellableBrowserLaunch } from './browserLaunch';
 import { DirectDownloader } from './directDownload';
 import type { ProgressCallback } from './hypeddit';
@@ -202,8 +202,9 @@ export class FangateDownloader {
 		await this.browser.defaultBrowserContext().setCookie(...soundCloudCookies);
 	}
 
-	async prepareLogins() {
-		await signInToSoundcloud(this.browser);
+	/** `signInCookies`: a session from `soundcloudSessionFromFirefox`. */
+	async prepareLogins(signInCookies?: CookieData[]) {
+		await signInToSoundcloud(this.browser, { signInCookies });
 	}
 
 	async close() {

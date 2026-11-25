@@ -1,6 +1,6 @@
 import { mkdir } from 'node:fs/promises';
 import { basename, join } from 'node:path';
-import type { Browser, Page } from 'puppeteer';
+import type { Browser, CookieData, Page } from 'puppeteer';
 import {
 	browserModeToLaunchOptions,
 	CancellableBrowserLaunch,
@@ -96,8 +96,9 @@ export class MypresskitDownloader {
 		this.spotifyCookiesLoaded = await injectSpotifyCookies(this.browser);
 	}
 
-	async prepareLogins() {
-		await signInToSoundcloud(this.browser);
+	/** `signInCookies`: a session from `soundcloudSessionFromFirefox`. */
+	async prepareLogins(signInCookies?: CookieData[]) {
+		await signInToSoundcloud(this.browser, { signInCookies });
 	}
 
 	async downloadAudio(url: string): Promise<string | null> {

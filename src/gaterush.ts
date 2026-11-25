@@ -1,5 +1,11 @@
 import { Presets, SingleBar } from 'cli-progress';
-import type { Browser, HTTPRequest, HTTPResponse, Page } from 'puppeteer';
+import type {
+	Browser,
+	CookieData,
+	HTTPRequest,
+	HTTPResponse,
+	Page,
+} from 'puppeteer';
 import {
 	BandcampGateDownloader,
 	type BandcampGateOptions,
@@ -80,8 +86,9 @@ export class GaterushDownloader {
 		await browserContext.setCookie(...soundCloudCookies);
 	}
 
-	async prepareLogins() {
-		await signInToSoundcloud(this.browser);
+	/** `signInCookies`: a session from `soundcloudSessionFromFirefox`. */
+	async prepareLogins(signInCookies?: CookieData[]) {
+		await signInToSoundcloud(this.browser, { signInCookies });
 	}
 
 	async downloadAudio(

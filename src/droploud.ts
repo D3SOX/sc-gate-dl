@@ -1,5 +1,5 @@
 import { Presets, SingleBar } from 'cli-progress';
-import type { Browser, Frame, HTTPResponse, Page } from 'puppeteer';
+import type { Browser, CookieData, Frame, HTTPResponse, Page } from 'puppeteer';
 import { CancellableBrowserLaunch } from './browserLaunch';
 import type { ProgressCallback } from './hypeddit';
 import Selectors from './selectors';
@@ -55,8 +55,9 @@ export class DroploudDownloader {
 		await browserContext.setCookie(...soundCloudCookies);
 	}
 
-	async prepareLogins() {
-		await signInToSoundcloud(this.browser);
+	/** `signInCookies`: a session from `soundcloudSessionFromFirefox`. */
+	async prepareLogins(signInCookies?: CookieData[]) {
+		await signInToSoundcloud(this.browser, { signInCookies });
 	}
 
 	async downloadAudio(url: string): Promise<string | null> {

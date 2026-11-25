@@ -39,7 +39,10 @@ import {
 } from './serverCors';
 import { SoundcloudClient } from './soundcloud';
 import { isSoundcloudDownloadEnabled } from './soundcloudDownload';
-import { FIREFOX_MISSING_WARNING } from './soundcloudLogin';
+import {
+	FIREFOX_MISSING_WARNING,
+	soundcloudSessionFromFirefox,
+} from './soundcloudLogin';
 import { StillhypeDownloader } from './stillhype';
 import {
 	type BrowserMode,
@@ -104,6 +107,8 @@ const LIBRARY_DIR = libraryDirFromEnv();
 const API_PORT = apiPortFromEnv();
 /** Web UI jobs stop for tags unless `SC_GATE_DL_REVIEW_TAGS=false`. */
 const REVIEW_TAGS = reviewTagsFromEnv();
+/** Initialize logins runs one at a time; see its route. */
+let loginsInitializing = false;
 
 const soundcloudClient = new SoundcloudClient();
 const audioProcessor = new AudioProcessor(
@@ -1029,8 +1034,22 @@ const server = Bun.serve({
 
 		'/api/logins/initialize': {
 			POST: async () => {
+				// A second browser on the same profile cannot start while the
+				// first sign-in still runs.
+				if (loginsInitializing) {
+					return jsonResponse(
+						{
+							error:
+								'Finish the sign-in that is already open in the remote browser view.',
+						},
+						{ status: 409 },
+					);
+				}
+				loginsInitializing = true;
 				let loginDownloader: HypedditDownloader | null = null;
 				try {
+					// Firefox first, so its window is the only one waiting for the user.
+					const signInCookies = (await soundcloudSessionFromFirefox()) ?? [];
 					loginDownloader = new HypedditDownloader({
 						name: HYPEDDIT_NAME,
 						email: HYPEDDIT_EMAIL,
@@ -1039,7 +1058,7 @@ const server = Bun.serve({
 					});
 
 					await loginDownloader.initialize();
-					await loginDownloader.prepareLogins();
+					await loginDownloader.prepareLogins(signInCookies);
 					await loginDownloader.close();
 					loginDownloader = null;
 
@@ -1055,6 +1074,8 @@ const server = Bun.serve({
 						},
 						{ status: 500 },
 					);
+				} finally {
+					loginsInitializing = false;
 				}
 			},
 		},
