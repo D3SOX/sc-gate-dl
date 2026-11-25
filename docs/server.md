@@ -43,9 +43,9 @@ mkdir -p ~/.vnc
 x11vnc -storepasswd
 ```
 
-`x11vnc -storepasswd` writes `~/.vnc/passwd`, which the services below use. The file is only obfuscated with a fixed, publicly known key, so anyone who can read it can recover the password. Keep it at mode `600` (`chmod 600 ~/.vnc/passwd`). If you'd rather keep a plaintext password file, make it mode `600` too and pass it with `-passwdfile`. `-rfbauth` only takes the obfuscated format.
+`x11vnc -storepasswd` writes `~/.vnc/passwd`, which the services below use. The file is only obfuscated with a fixed, publicly known key, so anyone who can read it can recover the password. Keep it at mode `600` (`chmod 600 ~/.vnc/passwd`).
 
-To change the password later, run `x11vnc -storepasswd` again (or edit the plaintext file) and restart the VNC server with `systemctl --user restart sc-gate-x11vnc.service`, because x11vnc only reads the password when it starts. Browsers that saved the old password with **Remember on this device** show an authentication error once and forget it, then you enter the new one.
+To change the password later, run `x11vnc -storepasswd` again and restart the VNC server with `systemctl --user restart sc-gate-x11vnc.service`, because x11vnc only reads the password when it starts. Browsers that saved the old password with **Remember on this device** show an authentication error once and forget it, then you enter the new one.
 
 Create a private Xauthority file. Xvfb, x11vnc and the app must all use this file:
 
