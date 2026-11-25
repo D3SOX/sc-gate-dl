@@ -221,7 +221,7 @@ localStorage.setItem(
 
 ## 🔧 Configuration
 
-All settings go in `.env`. Settings marked "server" apply to the API that `bun webui` starts.
+All settings go in `.env`. Settings marked "server" apply to the API that `bun webui` and `bun run serve` start.
 
 ### 📁 Output
 
@@ -301,6 +301,8 @@ When the purchase link or description points at Bandcamp, yt-dlp downloads the f
 sc-gate-dl keeps existing tags that the SoundCloud metadata doesn't replace, and the comment tag links back to the SoundCloud track.
 
 ## 🏠 Running on a server
+
+`bun webui` runs Astro's dev server and restarts the API when its code changes. On a server, use `bun run serve` instead. It builds the Web UI and serves it on port 4321 next to the API on port 3000.
 
 ### 📡 Network access
 
@@ -458,9 +460,7 @@ Environment=DISPLAY=:99
 Environment=XAUTHORITY=/home/YOUR_USER/.local/state/sc-gate-dl/xauthority
 Environment=XDG_SESSION_TYPE=x11
 Environment=OZONE_PLATFORM=x11
-# Comma-separated hostnames used to open the Vite-powered Web UI:
-Environment=__VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS=SERVER_NAME,SERVER_NAME.TAILNET.ts.net
-ExecStart=/home/YOUR_USER/.bun/bin/bun webui
+ExecStart=/home/YOUR_USER/.bun/bin/bun run serve
 Restart=on-failure
 RestartSec=3
 ```
@@ -501,7 +501,7 @@ systemctl --user status sc-gate-dl.target
 journalctl --user -u sc-gate-app.service -f
 ```
 
-To update sc-gate-dl, only the app service needs a restart:
+To update sc-gate-dl, only the app service needs a restart. It rebuilds the Web UI when it starts:
 
 ```bash
 cd ~/sc-gate-dl
@@ -551,19 +551,6 @@ The services on the host must listen on an interface the Docker bridge can reach
 
 </details>
 
-Vite rejects hostnames it doesn't know, even private ones. Add the short MagicDNS name and the full tailnet name to `__VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS`, either in the app service as shown above or in the root `.env`:
-
-```dotenv
-__VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS=SERVER_NAME,SERVER_NAME.TAILNET.ts.net
-```
-
-Don't set `server.allowedHosts: true`, because an explicit list keeps Vite's DNS rebinding protection. After changing it, reload and restart:
-
-```bash
-systemctl --user daemon-reload
-systemctl --user restart sc-gate-app.service
-```
-
 With `{host}` in `BROWSER_VIEW_URL`, both `http://192.168.1.50:4321` and `http://SERVER_NAME:4321` work without further changes.
 
 #### 🪟 Using the browser view
@@ -581,7 +568,7 @@ VNC authentication doesn't encrypt the connection. Keep port 6080 on a trusted L
 
 ## 🔌 HTTP API
 
-The API that `bun webui` starts also serves other clients, such as [Nevumi](https://github.com/D3SOX/Nevumi).
+The API that `bun webui` and `bun run serve` start also serves other clients, such as [Nevumi](https://github.com/D3SOX/Nevumi).
 
 ### 📨 Jobs
 
