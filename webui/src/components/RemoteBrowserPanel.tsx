@@ -77,6 +77,7 @@ export function RemoteBrowserPanel({
 	const screenRef = useRef<HTMLDivElement>(null);
 	const screenContainerRef = useRef<HTMLDivElement>(null);
 	const toolbarRef = useRef<HTMLElement>(null);
+	const panelRef = useRef<HTMLElement>(null);
 	const rfbRef = useRef<RFB | null>(null);
 	const activeViewUrlRef = useRef(viewUrl);
 	const connectionGenerationRef = useRef(0);
@@ -137,6 +138,28 @@ export function RemoteBrowserPanel({
 
 	useEffect(() => {
 		if (!open) setControlsHelpOpen(false);
+	}, [open]);
+
+	// noVNC fits the screen to its getBoundingClientRect(), which includes the
+	// closed panel's shrink transform. A rescale while closed (for example when
+	// the tab becomes visible again) leaves a tiny screen that the transform-only
+	// open animation never corrects, so refit once the panel has fully opened.
+	useEffect(() => {
+		const panel = panelRef.current;
+		if (!open || !panel) return;
+		let cancelled = false;
+		Promise.all((panel.getAnimations?.() ?? []).map((a) => a.finished))
+			.then(() => {
+				const rfb = rfbRef.current;
+				// Reassigning scaleViewport is noVNC's public way to rescale.
+				if (!cancelled && rfb) rfb.scaleViewport = true;
+			})
+			.catch(() => {
+				// Closing again cancels the transition; the next open refits.
+			});
+		return () => {
+			cancelled = true;
+		};
 	}, [open]);
 
 	const updateGeometry = useCallback((nextGeometry: typeof geometry) => {
@@ -992,6 +1015,7 @@ export function RemoteBrowserPanel({
 
 			<section
 				id="remote-browser-panel"
+				ref={panelRef}
 				className={`remote-browser-panel${open ? ' is-open' : ''}${maximized ? ' is-maximized' : ''}`}
 				style={panelStyle}
 				role="dialog"
