@@ -1,6 +1,4 @@
-<img src="webui/public/favicon.svg" alt="" width="96" height="96">
-
-# sc-gate-dl
+<h1><img src="webui/public/favicon.svg" alt="" width="40" height="40" align="left">sc-gate-dl</h1>
 
 sc-gate-dl downloads SoundCloud tracks that sit behind a download gate and tags them with the track's SoundCloud metadata and artwork. You give it a SoundCloud link, and it finds the gate, unlocks it, and saves the file. It works from the command line, from a Web UI, and from a userscript on soundcloud.com.
 
