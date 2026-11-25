@@ -7,17 +7,29 @@ const SOUNDCLOUD_HOST_RE = /(^|\.)soundcloud\.com$/i;
 export const LOGIN_COPY_RE =
 	/sign in or create an account|create an account or sign in/i;
 
+function isSoundcloudHost(pageUrl: string): boolean {
+	try {
+		return SOUNDCLOUD_HOST_RE.test(new URL(pageUrl).hostname);
+	} catch {
+		return false;
+	}
+}
+
 export function isSoundcloudLoginDocument(
 	pageUrl: string,
 	text: string,
 	hasApproval: boolean,
 ): boolean {
-	try {
-		if (!SOUNDCLOUD_HOST_RE.test(new URL(pageUrl).hostname)) return false;
-	} catch {
-		return false;
+	return isSoundcloudHost(pageUrl) && LOGIN_COPY_RE.test(text) && !hasApproval;
+}
+
+/** SoundCloud's block page never turns into a login, so stop instead of waiting. */
+export function throwIfSoundcloudBlocked(pageUrl: string, text: string): void {
+	if (isSoundcloudHost(pageUrl) && /\byou have been blocked\b/i.test(text)) {
+		throw new Error(
+			'SoundCloud blocked this browser or network. Resolve the block with SoundCloud (or use another network) before retrying.',
+		);
 	}
-	return LOGIN_COPY_RE.test(text) && !hasApproval;
 }
 
 export async function isSoundcloudLoginPage(page: Page): Promise<boolean> {
@@ -35,6 +47,7 @@ export async function isSoundcloudLoginPage(page: Page): Promise<boolean> {
 				),
 		}))
 		.catch(() => null);
+	if (documentState) throwIfSoundcloudBlocked(page.url(), documentState.text);
 	return documentState
 		? isSoundcloudLoginDocument(
 				page.url(),
@@ -144,6 +157,10 @@ export async function signInToSoundcloud(
 			if (Date.now() > deadline) {
 				throw new Error('Timed out waiting for SoundCloud sign-in.');
 			}
+			const text = await page
+				.evaluate(() => document.body?.innerText || '')
+				.catch(() => '');
+			throwIfSoundcloudBlocked(page.url(), text);
 			await timeout(1_000);
 		}
 		await page.goto('https://soundcloud.com/you/library', {

@@ -2,6 +2,7 @@ import { describe, expect, spyOn, test } from 'bun:test';
 import type { Cookie, Page } from 'puppeteer';
 import {
 	isSoundcloudLoginDocument,
+	throwIfSoundcloudBlocked,
 	waitForSoundcloudLogin,
 } from './soundcloudLogin';
 import * as utils from './utils';
@@ -39,6 +40,23 @@ describe('SoundCloud interactive login detection', () => {
 				false,
 			),
 		).toBe(false);
+	});
+
+	test('reports SoundCloud block page only on SoundCloud', () => {
+		const blocked =
+			'You have been blocked. We detected unusual activity from your device or network.';
+		expect(() =>
+			throwIfSoundcloudBlocked('https://secure.soundcloud.com/', blocked),
+		).toThrow('SoundCloud blocked');
+		expect(() =>
+			throwIfSoundcloudBlocked('https://example.com/', blocked),
+		).not.toThrow();
+		expect(() =>
+			throwIfSoundcloudBlocked(
+				'https://soundcloud.com/signin',
+				'Sign in or create an account',
+			),
+		).not.toThrow();
 	});
 });
 
@@ -81,6 +99,37 @@ describe('SoundCloud login persistence', () => {
 			await finishLogin([refreshed, cookie('private', 'other.example')]);
 			expect(save).toHaveBeenCalledTimes(1);
 			expect(save).toHaveBeenCalledWith([refreshed]);
+		} finally {
+			save.mockRestore();
+		}
+	});
+
+	test('stops waiting when SoundCloud shows its block page', async () => {
+		const save = spyOn(utils, 'writeBrowserCookies').mockResolvedValue(
+			undefined,
+		);
+		let checks = 0;
+		const page = {
+			isClosed: () => false,
+			url: () => 'https://secure.soundcloud.com/authorize',
+			bringToFront: async () => {},
+			evaluate: async () => ({
+				text:
+					++checks === 1
+						? 'Sign in or create an account'
+						: 'You have been blocked.',
+				hasApproval: false,
+			}),
+			browserContext: () => ({ cookies: async () => [cookie('private')] }),
+		} as unknown as Page;
+		try {
+			await expect(
+				waitForSoundcloudLogin(page, {
+					interactive: true,
+					onWaiting: () => {},
+				}),
+			).rejects.toThrow('SoundCloud blocked');
+			expect(save).not.toHaveBeenCalled();
 		} finally {
 			save.mockRestore();
 		}
