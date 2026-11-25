@@ -50,8 +50,6 @@ cd sc-gate-dl
 bun install
 ```
 
-This also installs the [Web UI](#-web-ui) dependencies.
-
 ## 🧰 Setup
 
 ### 📝 1. Create the `.env` file
