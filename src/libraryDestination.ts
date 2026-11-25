@@ -1,5 +1,5 @@
-import { constants, existsSync } from 'node:fs';
-import { copyFile, link, mkdir, rename, rm } from 'node:fs/promises';
+import { constants } from 'node:fs';
+import { copyFile, link, mkdir, open, rename, rm } from 'node:fs/promises';
 import { basename, extname, join, resolve } from 'node:path';
 
 /** Absolute library folder from `SC_GATE_DL_LIBRARY_DIR`, or null when unset. */
@@ -54,9 +54,19 @@ export async function moveIntoLibrary(
 				await fs.copyFile(sourcePath, staging, constants.COPYFILE_EXCL);
 				return placeAt(target);
 			}
-			// The library filesystem has no hard links.
-			if (existsSync(target)) return false;
-			await fs.rename(staging, target);
+			// No hard links here: claim the name with an empty file, then replace it.
+			try {
+				await (await open(target, 'wx')).close();
+			} catch (claimError) {
+				if (errorCode(claimError) === 'EEXIST') return false;
+				throw claimError;
+			}
+			try {
+				await fs.rename(staging, target);
+			} catch (renameError) {
+				await rm(target, { force: true });
+				throw renameError;
+			}
 			staging = null;
 			return true;
 		}

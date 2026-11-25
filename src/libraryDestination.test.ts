@@ -133,6 +133,31 @@ describe('moveIntoLibrary', () => {
 		expect(existsSync(source)).toBe(false);
 	});
 
+	test('never replaces a file when deliveries without hard links race', async () => {
+		const noLinks = otherDevice({
+			link: async () => {
+				throw fsError('EPERM');
+			},
+		});
+		const first = join(downloads, 'a', 'Artist - Title.mp3');
+		const second = join(downloads, 'b', 'Artist - Title.mp3');
+		await Bun.write(first, 'first');
+		await Bun.write(second, 'second');
+
+		const names = await Promise.all([
+			moveIntoLibrary(first, library, undefined, noLinks),
+			moveIntoLibrary(second, library, undefined, noLinks),
+		]);
+		expect(names.sort()).toEqual([
+			'Artist - Title (2).mp3',
+			'Artist - Title.mp3',
+		]);
+		const contents = await Promise.all(
+			names.map((name) => readFile(join(library, name), 'utf8')),
+		);
+		expect(contents.sort()).toEqual(['first', 'second']);
+	});
+
 	test('leaves no partial file when the copy fails', async () => {
 		const source = join(downloads, 'Artist - Title.mp3');
 		await writeFile(source, 'audio');
