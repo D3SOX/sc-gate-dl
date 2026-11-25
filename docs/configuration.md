@@ -60,3 +60,12 @@ Without this file, the CLI asks these questions on every run. Copy [`config.exam
 | `initializeLogins` | Sign in again in the gate browser before the gate runs, for when its saved login stopped working. `bun start` already checks the logins from `bun start --login`, so leave this `false` normally. Needs `headless` set to `false`, and the CLI sets it back to `false` after the sign-in. |
 | `deleteLosslessAfterConversion` | Delete the lossless source file after converting it. |
 | `cleanupSoundCloudAccount` | Undo follows, likes, comments and reposts after a browser gate. |
+
+---
+
+## 👉 Read next
+
+**[🧠 How it works](how-it-works.md)**  
+Where sc-gate-dl looks for a gate, how it unlocks it, and how it converts and tags the file.
+
+<sub>⬅️ Previous: [Usage](usage.md) · 📚 [All docs](README.md)</sub>

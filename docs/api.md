@@ -83,3 +83,12 @@ Finish the job with `POST /api/job/:id/metadata`:
 | `POST /api/job/:id/cancel` | Cancel the job and close its browser |
 | `POST /api/soundcloud/cleanup` | Undo the gate actions on the SoundCloud account |
 | `POST /api/logins/initialize` | Start the guided sign-in, as **Initialize logins** in the Web UI does |
+
+---
+
+## 👉 Read next
+
+**[📚 Documentation](README.md)**  
+That was the last page. Head back to the overview of all pages.
+
+<sub>⬅️ Previous: [Running on a server](server.md)</sub>

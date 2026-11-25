@@ -109,4 +109,11 @@ Without a config file, the CLI asks a few questions on every run. To answer them
 cp config.example.json config.json
 ```
 
-Next, see [Usage](usage.md).
+---
+
+## 👉 Read next
+
+**[🚀 Usage](usage.md)**  
+Download your first track with the CLI, the Web UI or the userscript.
+
+<sub>⬅️ Previous: [Documentation](README.md) · 📚 [All docs](README.md)</sub>

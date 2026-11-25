@@ -53,3 +53,12 @@ When a gate delivers a ZIP archive, sc-gate-dl unpacks it and picks the audio fi
 | Other lossy formats (Ogg, Opus, WebM) | Converted at their own bitrate, up to `SC_GATE_DL_BITRATE`. |
 
 sc-gate-dl keeps existing tags that the SoundCloud metadata doesn't replace, and the comment tag links back to the SoundCloud track. The `original` format skips conversion and tagging.
+
+---
+
+## 👉 Read next
+
+**[🏠 Running on a server](server.md)**  
+Run sc-gate-dl on another machine, with a remote headed browser over noVNC and private access through Tailscale.
+
+<sub>⬅️ Previous: [Configuration](configuration.md) · 📚 [All docs](README.md)</sub>

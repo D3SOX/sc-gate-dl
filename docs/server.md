@@ -258,3 +258,12 @@ With `BROWSER_VIEW_URL` set, the Web UI shows a monitor icon in the top right co
 - On touchscreens, drag with one finger to move the pointer, tap to left-click, hold still to right-click, and drag with two fingers to pan while zoomed in.
 
 VNC authentication doesn't encrypt the connection. Keep port 6080 on a trusted LAN, or put the Web UI, API and noVNC behind a reverse proxy with HTTPS and authentication. When the Web UI uses HTTPS, `BROWSER_VIEW_URL` must use HTTPS too, so the viewer connects over `wss://`.
+
+---
+
+## 👉 Read next
+
+**[🔌 HTTP API](api.md)**  
+Write your own client: jobs, tag review, search and artwork.
+
+<sub>⬅️ Previous: [How it works](how-it-works.md) · 📚 [All docs](README.md)</sub>

@@ -83,3 +83,12 @@ localStorage.setItem(
 ## 📤 Exporting a second account
 
 `bun manage-acc` exports the followed users, liked tracks, reposted tracks and playlists of the account in `MANAGED_SC_CLIENT_ID` and `MANAGED_SC_OAUTH_TOKEN`. Get those values the [manual way](installation.md#-logging-in-manually). The export goes to a timestamped folder in `./exports` and includes `playlists.json` with the playlists' tracks and `reposted-playlists.json`. The downloader doesn't use this account.
+
+---
+
+## 👉 Read next
+
+**[🔧 Configuration](configuration.md)**  
+Change the output format or folder, add a proxy, or look up any `.env` variable or `config.json` key.
+
+<sub>⬅️ Previous: [Installation](installation.md) · 📚 [All docs](README.md)</sub>
