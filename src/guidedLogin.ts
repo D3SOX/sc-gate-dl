@@ -122,6 +122,19 @@ export function pickSoundcloudSession(
 		: null;
 }
 
+/**
+ * The sign-in session of a SoundCloud login, without its tokens. Another
+ * browser holding it gets its own tokens without a second sign-in. DataDome's
+ * cookie belongs to the browser it was issued to, so it stays behind too.
+ */
+export function pickSoundcloudSignInCookies(cookies: Cookie[]): Cookie[] {
+	const keep = new Set(['oauth_token', 'oauth_refresh_token', 'datadome']);
+	return cookies.filter(
+		(cookie) =>
+			isCookieOf(SOUNDCLOUD_HOST_RE)(cookie) && !keep.has(cookie.name),
+	);
+}
+
 /** `sp_dc` is Spotify's long-lived login cookie; it only exists after a login. */
 export function pickSpotifyCookies(cookies: Cookie[]): Cookie[] | null {
 	const own = cookies.filter(isCookieOf(SPOTIFY_HOST_RE));
@@ -142,6 +155,12 @@ async function waitFor<T>(
 	throw new Error(`Timed out waiting for ${what}.`);
 }
 
+export interface CapturedSoundcloudLogin {
+	session: SoundcloudSession;
+	/** See `pickSoundcloudSignInCookies`. */
+	signInCookies: Cookie[];
+}
+
 /**
  * Signs in to SoundCloud in a throwaway browser profile and reads the API
  * login from it. The profile is deleted afterwards, so no browser keeps using
@@ -151,7 +170,7 @@ async function waitFor<T>(
 export async function captureSoundcloudApiLogin(
 	openBrowser: (userDataDir: string) => Promise<Browser> = (userDataDir) =>
 		launchAppBrowser({ headless: false, userDataDir }),
-): Promise<SoundcloudSession> {
+): Promise<CapturedSoundcloudLogin> {
 	const profile = await mkdtemp(join(tmpdir(), 'sc-gate-dl-login-'));
 	try {
 		const browser = await openBrowser(profile);
@@ -193,11 +212,15 @@ export async function captureSoundcloudApiLogin(
 					})
 					.catch(() => {});
 			}
-			return await waitFor(
+			const session = await waitFor(
 				'the SoundCloud client id',
 				async () => pickSoundcloudSession(await context.cookies(), clientId),
 				60_000,
 			);
+			return {
+				session,
+				signInCookies: pickSoundcloudSignInCookies(await context.cookies()),
+			};
 		} finally {
 			await browser.close().catch(() => {});
 		}
@@ -207,19 +230,27 @@ export async function captureSoundcloudApiLogin(
 }
 
 /**
- * The API login comes from a throwaway profile, and the gate browser signs in
- * on its own like Initialize logins (which saves soundcloud-cookies.json), so
- * each keeps its own refresh-token chain. The gate browser opens only after
- * the throwaway one closed: CloakBrowser's free tier kills a second browser
+ * The API login comes from a throwaway profile. The gate browser then signs
+ * in like Initialize logins (which saves soundcloud-cookies.json), reusing the
+ * sign-in session so it gets its own tokens without asking again; each keeps
+ * its own refresh-token chain. The gate browser opens only after the
+ * throwaway one closed: CloakBrowser's free tier kills a second browser
  * running at the same time.
  */
 export async function loginToSoundcloud(
 	gateBrowser: () => Promise<Browser>,
-	captureApiLogin: () => Promise<SoundcloudSession> = captureSoundcloudApiLogin,
+	captureApiLogin: () => Promise<CapturedSoundcloudLogin> = captureSoundcloudApiLogin,
+	signIn: (browser: Browser) => Promise<void> = signInToSoundcloud,
 ): Promise<SoundcloudSession> {
-	const session = await captureApiLogin();
-	console.log('Now sign in to SoundCloud for the gate browser...');
-	await signInToSoundcloud(await gateBrowser());
+	const { session, signInCookies } = await captureApiLogin();
+	const browser = await gateBrowser();
+	if (signInCookies.length > 0) {
+		await browser.defaultBrowserContext().setCookie(...signInCookies);
+	}
+	console.log(
+		'Signing in the gate browser with the same SoundCloud session (sign in again only if it asks)...',
+	);
+	await signIn(browser);
 	return session;
 }
 

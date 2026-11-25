@@ -8,8 +8,10 @@ import {
 	checkSpotifyCookies,
 	clientIdFromUrl,
 	type LoginProvider,
+	loginToSoundcloud,
 	parseCliArgs,
 	pickSoundcloudSession,
+	pickSoundcloudSignInCookies,
 	pickSpotifyCookies,
 	prepareCliLogins,
 	runGuidedLogin,
@@ -95,6 +97,58 @@ describe('login capture', () => {
 				'cid',
 			),
 		).toBeNull();
+	});
+
+	test('the sign-in session leaves the tokens and DataDome behind', () => {
+		const names = pickSoundcloudSignInCookies([
+			cookie('_soundcloud_session', 's', 'api-auth.soundcloud.com'),
+			cookie('connect_session', 'c', '.soundcloud.com'),
+			cookie('oauth_token', 'a', 'soundcloud.com'),
+			cookie('oauth_refresh_token', 'r', 'soundcloud.com'),
+			cookie('datadome', 'd', '.soundcloud.com'),
+			cookie('other', 'o', '.example.com'),
+		]).map((c) => c.name);
+		expect(names).toEqual(['_soundcloud_session', 'connect_session']);
+	});
+
+	test('the gate browser opens after the API login and gets its sign-in session', async () => {
+		const events: string[] = [];
+		const session = { clientId: 'c', refreshToken: 'r', accessToken: null };
+		const signInCookie = cookie(
+			'_soundcloud_session',
+			's',
+			'api-auth.soundcloud.com',
+		);
+		const gate = {
+			defaultBrowserContext: () => ({
+				setCookie: async (...cookies: Cookie[]) => {
+					events.push(`set ${cookies.map((c) => c.name).join(',')}`);
+				},
+			}),
+		} as unknown as Browser;
+
+		const result = await loginToSoundcloud(
+			async () => {
+				events.push('open gate browser');
+				return gate;
+			},
+			async () => {
+				events.push('API sign-in');
+				return { session, signInCookies: [signInCookie] };
+			},
+			async (browser) => {
+				expect(browser).toBe(gate);
+				events.push('gate sign-in');
+			},
+		);
+
+		expect(result).toBe(session);
+		expect(events).toEqual([
+			'API sign-in',
+			'open gate browser',
+			'set _soundcloud_session',
+			'gate sign-in',
+		]);
 	});
 
 	test('Spotify needs sp_dc and keeps only Spotify cookies', () => {
