@@ -117,9 +117,15 @@ describe('SoundCloud client id', () => {
 	});
 });
 
-test('findFirefox looks up firefox on the PATH', () => {
-	expect(findFirefox((name) => `/usr/bin/${name}`)).toBe('/usr/bin/firefox');
-	expect(findFirefox(() => null)).toBeNull();
+test('findFirefox uses SC_GATE_DL_FIREFOX, then firefox on the PATH', () => {
+	const which = (name: string) =>
+		name.startsWith('/') ? name : `/usr/bin/${name}`;
+	expect(findFirefox('', which)).toBe('/usr/bin/firefox');
+	expect(findFirefox('/opt/librewolf/librewolf', which)).toBe(
+		'/opt/librewolf/librewolf',
+	);
+	expect(findFirefox('off', which)).toBeNull();
+	expect(findFirefox('', () => null)).toBeNull();
 });
 
 describe('signInWithFirefox', () => {

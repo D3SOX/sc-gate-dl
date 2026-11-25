@@ -7,14 +7,20 @@ import { setEnvValues } from './envFile';
 import {
 	fetchSoundcloudClientId,
 	findFirefox,
-	signInWithFirefox,
+	firefoxDisabled,
 } from './firefoxLogin';
 import {
 	hasSoundcloudLogin,
 	SoundcloudClient,
 	type SoundcloudLoginState,
 } from './soundcloud';
-import { signInToSoundcloud, soundcloudBlockHint } from './soundcloudLogin';
+import {
+	FIREFOX_MISSING_WARNING,
+	pickSoundcloudSignInCookies,
+	signInToSoundcloud,
+	signInToSoundcloudInFirefox,
+	soundcloudBlockHint,
+} from './soundcloudLogin';
 import { SPOTIFY_COOKIES_FILE } from './spotifyAuth';
 import { timeout, writeBrowserCookies } from './utils';
 
@@ -134,21 +140,6 @@ export function pickSoundcloudSession(
 		: null;
 }
 
-/**
- * The sign-in session of a SoundCloud login, without its tokens. Another
- * browser holding it gets its own tokens without a second sign-in. DataDome's
- * cookie belongs to the browser it was issued to, so it stays behind too.
- */
-export function pickSoundcloudSignInCookies<T extends CookieLike>(
-	cookies: T[],
-): T[] {
-	const keep = new Set(['oauth_token', 'oauth_refresh_token', 'datadome']);
-	return cookies.filter(
-		(cookie) =>
-			isCookieOf(SOUNDCLOUD_HOST_RE)(cookie) && !keep.has(cookie.name),
-	);
-}
-
 /** `sp_dc` is Spotify's long-lived login cookie; it only exists after a login. */
 export function pickSpotifyCookies(cookies: Cookie[]): Cookie[] | null {
 	const own = cookies.filter(isCookieOf(SPOTIFY_HOST_RE));
@@ -186,9 +177,6 @@ export interface CapturedSoundcloudLogin {
 	signInCookies: CookieData[];
 }
 
-export const FIREFOX_MISSING_WARNING =
-	"⚠ Firefox is not installed, so the SoundCloud sign-in opens in CloakBrowser instead. SoundCloud's bot protection (DataDome) blocks CloakBrowser more often; install Firefox for a more reliable sign-in.";
-
 export interface ApiLoginOptions {
 	firefox?: () => string | null;
 	withFirefox?: (firefox: string) => Promise<CapturedSoundcloudLogin>;
@@ -210,39 +198,26 @@ export async function captureSoundcloudApiLogin({
 }: ApiLoginOptions = {}): Promise<CapturedSoundcloudLogin> {
 	const path = firefox();
 	if (path) return withFirefox(path);
-	log(FIREFOX_MISSING_WARNING);
+	if (!firefoxDisabled()) log(FIREFOX_MISSING_WARNING);
 	return withCloakBrowser();
 }
 
 /** A sign-in in the user's own Firefox, which DataDome treats as a visitor. */
 export async function captureWithFirefox(
 	firefox: string,
-	signIn: typeof signInWithFirefox = signInWithFirefox,
+	signIn: (
+		firefox: string,
+	) => Promise<CookieData[]> = signInToSoundcloudInFirefox,
 	clientIdLookup: () => Promise<string> = fetchSoundcloudClientId,
 ): Promise<CapturedSoundcloudLogin> {
-	console.log(
-		'Sign in to SoundCloud in the Firefox window that opens (login for the API). If SoundCloud says "You have been blocked", reload the page.',
-	);
+	console.log('This first sign-in is the login for the API.');
 	const clientId = clientIdLookup();
 	// Keep a failed lookup from going unhandled while the user signs in.
 	clientId.catch(() => {});
-	const signedIn = (cookies: CookieData[]) =>
-		cookies.some(
-			(cookie) =>
-				cookie.name === 'oauth_refresh_token' &&
-				cookie.value !== '' &&
-				isCookieOf(SOUNDCLOUD_HOST_RE)(cookie),
-		);
-	const { result, cookies } = await signIn(firefox, {
-		url: 'https://soundcloud.com/signin',
-		what: 'the SoundCloud sign-in',
-		done: (cookies) => (signedIn(cookies) ? cookies : null),
-	});
-	// The read after closing Firefox is the most complete one.
-	const latest = signedIn(cookies) ? cookies : result;
-	const session = pickSoundcloudSession(latest, await clientId);
+	const cookies = await signIn(firefox);
+	const session = pickSoundcloudSession(cookies, await clientId);
 	if (!session) throw new Error('The SoundCloud login was lost before saving.');
-	return { session, signInCookies: pickSoundcloudSignInCookies(latest) };
+	return { session, signInCookies: pickSoundcloudSignInCookies(cookies) };
 }
 
 /** The API login in a throwaway CloakBrowser profile, when Firefox is missing. */
@@ -320,17 +295,14 @@ export async function captureWithCloakBrowser(
 export async function loginToSoundcloud(
 	gateBrowser: () => Promise<Browser>,
 	captureApiLogin: () => Promise<CapturedSoundcloudLogin> = captureSoundcloudApiLogin,
-	signIn: (browser: Browser) => Promise<void> = signInToSoundcloud,
+	signIn: (
+		browser: Browser,
+		options: { signInCookies: CookieData[] },
+	) => Promise<void> = signInToSoundcloud,
 ): Promise<SoundcloudSession> {
 	const { session, signInCookies } = await captureApiLogin();
-	const browser = await gateBrowser();
-	if (signInCookies.length > 0) {
-		await browser.defaultBrowserContext().setCookie(...signInCookies);
-	}
-	console.log(
-		'Signing in the gate browser with the same SoundCloud session (sign in again only if it asks)...',
-	);
-	await signIn(browser);
+	console.log('Now the gate browser takes over that SoundCloud session...');
+	await signIn(await gateBrowser(), { signInCookies });
 	return session;
 }
 

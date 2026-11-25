@@ -9,19 +9,21 @@ import {
 	captureWithFirefox,
 	checkSpotifyCookies,
 	clientIdFromUrl,
-	FIREFOX_MISSING_WARNING,
 	type LoginProvider,
 	loginToSoundcloud,
 	loginToSpotify,
 	parseCliArgs,
 	pickSoundcloudSession,
-	pickSoundcloudSignInCookies,
 	pickSpotifyCookies,
 	prepareCliLogins,
 	runGuidedLogin,
 	type SpotifyLoginState,
 } from './guidedLogin';
 import type { SoundcloudLoginState } from './soundcloud';
+import {
+	FIREFOX_MISSING_WARNING,
+	pickSoundcloudSignInCookies,
+} from './soundcloudLogin';
 
 const NOW = 1_800_000_000_000;
 const cookie = (name: string, value: string, domain: string) =>
@@ -129,13 +131,7 @@ describe('login capture', () => {
 			's',
 			'api-auth.soundcloud.com',
 		);
-		const gate = {
-			defaultBrowserContext: () => ({
-				setCookie: async (...cookies: Cookie[]) => {
-					events.push(`set ${cookies.map((c) => c.name).join(',')}`);
-				},
-			}),
-		} as unknown as Browser;
+		const gate = {} as Browser;
 
 		const result = await loginToSoundcloud(
 			async () => {
@@ -146,9 +142,11 @@ describe('login capture', () => {
 				events.push('API sign-in');
 				return { session, signInCookies: [signInCookie] };
 			},
-			async (browser) => {
+			async (browser, { signInCookies }) => {
 				expect(browser).toBe(gate);
-				events.push('gate sign-in');
+				events.push(
+					`gate sign-in with ${signInCookies.map((c) => c.name).join(',')}`,
+				);
 			},
 		);
 
@@ -156,8 +154,7 @@ describe('login capture', () => {
 		expect(events).toEqual([
 			'API sign-in',
 			'open gate browser',
-			'set _soundcloud_session',
-			'gate sign-in',
+			'gate sign-in with _soundcloud_session',
 		]);
 	});
 
@@ -228,18 +225,24 @@ describe('API login browser', () => {
 	});
 
 	test('warns and falls back to CloakBrowser without Firefox', async () => {
-		const logs: string[] = [];
-		const result = await captureSoundcloudApiLogin({
-			firefox: () => null,
-			withFirefox: async () => {
-				throw new Error('Firefox should not open');
-			},
-			withCloakBrowser: async () => captured,
-			log: (line) => logs.push(line),
-		});
-		expect(result).toBe(captured);
-		expect(logs).toEqual([FIREFOX_MISSING_WARNING]);
-		expect(FIREFOX_MISSING_WARNING).toContain('Firefox is not installed');
+		// The test preload turns Firefox off, which also silences the warning.
+		const setting = process.env.SC_GATE_DL_FIREFOX;
+		process.env.SC_GATE_DL_FIREFOX = '';
+		try {
+			const logs: string[] = [];
+			const result = await captureSoundcloudApiLogin({
+				firefox: () => null,
+				withFirefox: async () => {
+					throw new Error('Firefox should not open');
+				},
+				withCloakBrowser: async () => captured,
+				log: (line) => logs.push(line),
+			});
+			expect(result).toBe(captured);
+			expect(logs).toEqual([FIREFOX_MISSING_WARNING]);
+		} finally {
+			process.env.SC_GATE_DL_FIREFOX = setting;
+		}
 	});
 
 	test('the Firefox login keeps the tokens for .env and hands on only the session', async () => {
@@ -255,11 +258,7 @@ describe('API login browser', () => {
 		];
 		const result = await captureWithFirefox(
 			'/usr/bin/firefox',
-			async (_firefox, options) => {
-				const done = options.done(cookies);
-				if (!done) throw new Error('the sign-in should count as done');
-				return { result: done, cookies };
-			},
+			async () => cookies,
 			async () => 'web-client',
 		);
 		expect(result.session).toEqual({

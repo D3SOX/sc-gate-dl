@@ -18,6 +18,7 @@ import {
 } from './downloadRetention';
 import { DroploudDownloader } from './droploud';
 import { FangateDownloader } from './fangate';
+import { findFirefox, firefoxDisabled } from './firefoxLogin';
 import { GaterushDownloader } from './gaterush';
 import { HypedditDownloader, type ProgressCallback } from './hypeddit';
 import { HypedditHttpDownloader } from './hypedditHttp';
@@ -38,6 +39,7 @@ import {
 } from './serverCors';
 import { SoundcloudClient } from './soundcloud';
 import { isSoundcloudDownloadEnabled } from './soundcloudDownload';
+import { FIREFOX_MISSING_WARNING } from './soundcloudLogin';
 import { StillhypeDownloader } from './stillhype';
 import {
 	type BrowserMode,
@@ -938,6 +940,8 @@ const server = Bun.serve({
 				search: true,
 				libraryDestination: LIBRARY_DIR !== null,
 				reviewTags: REVIEW_TAGS,
+				signInWarning:
+					firefoxDisabled() || findFirefox() ? null : FIREFOX_MISSING_WARNING,
 			}),
 
 		'/api/search': {

@@ -44,6 +44,12 @@ export function shouldUseEmbeddedLayout(search: string): boolean {
 }
 
 /** Whether the server wants tags reviewed (`SC_GATE_DL_REVIEW_TAGS`); true when unknown. */
+/** Shown before a server sign-in, e.g. when Firefox is missing there. */
+export function parseSignInWarning(value: unknown): string | null {
+	const warning = (value as { signInWarning?: unknown } | null)?.signInWarning;
+	return typeof warning === 'string' && warning ? warning : null;
+}
+
 export function parseReviewTags(value: unknown): boolean {
 	return (value as { reviewTags?: unknown } | null)?.reviewTags !== false;
 }

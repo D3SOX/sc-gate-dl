@@ -13,6 +13,7 @@ import {
 	parseAvailableBrowserModes,
 	parseBrowserViewUrl,
 	parseReviewTags,
+	parseSignInWarning,
 	readRequestedBrowserMode,
 	readRequestedOutputFormat,
 	readStoredBrowserMode,
@@ -386,6 +387,7 @@ export default function App() {
 					const capabilities = await response.json();
 					modes = parseAvailableBrowserModes(capabilities);
 					reviewTagsRef.current = parseReviewTags(capabilities);
+					signInWarningRef.current = parseSignInWarning(capabilities);
 					viewUrl = parseBrowserViewUrl(capabilities, window.location.hostname);
 				}
 			} catch {
@@ -488,6 +490,7 @@ export default function App() {
 	const artworkInputRef = useRef<HTMLInputElement>(null);
 	const cleanupToastShownRef = useRef(false);
 	const reviewTagsRef = useRef(true);
+	const signInWarningRef = useRef<string | null>(null);
 	const browserViewAutoClosedRef = useRef(false);
 	const browserViewAutoOpenedRef = useRef(false);
 	const autoStartedFromQueryRef = useRef(false);
@@ -1310,8 +1313,12 @@ export default function App() {
 
 	const handleInitializeLogins = async () => {
 		toast('Initialize logins?', {
-			description:
+			description: [
 				'Opens a browser on the server to sign in to SoundCloud and Spotify. Use the remote browser button to watch it or solve a captcha.',
+				signInWarningRef.current,
+			]
+				.filter(Boolean)
+				.join(' '),
 			closeButton: false,
 			duration: Infinity,
 			action: {

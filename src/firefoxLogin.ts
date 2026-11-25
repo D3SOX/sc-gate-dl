@@ -11,10 +11,23 @@ import { timeout } from './utils';
  * from the profile on disk; Firefox stores them unencrypted.
  */
 
+/** `SC_GATE_DL_FIREFOX=off` keeps every sign-in in CloakBrowser. */
+export function firefoxDisabled(
+	setting: string | undefined = process.env.SC_GATE_DL_FIREFOX,
+): boolean {
+	return setting?.trim().toLowerCase() === 'off';
+}
+
+/**
+ * The Firefox to sign in with: `SC_GATE_DL_FIREFOX` (a path or command, such
+ * as a Firefox fork) or `firefox` on the PATH.
+ */
 export function findFirefox(
+	setting: string | undefined = process.env.SC_GATE_DL_FIREFOX,
 	which: (name: string) => string | null = Bun.which,
 ): string | null {
-	return which('firefox');
+	if (firefoxDisabled(setting)) return null;
+	return which(setting?.trim() || 'firefox');
 }
 
 // Skip the first-run pages of the fresh profile; nothing here changes what a
