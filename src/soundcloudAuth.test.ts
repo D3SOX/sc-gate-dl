@@ -120,6 +120,39 @@ describe('SoundcloudTokenRefresher', () => {
 			'SoundCloud token refresh failed with HTTP 400',
 		);
 	});
+
+	test('a server and a CLI in one folder share the rotating chain', async () => {
+		// Like SoundCloud: every refresh revokes the refresh token it used.
+		let valid = 'seed';
+		let now = NOW;
+		const endpoint = async (_url: string, init: RequestInit) => {
+			const used = new URLSearchParams(String(init.body)).get('refresh_token');
+			if (used !== valid) return new Response('{}', { status: 400 });
+			valid = `${used}-next`;
+			return Response.json({
+				access_token: jwt(now + 24 * HOUR),
+				refresh_token: valid,
+			});
+		};
+		const startProcess = () =>
+			new SoundcloudTokenRefresher({
+				clientId: 'client',
+				refreshToken: 'seed',
+				file,
+				now: () => now,
+				fetch: endpoint,
+			});
+		const server = startProcess();
+		const cli = startProcess();
+
+		await server.accessToken();
+		now += 24 * HOUR;
+		await cli.accessToken();
+		now += 24 * HOUR;
+
+		expect(await server.accessToken()).toBe(jwt(now + 24 * HOUR));
+		expect(valid).toBe('seed-next-next-next');
+	});
 });
 
 describe('tokenExpiresAt', () => {

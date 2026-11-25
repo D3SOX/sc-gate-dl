@@ -21,6 +21,16 @@ export interface SoundcloudTokenRefresherOptions {
 	now?: () => number;
 }
 
+/** A refresh SoundCloud answered with an error status. */
+export class SoundcloudTokenRefreshError extends Error {
+	constructor(readonly status: number) {
+		super(
+			`SoundCloud token refresh failed with HTTP ${status}. Log in again with \`bun start --login\`.`,
+		);
+		this.name = 'SoundcloudTokenRefreshError';
+	}
+}
+
 /** Expiry of a JWT access token in ms, or null for classic `2-…` tokens. */
 export function tokenExpiresAt(token: string): number | null {
 	const payload = token.split('.')[1];
@@ -87,9 +97,7 @@ export class SoundcloudTokenRefresher {
 			signal: AbortSignal.timeout(15_000),
 		});
 		if (!response.ok) {
-			throw new Error(
-				`SoundCloud token refresh failed with HTTP ${response.status}. Log in again and set a new SC_REFRESH_TOKEN.`,
-			);
+			throw new SoundcloudTokenRefreshError(response.status);
 		}
 		const body = (await response.json()) as {
 			access_token?: unknown;

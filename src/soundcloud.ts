@@ -6,7 +6,10 @@ import Soundcloud, {
 	type SoundcloudTrackSearch,
 	type SoundcloudUser,
 } from 'soundcloud.ts';
-import { SoundcloudTokenRefresher } from './soundcloudAuth';
+import {
+	SoundcloudTokenRefreshError,
+	SoundcloudTokenRefresher,
+} from './soundcloudAuth';
 import { SoundcloudReadQueue } from './soundcloudReadQueue';
 import {
 	extractAndResolveGateUrl,
@@ -49,8 +52,27 @@ interface ManagedAccountExport {
 	repostedPlaylists: SoundcloudPlaylist[];
 }
 
-/** Shared so every client in this process uses the same rotating login. */
-let envTokenRefresher: SoundcloudTokenRefresher | undefined;
+/**
+ * Shared so every client in this process uses the same rotating login. A new
+ * login (`bun start --login`) changes the seed and gets a new refresher.
+ */
+let envTokenRefresher:
+	| { key: string; refresher: SoundcloudTokenRefresher }
+	| undefined;
+
+export type SoundcloudLoginState =
+	| 'valid'
+	| 'missing'
+	| 'invalid'
+	| 'unverifiable';
+
+/** True when `.env` holds enough for a SoundCloud login. */
+export function hasSoundcloudLogin(): boolean {
+	const env = process.env;
+	return Boolean(
+		env.SC_CLIENT_ID && (env.SC_OAUTH_TOKEN || env.SC_REFRESH_TOKEN?.trim()),
+	);
+}
 
 export class SoundcloudClient {
 	private soundcloud: Soundcloud;
@@ -76,12 +98,52 @@ export class SoundcloudClient {
 		this.clientId = clientId;
 		this.soundcloud = new Soundcloud(clientId, oauthToken);
 		if (refreshToken) {
-			envTokenRefresher ??= new SoundcloudTokenRefresher({
-				clientId,
-				refreshToken,
-				accessToken: oauthToken,
+			const key = `${clientId}\n${refreshToken}`;
+			if (envTokenRefresher?.key !== key) {
+				envTokenRefresher = {
+					key,
+					refresher: new SoundcloudTokenRefresher({
+						clientId,
+						refreshToken,
+						accessToken: oauthToken,
+					}),
+				};
+			}
+			this.tokenRefresher = envTokenRefresher.refresher;
+		}
+	}
+
+	/**
+	 * Start check: renews the login when needed and reads `/me` once. Only a
+	 * rejection counts as invalid; network errors, rate limits and server errors
+	 * are unverifiable.
+	 */
+	async checkLogin(): Promise<Exclude<SoundcloudLoginState, 'missing'>> {
+		try {
+			await this.refreshLogin();
+		} catch (error) {
+			return error instanceof SoundcloudTokenRefreshError &&
+				[400, 401, 403].includes(error.status)
+				? 'invalid'
+				: 'unverifiable';
+		}
+		try {
+			const url = new URL('https://api-v2.soundcloud.com/me');
+			url.searchParams.set('client_id', this.clientId);
+			const response = await fetch(url, {
+				headers: {
+					...this.soundcloud.api.headers,
+					Authorization: `OAuth ${this.soundcloud.api.oauthToken ?? ''}`,
+				},
+				signal: AbortSignal.timeout(15_000),
 			});
-			this.tokenRefresher = envTokenRefresher;
+			await response.body?.cancel();
+			if (response.ok) return 'valid';
+			return response.status === 401 || response.status === 403
+				? 'invalid'
+				: 'unverifiable';
+		} catch {
+			return 'unverifiable';
 		}
 	}
 
