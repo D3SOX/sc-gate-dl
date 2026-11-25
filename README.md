@@ -1,287 +1,334 @@
 # sc-gate-dl
 
-Download and tag SoundCloud tracks unlocked via Hypeddit, Droploud, GateRush, DownloadGater, StillHype, PumpYourSound, MyPressKit, fangate.eu, Bandcamp, or a direct download link.
+sc-gate-dl downloads SoundCloud tracks that sit behind a download gate and tags them with the track's SoundCloud metadata and artwork. You give it a SoundCloud link, and it finds the gate, unlocks it, and saves the file. It works from the command line, from a Web UI, and from a userscript on soundcloud.com.
 
-## Features
+Supported sources: Hypeddit, Droploud, GateRush, DownloadGater, StillHype, PumpYourSound, MyPressKit, fangate.eu, Bandcamp, and direct file links.
 
-- 🎵 Automatically download audio from Hypeddit, Droploud, GateRush, DownloadGater, StillHype, PumpYourSound, MyPressKit, fangate.eu, Bandcamp, and direct file links (e.g. Dropbox `dl=1`)
-- ⚡ Browserless fast path that skips the browser for gates that don't need real verification (see [How It Works](#how-it-works))
-- 🔄 Handles multiple gate types (see [How It Works](#how-it-works))
-- 📝 Fetches metadata from the provided SoundCloud link
-- 🎨 Manual metadata correction before finalizing
-- 🎧 Extracts audio from ZIP downloads, prefers lossless files, and converts them to the selected format
-- 🏷️ Tags MP3, M4A and FLAC files with metadata and artwork from SoundCloud
-- 🧹 Optional cleanup of the SoundCloud account (unfollow, unlike, delete comments/reposts)
-- 🔎 Search SoundCloud tracks in the Web UI and download one from the results
-- 🧩 Userscript (Violentmonkey) that opens the Web UI in a floating panel next to SoundCloud store/buy links
+- [✨ Features](#-features)
+- [📋 Requirements](#-requirements)
+- [📦 Installation](#-installation)
+- [🧰 Setup](#-setup)
+- [🚀 Usage](#-usage)
+- [🔧 Configuration](#-configuration)
+- [🧠 How it works](#-how-it-works)
+- [🏠 Running on a server](#-running-on-a-server)
+- [🔌 HTTP API](#-http-api)
 
-## Prerequisites
+## ✨ Features
 
-- [**Bun**](https://bun.sh) - JavaScript runtime and package manager
-- [**ffmpeg**](https://ffmpeg.org) - Must be installed and available in your `PATH`
-- [**unzip**](https://infozip.sourceforge.net/UnZip.html) - Required when a gate provides its audio inside a ZIP archive
-- [**yt-dlp**](https://github.com/yt-dlp/yt-dlp) - Required for Bandcamp purchase/download links and for downloading a SoundCloud track directly when no gate is found. Bandcamp support requires the optional `curl_cffi` backend (`python-curl-cffi` on Arch Linux or `yt-dlp[default,curl-cffi]` with pip) for Chrome impersonation.
-- [**Firefox**](https://www.mozilla.org/firefox/) (optional but recommended) - SoundCloud sign-ins happen in it, because SoundCloud's bot protection lets a plain Firefox through more reliably than an automated browser. Set `SC_GATE_DL_FIREFOX` to use another Firefox build, or to `off` to keep sign-ins in CloakBrowser
-- [**curl-impersonate**](https://github.com/lwthiker/curl-impersonate) (optional but recommended) - Chrome-TLS curl binary (`curl_chrome131`, `curl_chrome116`, or `curl-impersonate` on your `PATH`). Used for SoundCloud engagement writes (repost GraphQL / `me/track_reposts`) that DataDome often blocks when done with Bun's normal TLS. Without it the tool falls back to Bun `fetch`, which may get a 403. Pair with a residential proxy via `SC_API_PROXY`, `CLOAKBROWSER_PROXY`, or `PROXY_URL` when your IP is hard-blocked.
-- **SoundCloud account** - It is recommended to create a throwaway account for this. Even though there were no reports of accounts getting banned I can't guarantee it. Also most gate downloads require reposts/likes/follows which you might not want to do with your main account
-- **Spotify account** (optional) - Required when a Hypeddit post has an unskippable Spotify gate. I also recommend creating a throwaway account as most Hypeddit downloads require saving playlists/songs to your library or following artists which you might not want on your main account.
+- 🎵 Unlocks Hypeddit, Droploud, GateRush, DownloadGater, StillHype, PumpYourSound, MyPressKit and fangate.eu gates, and downloads Bandcamp releases and direct file links such as Dropbox `dl=1` links.
+- 🔄 Finds the gate in the track description, the purchase link, or behind SoundCloud's Free download box.
+- ⚡ Skips the browser for gates that are only checked in the browser, which covers most Hypeddit gates and makes them much faster.
+- 🎧 Unpacks ZIP downloads, prefers the lossless file, and converts it to MP3, M4A/AAC or FLAC.
+- 🏷️ Tags MP3, M4A and FLAC files with SoundCloud's metadata and artwork.
+- 🎨 Lets you correct the tags before saving.
+- 🧹 Can undo the gate actions on your SoundCloud account afterwards (unfollow, unlike, delete comments and reposts).
+- 🔎 Web UI with SoundCloud search.
+- 🧩 Userscript that opens the Web UI in a panel next to SoundCloud's buy links.
 
-## Installation
+## 📋 Requirements
 
-Clone the repository
+| Tool | Needed for |
+| --- | --- |
+| [Bun](https://bun.sh) | Running sc-gate-dl. |
+| [ffmpeg](https://ffmpeg.org) | Converting and tagging audio. It must be on your `PATH`. |
+| [unzip](https://infozip.sourceforge.net/UnZip.html) | Gates that deliver a ZIP archive. |
+| [yt-dlp](https://github.com/yt-dlp/yt-dlp) | Bandcamp links, and downloading the SoundCloud track itself when there is no gate. Bandcamp also needs yt-dlp's `curl_cffi` backend for Chrome impersonation: `python-curl-cffi` on Arch Linux, or `pip install "yt-dlp[default,curl-cffi]"`. |
+| [Firefox](https://www.mozilla.org/firefox/) (recommended) | SoundCloud sign-ins. SoundCloud's bot protection lets a plain Firefox through more reliably than an automated browser. Without it, you sign in in CloakBrowser. |
+| [curl-impersonate](https://github.com/lwthiker/curl-impersonate) (recommended) | Reposts and other SoundCloud engagement requests, which SoundCloud's DataDome protection often blocks when Bun sends them. sc-gate-dl looks for `curl_chrome131`, `curl_chrome116` or `curl-impersonate` on your `PATH` and otherwise falls back to Bun's `fetch`, which may get a 403. |
+
+You also need accounts:
+
+- ☁️ **SoundCloud.** Use a throwaway account. Nobody has reported a ban so far, but I can't guarantee it, and most gates make you repost, like or follow, which you may not want on your main account.
+- 💚 **Spotify** (optional). Only needed for Hypeddit posts with a Spotify gate that can't be skipped. Use a throwaway account here too, because these gates save playlists and songs to your library or follow artists.
+
+## 📦 Installation
 
 ```bash
 git clone https://github.com/D3SOX/sc-gate-dl
 cd sc-gate-dl
-```
-
-Install dependencies
-
-```bash
 bun install
 ```
 
-If you want to use the [Web UI](#web-ui) you also need to install the dependencies for it
+For the [Web UI](#-web-ui), also install its dependencies:
 
 ```bash
 cd webui
 bun install
 ```
 
-## Setup
+## 🧰 Setup
 
-### Environment Variables
+### 📝 1. Create the `.env` file
 
-Create a `.env` file in the project root by copying the `.env.example` file and filling in the values.
+```bash
+cp .env.example .env
+```
 
-For `HYPEDDIT_NAME` and `SC_COMMENT` currently everything works (I use just `asd`)
+The comments in `.env.example` explain each variable, and [Configuration](#-configuration) lists them all. Before the first run, only the gate values need a look:
 
-For `HYPEDDIT_EMAIL` you can enter any valid email address (For example grab one from [temp-mail.org](https://temp-mail.org))
+- `HYPEDDIT_NAME` and `HYPEDDIT_EMAIL` fill in Hypeddit, GateRush and Droploud forms that ask for them. Any name works. The email has to look valid, so a temporary one from a service like [temp-mail.org](https://temp-mail.org) is fine.
+- `SC_COMMENT` is the text sc-gate-dl posts for comment gates. Anything works, but Droploud needs at least two characters.
+- `INSTAGRAM_HANDLE`, `TIKTOK_HANDLE`, `X_HANDLE` and `YOUTUBE_HANDLE` are optional. Some StillHype follow steps ask for your handle. If you leave one unset, the remote browser asks you instead.
 
-#### Log in
+The login step below fills in the SoundCloud values.
 
-Run `bun start --login` and sign in to SoundCloud and Spotify in the browser windows that open. You sign in to SoundCloud once, for the API login, in a Firefox window with a fresh temporary profile. Without Firefox, sc-gate-dl warns and uses a CloakBrowser window instead. The gate browser then reuses that sign-in to get its own login, because the two must not share one. If SoundCloud shows "You have been blocked", reload the page. If that keeps happening, your network is blocked: try again later or from another connection (the Firefox window follows your system proxy settings, the CloakBrowser window `CLOAKBROWSER_PROXY`). sc-gate-dl saves `SC_CLIENT_ID`, `SC_REFRESH_TOKEN` and `SC_OAUTH_TOKEN` to `.env`, the SoundCloud cookies to `soundcloud-cookies.json` and the Spotify cookies to `spotify-cookies.json`. Each `bun start` checks the logins first and offers this login when SoundCloud's is missing or rejected. Spotify is only needed for Spotify gates, so a missing Spotify login is just a warning. If an sc-gate-dl server runs in the same folder, restart it after a new login.
+### 🔑 2. Log in
 
-#### Get SoundCloud API Credentials manually
+```bash
+bun start --login
+```
 
-1. Go to [soundcloud.com](https://soundcloud.com) and log in (skip if you are already logged in)
-2. Open up the developer tools (Right click → Inspect or press F12) and go to the **Network** tab
-3. Navigate to soundcloud.com (refresh the page if needed), and you should see a bunch of requests in the network tab
-4. Find the request that has the name `session` (you can filter by typing `session` in the filter box) and click on it
-5. Go to the **Payload** tab
-6. You should see your client id in the **Query String Parameters** section, and your oauth token (`access_token`) in the **Request Payload** section
-7. Copy these values to your `.env` file as `SC_CLIENT_ID` and `SC_OAUTH_TOKEN`
-8. Go to the **Application** tab (**Storage** in Firefox), open **Cookies** → `https://soundcloud.com`, and copy the value of `oauth_refresh_token` to your `.env` file as `SC_REFRESH_TOKEN`
-9. Delete SoundCloud's cookies in this browser without logging out
+Sign in to SoundCloud and Spotify in the windows that open. In the Web UI, **Initialize logins** in the footer does the same.
 
-SoundCloud's access tokens expire after 24 hours. With `SC_REFRESH_TOKEN` set, sc-gate-dl renews them and keeps the current tokens in `soundcloud-token.json`. Each refresh also replaces the refresh token. If the browser you copied it from keeps using the old one, one of the two gets logged out. Logging out may end the session for sc-gate-dl too. If you run sc-gate-dl in several places, log in separately for each one. When you set a new `SC_REFRESH_TOKEN`, sc-gate-dl stops using the saved tokens and starts from the new one.
+You sign in to SoundCloud once, in a Firefox window with a fresh temporary profile. On a server, that window opens on the server's display, which the [remote browser view](#-remote-headed-browser-with-novnc) shows. The gate browser then takes over this session to get a login of its own, because it must not share one with the API. Without Firefox, sc-gate-dl warns and you sign in in a CloakBrowser window instead. A gate that hits SoundCloud's sign-in page in a visible browser runs the same flow.
 
-If you want to export data from a separate SoundCloud account, add that account's credentials as `MANAGED_SC_CLIENT_ID` and `MANAGED_SC_OAUTH_TOKEN`.
+If SoundCloud shows "You have been blocked", reload the page. If that keeps happening, SoundCloud is blocking your network, so try again later or from another connection. The Firefox window uses your system proxy settings, and the CloakBrowser window uses `CLOAKBROWSER_PROXY`.
 
-### Cookies
+sc-gate-dl saves the logins here:
 
-**For Firefox-based browsers:**
-Install the [EditThisCookie2](https://addons.mozilla.org/en-US/firefox/addon/etc2/) extension
+| File | Contents |
+| --- | --- |
+| `.env` | `SC_CLIENT_ID`, `SC_REFRESH_TOKEN` and `SC_OAUTH_TOKEN` |
+| `soundcloud-token.json` | The current SoundCloud tokens, renewed automatically |
+| `soundcloud-cookies.json` | SoundCloud cookies for the gate browser and yt-dlp, readable only by you |
+| `spotify-cookies.json` | Spotify cookies |
 
-**For Chromium-based browsers (Chrome, Edge, Brave, Helium, etc.):**
-Install the [EditThisCookie (fork)](https://chromewebstore.google.com/detail/editthiscookie-fork/ihfmcbadakjehneaijebhpogkegajgnk) extension
+Every `bun start` checks the logins first and offers to log in again when the SoundCloud login is missing or rejected. A missing Spotify login is only a warning. Run `bun start --login` again to switch accounts. If an sc-gate-dl server runs from the same folder, restart it after a new login.
 
-#### SoundCloud Cookies
+#### 🔁 How the SoundCloud login stays valid
 
-Used for SoundCloud API/session automation and for **yt-dlp** when downloading a SoundCloud track directly (so downloadable tracks can fetch the original upload, not only the 128k stream).
+SoundCloud's access tokens expire after 24 hours. sc-gate-dl renews them with `SC_REFRESH_TOKEN` and keeps the current ones in `soundcloud-token.json`. Each renewal also replaces the refresh token, so two places that use the same login log each other out. If you run sc-gate-dl in several places, log in separately for each one. When you put a new `SC_REFRESH_TOKEN` in `.env`, sc-gate-dl drops the saved tokens and starts from the new one.
 
-You can omit `soundcloud-cookies.json` and use `bun start --login` or **Initialize logins** in the Web
-UI instead. It opens SoundCloud's sign-in page even when an older session
-exists, because gates authorize through a sign-in session of their own. You
-sign in in a Firefox window (on a server, on its display, which the remote
-browser view shows), and the gate browser takes over that session. A gate that
-runs into SoundCloud's sign-in page in a visible browser does the same. Without
-Firefox, you sign in in the gate browser itself. Once you are signed in, sc-gate-dl saves the
-browser cookies to `soundcloud-cookies.json` with owner-only permissions. A blank file and `[]` are
-also treated as an empty cookie set. The exported cookies are reused by browser
-gate jobs and yt-dlp.
+<details>
+<summary>Log in manually instead</summary>
 
-**Steps:**
+**SoundCloud API credentials**
 
-1. Go to [soundcloud.com](https://soundcloud.com) and log in
-2. Open the extension and click on the export button
-3. Save what was copied to the clipboard to a file called `soundcloud-cookies.json` in the project root
+1. Log in on [soundcloud.com](https://soundcloud.com).
+2. Open the developer tools (F12) and go to the **Network** tab.
+3. Reload the page and filter the requests for `session`.
+4. Open the `session` request and go to the **Payload** tab.
+5. Copy the client id from **Query String Parameters** to `SC_CLIENT_ID`, and `access_token` from **Request Payload** to `SC_OAUTH_TOKEN`.
+6. In the **Application** tab (**Storage** in Firefox), open **Cookies** → `https://soundcloud.com` and copy `oauth_refresh_token` to `SC_REFRESH_TOKEN`.
+7. Delete SoundCloud's cookies in this browser without logging out. If the browser keeps using the old refresh token, it and sc-gate-dl log each other out, and logging out may end sc-gate-dl's session too.
 
-#### Spotify Cookies (Optional)
+**Cookies**
 
-If you plan to download tracks that require Spotify gates, you'll also need Spotify cookies. `bun start --login` saves them for you, or export them yourself:
+Install a cookie export extension: [EditThisCookie2](https://addons.mozilla.org/en-US/firefox/addon/etc2/) for Firefox, or [EditThisCookie (fork)](https://chromewebstore.google.com/detail/editthiscookie-fork/ihfmcbadakjehneaijebhpogkegajgnk) for Chromium-based browsers.
 
-**Steps:**
+1. Log in on [soundcloud.com](https://soundcloud.com) (or [accounts.spotify.com](https://accounts.spotify.com) for Spotify).
+2. Click the extension's export button.
+3. Save the copied text as `soundcloud-cookies.json` (or `spotify-cookies.json`) in the project root.
 
-1. Go to [accounts.spotify.com](https://accounts.spotify.com) and log in
-2. Open the extension and click on the export button
-3. Save what was copied to the clipboard to a file called `spotify-cookies.json` in the project root
+The gate browser uses the SoundCloud cookies, and yt-dlp uses them to fetch a downloadable track's original upload instead of the 128 kbps stream. An empty file or `[]` counts as no cookies.
 
-### CLI Config file (Optional)
+</details>
 
-If you want to use the CLI and not be prompted for values every time, you can create a config file by copying the example config and filling in the values:
+### 💾 3. Save CLI answers (optional)
+
+Without a config file, the CLI asks a few questions on every run. To answer them once:
 
 ```bash
 cp config.example.json config.json
 ```
 
-Set `xvfb` to `true` to keep the browser window invisible while running
-CloakBrowser in headed mode. This avoids Chromium's detectable headless rendering
-path. Install `xorg-server-xvfb` on Arch Linux (`xvfb` on Debian/Ubuntu) first.
+| Key | Meaning |
+| --- | --- |
+| `headless` | Run the gate browser without a window. |
+| `xvfb` | When `headless` is on, run a normal browser on an invisible Xvfb display instead. Sites can detect Chromium's headless mode, but not this. Needs `xorg-server-xvfb` (Arch Linux) or `xvfb` (Debian/Ubuntu). Optional, defaults to `false`. |
+| `initializeLogins` | Go through the sign-in flow before the gate runs. Needs `headless` set to `false`. |
+| `deleteLosslessAfterConversion` | Delete the lossless source file after converting it. |
+| `cleanupSoundCloudAccount` | Undo follows, likes, comments and reposts after a browser gate. |
 
-For anti-bot sites, configure a residential proxy with
-`CLOAKBROWSER_PROXY` (SOCKS5 is preferred when available). Proxy GeoIP matching
-and humanized browser input are enabled automatically; set
-`CLOAKBROWSER_GEOIP=false` only to opt out. The Web UI also exposes Xvfb mode
-next to its headful-browser option.
+## 🚀 Usage
 
-## Usage
-
-### CLI
-
-Run the tool and follow the prompts.
+### 💻 CLI
 
 ```bash
-bun start
-```
-
-You can also pass a SoundCloud track URL directly.
-
-```bash
+bun start                                   # asks for the track URL
 bun start https://soundcloud.com/artist/track
+bun start --login                           # log in again first
 ```
 
-Add `--login` to log in again first, for example after switching accounts.
+The finished file lands in `./downloads` with tags and artwork. The [output settings](#-output) change the format, the folder, and whether the CLI asks you to review the tags.
 
-The finished file is saved in the `./downloads` directory with proper metadata and artwork embedded. These settings in `.env` change the CLI output:
+### 🌐 Web UI
 
-- `SC_GATE_DL_CLI_FORMAT`: `mp3` (default), `m4a-aac`, `flac`, or `original` (no conversion or tagging).
-- `SC_GATE_DL_CLI_DIR`: a folder the finished file is moved to, for example `~/Music/SoundCloud`. An existing file is never replaced; a second copy gets a ` (2)` suffix.
-- `SC_GATE_DL_REVIEW_TAGS=false`: skip the tag prompts and use the SoundCloud tags.
-- `SC_GATE_DL_BITRATE`: MP3 and AAC bitrate in kbps for lossless sources, 64 to 320 (default 320). The server uses it too.
-
-### Managed account export
-
-To export the followed users, liked tracks, reposted tracks, and playlists from the separate managed SoundCloud account in your `.env`, run:
-
-```bash
-bun manage-acc
-```
-
-The export will be written to a timestamped directory inside `./exports` and includes `playlists.json` with playlist track data. `reposted-playlists.json` is also included as an extra export.
-
-### Web UI
-
-There is now also an experimental (vibe-coded) web UI for the tool. You can start it by running
+Start the Web UI with:
 
 ```bash
 bun webui
 ```
 
-Wait for Astro to be started. It will then tell you the address it's available on, most likely [`http://localhost:4321`](http://localhost:4321).
+Once Astro is up, it prints its address, usually [`http://localhost:4321`](http://localhost:4321). On the first run, click **Initialize logins** in the footer.
 
-The Web UI also listens on the local network and automatically calls the API on
-port `3000` of the same host. For example, a Web UI opened at
-`http://192.168.1.50:4321` uses `http://192.168.1.50:3000`. Set
-`PUBLIC_API_BASE_URL` when the public API uses a different host or port, for
-example after moving the API to another port with `SC_GATE_DL_PORT`. If a
-reverse proxy gives the Web UI a different origin, add it to the comma-separated
-`SC_GATE_DL_ALLOWED_ORIGINS` environment variable. The API rejects `POST`
-requests from browser pages on any other origin with `403`, so a website you
-visit cannot start downloads or clean up your SoundCloud account. Clients that
-send no `Origin` header, such as scripts, are not affected.
+You can paste a SoundCloud URL or type search terms to search SoundCloud with your account. In the results, a **Free download** badge marks a track the creator made downloadable on SoundCloud, and a **Gate** badge marks a track whose listing links a supported gate. Tracks without a badge can still hide a gate behind a short link, which sc-gate-dl checks when the job starts.
 
-Type search terms instead of a URL in the first step to search SoundCloud
-tracks with the configured account. Pick a result to start its download. A
-**Free download** badge marks a track the creator made downloadable on
-SoundCloud. A **Gate** badge marks a track whose listing links a supported
-gate. Tracks without a badge can still have a gate behind a short link, which
-sc-gate-dl looks for when the job starts.
+Links can start a job directly. `?url=` (or `?soundcloudUrl=`) sets the track, `outputFormat` the format (`mp3-320`, `m4a-aac`, `flac` or `original`), and `browserMode` the gate browser (`headless`, `xvfb` or `headed`):
 
-Set `SC_GATE_DL_DELETE_AFTER_DOWNLOAD=true` on the server to remove finished
-files after their HTTP response has been transferred in full. This applies to
-headless, Xvfb, and visible-headed jobs. Interrupted or failed transfers retain
-the file so the download can be retried.
-
-Set `SC_GATE_DL_LIBRARY_DIR` to a folder inside your music server's library,
-for example `/home/YOUR_USER/Music/SoundCloud`, so API clients like
-[Nevumi](https://github.com/D3SOX/Nevumi) can save finished downloads there.
-A job created with `"destination": "library"` starts as soon as sc-gate-dl
-knows its source. sc-gate-dl then tags the file with the SoundCloud metadata
-and artwork and moves it into that folder as `Artist - Title`. It never
-replaces an existing file. A second copy gets a ` (2)` suffix instead. A job
-created with `"destination": "client"` runs the same way but keeps the file
-for `GET /api/job/:id/file`. Web UI jobs stop for tags unless the server sets
-`SC_GATE_DL_REVIEW_TAGS=false`, which saves them with the SoundCloud tags at once.
-
-These jobs also accept `"browserMode"` (`headless`, `xvfb`, or `headed`, as
-listed by `GET /api/capabilities`) to pick the gate browser, for example a
-headed one to watch through `BROWSER_VIEW_URL`. `"reviewTags": true` needs a
-`destination`. Such a job stops at the `waiting_metadata` stage once the file
-is downloaded. `GET /api/job/:id` then returns `defaultMetadata` (SoundCloud's
-tags), `existingMetadata` (the tags already in an MP3), `downloadFilename`,
-`outputFormat`, `sourceIsLossless`, `hasArtwork` and `hasExistingArtwork`.
-`GET /api/job/:id/artwork` and `GET /api/job/:id/existing-artwork` return the
-two covers.
-
-Finish the job with `POST /api/job/:id/metadata`:
-
-```json
-{
-  "title": "Track title",
-  "artist": "Artist",
-  "album": "Album",
-  "genre": "Genre",
-  "nameAsArtistTitle": true,
-  "preserveMetadata": false
-}
+```text
+http://localhost:4321/?url=https://soundcloud.com/artist/track&outputFormat=mp3-320
 ```
 
-`preserveMetadata: true` keeps the MP3's own tags. `nameAsArtistTitle`
-defaults to `true` for these jobs. To use another cover, send the same fields
-as `multipart/form-data` with an `artwork` file. The endpoint answers
-`{ "success": true }` right away and the job continues through
-`processing_audio` to `ready` or `error`. A second submit gets `409`.
-`POST /api/job/:id/cancel` drops the waiting file.
+FLAC output keeps lossless sources lossless. Converting a lossy source to FLAC only changes the container and doesn't bring back the lost quality.
 
-`GET /api/search?q=…&limit=…&offset=…` searches SoundCloud tracks with the
-configured account. Each result has a `source` hint: `download` for a
-creator-enabled download, `gate` when the listing links a supported gate, and
-`none` otherwise. sc-gate-dl can still find a gate behind a short link when
-the job starts. `GET /api/artwork?url=…` returns a result's cover, so clients
-never contact SoundCloud themselves. It only fetches from SoundCloud's image
-CDN.
+The Web UI also listens on your local network. To open it from other devices or through a reverse proxy, see [Network access](#-network-access).
 
-For a remotely hosted headed browser, set `BROWSER_VIEW_URL` to an HTTP(S)
-viewer such as noVNC. The Web UI then shows a **View Browser** button next to
-**Initialize logins**. Virtual displays without GPU device access can set
-`SC_GATE_DL_DISABLE_GPU=true`. Containers with a constrained `/dev/shm` can
-separately set `SC_GATE_DL_DISABLE_DEV_SHM=true`.
+### 🧩 Userscript
 
-#### Remotely hosted headed browser with noVNC
+The userscript adds a download icon next to the store and buy links on SoundCloud's feed and track pages. Clicking it opens the Web UI in a floating panel that you can move and resize, while the page behind stays usable.
 
-This setup lets a headless server open Chromium in headed mode while you view
-and control it inside the sc-gate-dl Web UI. It is useful for **Initialize
-logins**, OAuth consent, and captchas.
+[![Install userscript](https://img.shields.io/badge/Install%20userscript-Violentmonkey-3b3b3b?style=for-the-badge&logo=firefoxbrowser&logoColor=white)](https://raw.githubusercontent.com/D3SOX/sc-gate-dl/master/userscript/sc-gate-dl.user.js)
 
-##### Prerequisites
+1. Install [Violentmonkey](https://violentmonkey.github.io/). Tampermonkey works too.
+2. Click **Install userscript** above, or open [`userscript/sc-gate-dl.user.js`](https://raw.githubusercontent.com/D3SOX/sc-gate-dl/master/userscript/sc-gate-dl.user.js), and confirm.
+3. Start the Web UI with `bun webui`.
+4. On SoundCloud, click the download icon next to the store or cart button.
+
+Chrome may ask once whether the page may access your local network. If the panel stays blank, use **open in tab** in its toolbar.
+
+The panel toolbar and the Violentmonkey menu (**Choose output format…**, **Choose browser mode…**) set the output format and browser mode. The script remembers both, and the panel's size and position (`sc-gate-dl-panel-geom` in `localStorage`). Other menu options:
+
+- **Always open downloads in new tab** skips the panel.
+- **Auto-close after browser download** closes the panel after you save the file or click **Start New Download**. It is on by default.
+
+Closing the panel (× or Escape) or clicking **Cancel download** stops a running job and closes its browser.
+
+#### 🔗 Using a Web UI on another machine
+
+Click the gear button in the panel header, or choose **Configure server…** in the Violentmonkey menu, and enter one or more Web UI addresses, one per line:
+
+```text
+http://192.168.178.57:4321
+http://100.x.y.z:8123
+```
+
+Before a download opens, the script tries the addresses in order and uses the first one that answers. It checks them through Violentmonkey (`GM_xmlhttpRequest`), so LAN and Tailscale addresses work even where the browser blocks pages from reaching private networks (Private Network Access in Chrome and Cromite). After a userscript update, approve the new network permission if Violentmonkey asks. An empty field resets to localhost.
+
+You can also set the list from the console of a SoundCloud tab:
+
+```js
+localStorage.setItem(
+  'sc-gate-dl-webui-base',
+  'http://192.168.178.57:4321\nhttp://100.x.y.z:8123',
+)
+```
+
+### 📤 Exporting a second account
+
+`bun manage-acc` exports the followed users, liked tracks, reposted tracks and playlists of the account in `MANAGED_SC_CLIENT_ID` and `MANAGED_SC_OAUTH_TOKEN`. Get those values the [manual way](#-2-log-in). The export goes to a timestamped folder in `./exports` and includes `playlists.json` with the playlists' tracks and `reposted-playlists.json`. The downloader doesn't use this account.
+
+## 🔧 Configuration
+
+All settings go in `.env`. Settings marked "server" apply to the API that `bun webui` starts.
+
+### 📁 Output
+
+| Variable | Meaning |
+| --- | --- |
+| `SC_GATE_DL_CLI_FORMAT` | CLI output format: `mp3` (default), `m4a-aac`, `flac`, or `original` (no conversion or tagging). |
+| `SC_GATE_DL_CLI_DIR` | Folder the CLI moves finished files to, for example `~/Music/SoundCloud`. It never replaces a file and names a second copy `Name (2)`. |
+| `SC_GATE_DL_REVIEW_TAGS` | `false` skips the tag review in the CLI and Web UI and uses SoundCloud's tags. |
+| `SC_GATE_DL_BITRATE` | MP3 and AAC bitrate in kbps for lossless sources, 64 to 320 (default 320). Lossy sources keep their own bitrate, up to this value. |
+
+### 🔐 Sign-in, browser and network
+
+| Variable | Meaning |
+| --- | --- |
+| `SC_GATE_DL_FIREFOX` | Firefox build for SoundCloud sign-ins, as a path or command (for example `librewolf`), or `off` to sign in in CloakBrowser. |
+| `SC_API_PROXY`, `CLOAKBROWSER_PROXY`, `PROXY_URL` | Residential proxy for when SoundCloud blocks your IP. The gate browser uses `CLOAKBROWSER_PROXY` (SOCKS5 preferred) or `PROXY_URL`. SoundCloud API requests use the first one set, in this order. Only reposts, likes and comments are blocked this way; cleanup works without a proxy. |
+| `CLOAKBROWSER_GEOIP` | `false` stops matching the browser's timezone and locale to the proxy's location. |
+| `BROWSER_HEADLESS` | Server: `false` makes headed the default browser mode for jobs that don't choose one. |
+| `SC_GATE_DL_DISABLE_GPU` | `true` turns off GPU access for Chromium, for virtual displays without a GPU. |
+| `SC_GATE_DL_DISABLE_DEV_SHM` | `true` keeps Chromium off `/dev/shm`, for containers where it is too small. |
+| `BROWSER_VIEW_URL` | Server: address of a noVNC viewer for a [remote headed browser](#-remote-headed-browser-with-novnc). |
+
+### 🗄️ Server
+
+| Variable | Meaning |
+| --- | --- |
+| `SC_GATE_DL_PORT` | API port (default 3000). If you change it, set `PUBLIC_API_BASE_URL` and update the address in the userscript. |
+| `PUBLIC_API_BASE_URL` | API address for the Web UI, when it isn't port 3000 on the Web UI's host. |
+| `SC_GATE_DL_ALLOWED_ORIGINS` | Comma-separated extra origins allowed to send `POST` requests, for example a reverse proxy's address for the Web UI. |
+| `SC_GATE_DL_DELETE_AFTER_DOWNLOAD` | `true` deletes a finished file once its download has been fully transferred. Interrupted or failed transfers keep the file for a retry. |
+| `SC_GATE_DL_LIBRARY_DIR` | Folder in your music library for [library jobs](#-jobs), for example `/home/YOUR_USER/Music/SoundCloud`. |
+
+## 🧠 How it works
+
+### 🔍 Finding the source
+
+sc-gate-dl reads the SoundCloud track and looks for a download source in this order:
+
+1. A gate URL in the track description. These win over store links.
+2. The track's purchase link, which can point at a gate or at Bandcamp.
+3. When there is no purchase link and no gate in the description, the gate behind the track's Free download box.
+4. If nothing is found, the CLI and Web UI offer to download the SoundCloud track itself with yt-dlp.
+
+You can also paste a direct file URL instead of a SoundCloud link: a Dropbox link with `dl=1`, a Google Drive file link, or any http(s) URL that ends in a common audio or archive extension. sc-gate-dl downloads it without a browser, which helps when a gate isn't supported but you already have the link.
+
+### ⚡ Hypeddit without a browser
+
+Hypeddit only checks most of its gates in the browser: email, and the follow, like, comment and repost steps for SoundCloud, Instagram, TikTok, YouTube and Facebook. sc-gate-dl first tries to pass them with plain HTTP requests and downloads the file directly, with live progress in the CLI and Web UI. If a post has a gate that Hypeddit really checks, such as a Spotify gate that can't be skipped, sc-gate-dl falls back to the browser.
+
+### 🚪 Gates in the browser
+
+In the browser, sc-gate-dl handles each Hypeddit step:
+
+| Gate | What sc-gate-dl does |
+| --- | --- |
+| Email | Enters your name and email. |
+| SoundCloud | Skips the follow, like, comment and repost steps, because Hypeddit doesn't check them. Falls back to the old OAuth connect flow when needed. |
+| Facebook | Clicks next. No action needed. |
+| Instagram, TikTok, YouTube | Skips the follow or subscribe step, because it isn't checked. |
+| Spotify | Authorizes Spotify access. |
+| Download | Starts the download. |
+
+The other sites have their own downloaders with similar email and social steps. StillHype, PumpYourSound, MyPressKit and fangate.eu check SoundCloud follows, likes, reposts and comments on their server, so they need a real SoundCloud OAuth connection. fangate.eu runs through the site's session API: sc-gate-dl skips visit steps that can be skipped, runs SoundCloud OAuth in the browser, and stops with the step's name at any other step.
+
+### 💿 Bandcamp
+
+When the purchase link or description points at Bandcamp, yt-dlp downloads the file without a browser. For an album link, sc-gate-dl picks the track that matches the SoundCloud title. If that fails, the CLI and Web UI let you pick the track from the album.
+
+### 🎛️ Converting and tagging
+
+| Source | Result |
+| --- | --- |
+| Lossless (WAV, AIFF, FLAC, ALAC) | Converted to the chosen format: MP3 or AAC at `SC_GATE_DL_BITRATE`, or FLAC. |
+| MP3 and AAC | Retagged without re-encoding for MP3 and M4A/AAC output. A raw `.aac` stream goes into an `.m4a` file. FLAC output converts them. |
+| Other lossy formats (Ogg, Opus, WebM) | Converted at their own bitrate, up to `SC_GATE_DL_BITRATE`. |
+
+sc-gate-dl keeps existing tags that the SoundCloud metadata doesn't replace, and the comment tag links back to the SoundCloud track.
+
+## 🏠 Running on a server
+
+### 📡 Network access
+
+The Web UI listens on all network interfaces and calls the API on port 3000 of the same host. A Web UI opened at `http://192.168.1.50:4321` uses `http://192.168.1.50:3000`. If the API runs elsewhere, set `PUBLIC_API_BASE_URL`.
+
+The API rejects `POST` requests from browser pages on other origins with a 403, so a website you visit can't start downloads or clean up your SoundCloud account. If a reverse proxy serves the Web UI from a different origin, add it to `SC_GATE_DL_ALLOWED_ORIGINS`. Clients that send no `Origin` header, such as scripts, aren't affected.
+
+### 👀 Remote headed browser with noVNC
+
+With this setup, a server without a screen runs Chromium in headed mode on a virtual display, and you watch and control it from the Web UI. You need it for **Initialize logins**, OAuth consent and captchas.
+
+#### ✅ What you need
 
 - A Linux host with systemd user services and a stable hostname or IP address.
-- Bun and the sc-gate-dl dependencies installed for the service user.
-- Xvfb, `xauth`, x11vnc, and noVNC.
-- LAN or reverse-proxy access to the API (`3000`), Web UI (`4321`), and noVNC
-  (`6080`) ports. Keep the raw VNC port (`5900`) bound to localhost.
-- A VNC password. Traditional VNC authentication uses only the first eight
-  password characters and does not encrypt the connection.
+- Bun and the sc-gate-dl dependencies, installed for the service user.
+- Xvfb, `xauth`, x11vnc and noVNC.
+- LAN or reverse proxy access to the API (3000), Web UI (4321) and noVNC (6080) ports. Keep the raw VNC port (5900) on localhost.
+- A VNC password. VNC authentication only uses the first eight characters and doesn't encrypt the connection.
 
-On Arch Linux / Arch Linux ARM, install the native packages:
+#### 📥 Install
+
+On Arch Linux and Arch Linux ARM:
 
 ```bash
 sudo pacman -S --needed xorg-server-xvfb xorg-xauth x11vnc
 ```
 
-Install [noVNC](https://github.com/novnc/noVNC) from your distribution, or use
-an upstream release in your user account:
+Install [noVNC](https://github.com/novnc/noVNC) from your distribution, or clone a release into your user account, and set the VNC password:
 
 ```bash
 mkdir -p ~/.local/share/sc-gate-dl
@@ -291,7 +338,9 @@ mkdir -p ~/.vnc
 x11vnc -storepasswd
 ```
 
-Install both dependency sets before creating the services:
+`x11vnc -storepasswd` writes an encrypted `~/.vnc/passwd`, which the services below use. If you'd rather keep a plaintext password file, make it mode `600` and pass it with `-passwdfile`. `-rfbauth` only takes the encrypted format.
+
+Install the dependencies:
 
 ```bash
 cd ~/sc-gate-dl
@@ -300,17 +349,14 @@ cd webui
 bun install --frozen-lockfile
 ```
 
-Create a private Xauthority file once. Xvfb, x11vnc, and the app service must
-use this same file:
+Create a private Xauthority file. Xvfb, x11vnc and the app must all use this file:
 
 ```bash
 mkdir -p ~/.local/state/sc-gate-dl
 sh -c 'umask 077; touch "$HOME/.local/state/sc-gate-dl/xauthority"; chmod 600 "$HOME/.local/state/sc-gate-dl/xauthority"; xauth -f "$HOME/.local/state/sc-gate-dl/xauthority" add :99 . "$(mcookie)"'
 ```
 
-Add the runtime environment to the project `.env`. The `{host}` placeholder
-makes the noVNC URL follow the hostname or IP address used to open the Web UI,
-so the same server works through both a LAN address and Tailscale:
+Add the display settings to `.env`:
 
 ```dotenv
 DISPLAY=:99
@@ -322,19 +368,14 @@ SC_GATE_DL_DISABLE_DEV_SHM=true
 BROWSER_VIEW_URL="http://{host}:6080/vnc.html?autoconnect=true&resize=scale"
 ```
 
-A fixed noVNC hostname or IP address is still supported when the viewer is
-reachable through only one address.
+sc-gate-dl replaces `{host}` with the hostname or IP address you opened the Web UI with, so the viewer works through both a LAN address and Tailscale. A fixed address works too if the viewer is only reachable one way. You can leave out `SC_GATE_DL_DISABLE_DEV_SHM` when Chromium can use `/dev/shm` normally.
 
-`SC_GATE_DL_DISABLE_DEV_SHM` is mainly useful for containers or constrained
-hosts. It may be omitted when Chromium can use `/dev/shm` normally.
+#### 🛠️ systemd user services
 
-##### Automatic startup with systemd user services
+Create these files in `~/.config/systemd/user/` and replace `YOUR_USER` and `/home/YOUR_USER/sc-gate-dl` with your values.
 
-Create the following files under `~/.config/systemd/user/`. Replace
-`YOUR_USER` and `/home/YOUR_USER/sc-gate-dl` where shown. The examples use the
-encrypted `~/.vnc/passwd` produced by `x11vnc -storepasswd`.
-
-`sc-gate-xvfb.service`:
+<details>
+<summary><code>sc-gate-xvfb.service</code></summary>
 
 ```ini
 [Unit]
@@ -351,7 +392,10 @@ Restart=on-failure
 RestartSec=2
 ```
 
-`sc-gate-x11vnc.service`:
+</details>
+
+<details>
+<summary><code>sc-gate-x11vnc.service</code></summary>
 
 ```ini
 [Unit]
@@ -371,7 +415,10 @@ RestartSec=2
 SuccessExitStatus=2
 ```
 
-`sc-gate-novnc.service`:
+</details>
+
+<details>
+<summary><code>sc-gate-novnc.service</code></summary>
 
 ```ini
 [Unit]
@@ -390,7 +437,10 @@ RestartSec=2
 SuccessExitStatus=143
 ```
 
-`sc-gate-app.service`:
+</details>
+
+<details>
+<summary><code>sc-gate-app.service</code></summary>
 
 ```ini
 [Unit]
@@ -415,7 +465,10 @@ Restart=on-failure
 RestartSec=3
 ```
 
-`sc-gate-dl.target`:
+</details>
+
+<details>
+<summary><code>sc-gate-dl.target</code></summary>
 
 ```ini
 [Unit]
@@ -429,7 +482,9 @@ After=sc-gate-xvfb.service sc-gate-x11vnc.service \
 WantedBy=default.target
 ```
 
-Validate the units, enable user services at boot, and start the stack:
+</details>
+
+Check the units, let the user services start at boot without a login (lingering), and start everything:
 
 ```bash
 systemd-analyze --user verify ~/.config/systemd/user/sc-gate-*.service \
@@ -439,15 +494,14 @@ systemctl --user daemon-reload
 systemctl --user enable --now sc-gate-dl.target
 ```
 
-The lingering user manager is required for startup before the user logs in.
-Check the complete stack and follow the app logs with:
+Check the status and follow the app logs:
 
 ```bash
 systemctl --user status sc-gate-dl.target
 journalctl --user -u sc-gate-app.service -f
 ```
 
-For future application updates, only the app service needs restarting:
+To update sc-gate-dl, only the app service needs a restart:
 
 ```bash
 cd ~/sc-gate-dl
@@ -457,18 +511,16 @@ cd webui && bun install --frozen-lockfile && cd ..
 systemctl --user restart sc-gate-app.service
 ```
 
-To restart the complete display/VNC/application stack, stop and start the
-target so `PartOf=` cleanly stops every service:
+To restart the whole stack, stop and start the target, so `PartOf=` stops every service:
 
 ```bash
 systemctl --user stop sc-gate-dl.target
 systemctl --user start sc-gate-dl.target
 ```
 
-##### Private Tailscale access
+#### 🔒 Private access with Tailscale
 
-Keep the application available on its LAN addresses and add private tailnet
-listeners for the API, Web UI, and noVNC gateway:
+To reach the API, Web UI and noVNC from your tailnet while keeping the LAN addresses:
 
 ```bash
 tailscale serve --bg --http=3000 http://127.0.0.1:3000
@@ -477,12 +529,12 @@ tailscale serve --bg --http=6080 http://127.0.0.1:6080
 tailscale serve status
 ```
 
-When Tailscale itself runs in Docker with userspace networking, run those
-commands inside its container, for example `docker exec tailscaled tailscale
-serve ...`. The `127.0.0.1` targets above work only when that container uses
-host networking. For a bridge-mode container, add
-`host.docker.internal:host-gateway` as an extra host and replace each target
-with the container-reachable host name, for example:
+Use **Serve**, not **Funnel**. Serve stays inside your tailnet, while Funnel puts the service on the internet.
+
+<details>
+<summary>Tailscale in Docker</summary>
+
+Run the commands inside the container, for example `docker exec tailscaled tailscale serve ...`. The `127.0.0.1` targets only work when the container uses host networking. For a bridge-mode container, add the host gateway and use it as the target:
 
 ```yaml
 extra_hosts:
@@ -495,143 +547,77 @@ docker exec tailscaled tailscale serve --bg --http=4321 http://host.docker.inter
 docker exec tailscaled tailscale serve --bg --http=6080 http://host.docker.internal:6080
 ```
 
-The host services must listen on an interface reachable from the Docker bridge.
-Use Tailscale **Serve**, not **Funnel**: Serve is restricted to the tailnet,
-while Funnel publishes the service to the internet.
+The services on the host must listen on an interface the Docker bridge can reach.
 
-Vite rejects unlisted DNS hostnames even when they are private. Add the short
-MagicDNS name and fully qualified tailnet name to the app service as shown
-above, or place the same setting in the root `.env`:
+</details>
+
+Vite rejects hostnames it doesn't know, even private ones. Add the short MagicDNS name and the full tailnet name to `__VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS`, either in the app service as shown above or in the root `.env`:
 
 ```dotenv
 __VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS=SERVER_NAME,SERVER_NAME.TAILNET.ts.net
 ```
 
-Do not use `server.allowedHosts: true`; an explicit allowlist retains Vite's
-DNS-rebinding protection. After changing the environment, reload the systemd
-configuration and restart the app:
+Don't set `server.allowedHosts: true`, because an explicit list keeps Vite's DNS rebinding protection. After changing it, reload and restart:
 
 ```bash
 systemctl --user daemon-reload
 systemctl --user restart sc-gate-app.service
 ```
 
-With `BROWSER_VIEW_URL` using `{host}`, both addresses can be used without
-changing the server again:
+With `{host}` in `BROWSER_VIEW_URL`, both `http://192.168.1.50:4321` and `http://SERVER_NAME:4321` work without further changes.
 
-```text
-http://192.168.1.50:4321
-http://SERVER_NAME:4321
+#### 🪟 Using the browser view
+
+With `BROWSER_VIEW_URL` set, the Web UI shows a monitor icon in the top right corner. It opens the remote browser in a floating panel that doesn't block the Web UI behind it.
+
+- The panel opens by itself once a visible headed gate browser starts or login initialization begins. Only choosing headed mode doesn't open it. Leaving that flow or switching to another browser mode closes and disconnects it.
+- On the first connection, enter the VNC password. **Remember on this device** stores it in this browser's `localStorage` only, never in an API request, URL or server log. **Forget credentials** removes it, and turning the option off deletes a saved password right away.
+- Closing and reopening the panel keeps the VNC connection.
+- Drag the header to move the panel and its corners to resize it. It starts at the remote desktop's size, scaled down to fit, and remembers its position and size.
+- The header buttons zoom, disconnect, and maximize or restore the panel. Double-clicking the header also maximizes it, and dragging a maximized header restores it.
+- On touchscreens, drag with one finger to move the pointer, tap to left-click, hold still to right-click, and drag with two fingers to pan while zoomed in.
+
+VNC authentication doesn't encrypt the connection. Keep port 6080 on a trusted LAN, or put the Web UI, API and noVNC behind a reverse proxy with HTTPS and authentication. When the Web UI uses HTTPS, `BROWSER_VIEW_URL` must use HTTPS too, so the viewer connects over `wss://`.
+
+## 🔌 HTTP API
+
+The API that `bun webui` starts also serves other clients, such as [Nevumi](https://github.com/D3SOX/Nevumi).
+
+### 📨 Jobs
+
+A job created with `"destination": "library"` starts as soon as sc-gate-dl knows the source. It tags the file with SoundCloud's metadata and artwork and moves it to `SC_GATE_DL_LIBRARY_DIR` as `Artist - Title`. It never replaces a file and names a second copy `Artist - Title (2)`. A job with `"destination": "client"` runs the same way but keeps the file for `GET /api/job/:id/file`.
+
+Jobs also accept `"browserMode"` (`headless`, `xvfb` or `headed`, as listed by `GET /api/capabilities`) to choose the gate browser, for example a headed one to watch through `BROWSER_VIEW_URL`.
+
+### 🏷️ Reviewing tags
+
+Web UI jobs stop for a tag review unless the server sets `SC_GATE_DL_REVIEW_TAGS=false`. API jobs stop for one with `"reviewTags": true`, which needs a `destination`.
+
+Once the file is downloaded, such a job waits at the `waiting_metadata` stage. `GET /api/job/:id` then returns:
+
+- `defaultMetadata`: SoundCloud's tags
+- `existingMetadata`: the tags already in an MP3
+- `downloadFilename`, `outputFormat`, `sourceIsLossless`, `hasArtwork` and `hasExistingArtwork`
+
+`GET /api/job/:id/artwork` and `GET /api/job/:id/existing-artwork` return the two covers.
+
+Finish the job with `POST /api/job/:id/metadata`:
+
+```json
+{
+  "title": "Track title",
+  "artist": "Artist",
+  "album": "Album",
+  "genre": "Genre",
+  "nameAsArtistTitle": true,
+  "preserveMetadata": false
+}
 ```
 
-If you intentionally keep a plaintext password file instead of
-`~/.vnc/passwd`, protect it with mode `600` and use x11vnc's `-passwdfile`
-option. Do not pass a plaintext file to `-rfbauth`; that option expects
-x11vnc's encrypted password-file format.
+`preserveMetadata: true` keeps the MP3's own tags. `nameAsArtistTitle` defaults to `true` for these jobs. To use a different cover, send the same fields as `multipart/form-data` with an `artwork` file. The endpoint answers `{ "success": true }` right away, and the job continues through `processing_audio` to `ready` or `error`. A second submit gets a 409. `POST /api/job/:id/cancel` drops the waiting file.
 
-The monitor icon in the top-right opens a floating browser panel without
-blocking the Web UI behind it. The panel is draggable, resizable proportionally
-from its corners, defaults to the remote desktop's native view size (scaled down
-to fit), remembers its geometry, and automatically opens once a visible headed
-gate browser has actually started or login initialization starts. Selecting
-visible headed mode alone does not open it. Leaving that browser flow or
-switching to another browser mode closes, disconnects, and hides the viewer.
-On the first
-connection, enter the VNC password and optionally select **Remember on this
-device**. The password is stored only in that browser profile's `localStorage`,
-never in an API request, URL, or server log. Use **Forget credentials** to
-remove it. The remember choice itself is persisted, and turning it off removes
-any saved password immediately. Closing and reopening the panel keeps the
-established VNC connection. Use the header controls to zoom, disconnect, or
-maximize/restore the viewer. Double-clicking the header also toggles maximized
-mode, while dragging a maximized header restores the floating window.
-On touchscreens, drag with one finger to move the remote pointer, tap to
-left-click, hold without moving to right-click, and drag with two fingers to
-pan the local view while zoomed in.
+### 🔎 Search and artwork
 
-VNC authentication does not encrypt the connection. Keep port `6080` on a
-trusted LAN, or put the Web UI, API, and noVNC behind an authenticated HTTPS
-reverse proxy. When the Web UI uses HTTPS, `BROWSER_VIEW_URL` must also use
-HTTPS so the embedded client connects over `wss://`.
+`GET /api/search?q=…&limit=…&offset=…` searches SoundCloud tracks with the configured account. Each result has a `source` hint: `download` for a download the creator enabled, `gate` when the listing links a supported gate, and `none` otherwise. A track marked `none` can still have a gate behind a short link, which sc-gate-dl finds when the job starts.
 
-If it's the first time you're running it you will need to initialize the logins by clicking the button in the footer.
-
-You can deep-link a track with `?url=` (also accepted as `?soundcloudUrl=`), optional `outputFormat` (`mp3-320`, `m4a-aac`, `flac`, or `original`), and optional `browserMode` (`headless`, `xvfb`, or `headed`), which pre-fills the form and starts the job. FLAC output preserves lossless sources; converting a lossy source to FLAC changes the container but cannot restore lost quality.
-
-```text
-http://localhost:4321/?url=https://soundcloud.com/artist/track&outputFormat=mp3-320
-```
-
-### Browser userscript
-
-Adds a download icon next to SoundCloud store/buy links (feed and track pages). Clicking it opens the **exact Web UI** in a floating, movable panel on the right (resizable from all edges) — the page behind stays usable (no dimmed overlay). Choose both output format and browser mode from the panel toolbar, or from Violentmonkey's **Choose output format…** and **Choose browser mode…** menu commands. Both choices are remembered and passed to the Web UI. Enable **Always open downloads in new tab** from Violentmonkey's userscript menu to bypass the modal for every download; the choice is remembered. Auto-close after the **browser file download** (Download MP3/Original) or **Start New Download** is on by default — toggle via **Auto-close after browser download**. Closing the panel (× / Escape) or **Cancel download** in the Web UI stops an in-progress job and exits the browser cleanly.
-
-**Recommended:** [Violentmonkey](https://violentmonkey.github.io/) (Firefox / Chrome / Edge). Tampermonkey also works.
-
-[![Install userscript](https://img.shields.io/badge/Install%20userscript-Violentmonkey-3b3b3b?style=for-the-badge&logo=firefoxbrowser&logoColor=white)](https://raw.githubusercontent.com/D3SOX/sc-gate-dl/master/userscript/sc-gate-dl.user.js)
-
-Or open the raw file: [`userscript/sc-gate-dl.user.js`](https://raw.githubusercontent.com/D3SOX/sc-gate-dl/master/userscript/sc-gate-dl.user.js)
-
-1. Install [Violentmonkey](https://violentmonkey.github.io/)
-2. Click **Install userscript** above (Violentmonkey will prompt to confirm)
-3. Start the Web UI locally: `bun webui`
-4. Browse SoundCloud — use the download icon beside the store/cart button
-
-Chrome may ask once to allow the page to access your local network (`localhost`). If the panel iframe is blocked, use **open in tab** in the panel toolbar.
-
-To point the userscript at another machine without developer tools, click the
-gear button in its panel header or choose **Configure server…** from
-Violentmonkey's userscript menu. Enter one or more complete Web UI addresses
-(one per line), for example:
-
-```text
-http://192.168.178.57:4321
-http://100.x.y.z:8123
-```
-
-Addresses are tried in order before a download opens: the first reachable server
-wins, then the script falls back to the next. Reachability is checked through the
-userscript bridge (`GM_xmlhttpRequest`), so LAN / Tailscale hosts work even when
-the browser blocks page `fetch` to private networks (Chrome / Cromite Private
-Network Access). After updating the userscript, approve the new network
-permission prompt if Violentmonkey asks. Leaving the field empty resets to
-localhost. The list is remembered across browser restarts.
-
-The same setting can also be changed from the SoundCloud tab console:
-
-```js
-localStorage.setItem(
-  'sc-gate-dl-webui-base',
-  'http://192.168.178.57:4321\nhttp://100.x.y.z:8123',
-)
-```
-
-Panel size/position is remembered in `localStorage` (`sc-gate-dl-panel-geom`).
-
-## How It Works
-
-**Browserless fast path**: Most Hypeddit gates (email and the social follow/like/comment/repost buttons for SoundCloud, Instagram, TikTok, YouTube and Facebook) are only verified client-side, so the tool first tries to satisfy them with plain HTTP requests and downloads the file directly, without launching a browser. This is much faster and shows live download progress in both the CLI and Web UI. If a post has a gate that needs real verification (e.g. an unskippable Spotify gate), it automatically falls back to the browser-based flow below.
-
-**Gate Handling**: When the browser flow is used, the tool automatically detects and handles different Hypeddit gates:
-
-- Email gate: Enters your name and email
-- SoundCloud gate: Handles the follow/like/comment/repost buttons (This gets bypassed as Hypeddit does not actually verify the actions). The legacy OAuth "connect" flow is still handled as a fallback
-- Facebook gate: Clicks the next button (Does not require any action)
-- Instagram gate: Handles Instagram follow requirements (This gets bypassed as it does not actually require a follow)
-- TikTok gate: Handles TikTok follow requirements (This gets bypassed as it does not actually require a follow)
-- YouTube gate: Handles YouTube subscribe requirements (This gets bypassed as it does not actually require subscribing)
-- Spotify gate: Authorizes Spotify access
-- Download gate: Triggers the audio download
-
-Droploud, GateRush, DownloadGater, StillHype, PumpYourSound, MyPressKit, and fangate.eu gates are handled via their own downloaders with similar email / social unlock flows. StillHype, PumpYourSound, MyPressKit, and fangate.eu require a real SoundCloud OAuth connection (follow / like / repost / comment are verified server-side). fangate.eu gates run through the site's session API: skippable visit steps are skipped, SoundCloud OAuth runs in the browser, and any other step stops the download with the step named. Traditional gate URLs in the track description are preferred over Bandcamp/SoundCloud store links in `purchase_url`. When a track has no `purchase_url` and the description has no gate, the gate behind the track's "Free download" box (SoundCloud's buy module) is used.
-
-**Bandcamp / yt-dlp**: When a SoundCloud track’s purchase URL (or description) points at Bandcamp instead of a gate, the file is downloaded with [yt-dlp](https://github.com/yt-dlp/yt-dlp) (browserless). For Bandcamp album links, the matching track is selected from the SoundCloud title; if auto-match fails, the CLI and Web UI let you pick a track from the album. Traditional unlock gates still take priority if both are present. If no gate or Bandcamp URL is found, the CLI and Web UI can fall back to downloading the SoundCloud track itself via yt-dlp.
-
-**Direct download**: Paste a file URL (Dropbox with `dl=1`, Google Drive file links, or any http(s) URL ending in a common audio/archive extension). The file is fetched browserlessly — useful when a gate is unsupported but you already have the download link.
-
-**File Processing**:
-
-- **Lossless (WAV/AIFF/FLAC/ALAC) files**: Converted to the selected format (MP3 or AAC at `SC_GATE_DL_BITRATE`, 320 kbps by default, or FLAC) with metadata and artwork
-- **MP3 and AAC files**: For MP3 and M4A/AAC output, retagged with metadata and artwork (no re-encoding); a raw `.aac` stream is moved into an `.m4a`. FLAC output converts them like any other source
-- **Other lossy files (Ogg, Opus, WebM)**: Converted to the selected format at their own bitrate, capped at `SC_GATE_DL_BITRATE`
-- Existing tags the SoundCloud metadata does not replace are kept, and the comment tag links back to the SoundCloud track
+`GET /api/artwork?url=…` returns a result's cover, so clients never contact SoundCloud themselves. It only fetches from SoundCloud's image CDN.
