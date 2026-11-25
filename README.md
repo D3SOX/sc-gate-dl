@@ -622,6 +622,6 @@ Droploud, GateRush, DownloadGater, StillHype, PumpYourSound, and MyPressKit gate
 **File Processing**:
 
 - **Lossless (WAV/AIFF/FLAC/ALAC) files**: Converted to the selected format (MP3 or AAC at `SC_GATE_DL_BITRATE`, 320 kbps by default, or FLAC) with metadata and artwork
-- **MP3 and AAC files**: Retagged with metadata and artwork (no re-encoding); a raw `.aac` stream is moved into an `.m4a`
+- **MP3 and AAC files**: For MP3 and M4A/AAC output, retagged with metadata and artwork (no re-encoding); a raw `.aac` stream is moved into an `.m4a`. FLAC output converts them like any other source
 - **Other lossy files (Ogg, Opus, WebM)**: Converted to the selected format at their own bitrate, capped at `SC_GATE_DL_BITRATE`
 - Existing tags the SoundCloud metadata does not replace are kept, and the comment tag links back to the SoundCloud track

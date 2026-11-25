@@ -1,3 +1,4 @@
+import { mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { confirm, input, select } from '@inquirer/prompts';
 import { resolveDownloadedAudio } from './archiveAudio';
@@ -43,6 +44,14 @@ try {
 
 	const config = await loadConfig();
 	const output = cliOutputFromEnv();
+	if (output.dir) {
+		// Fail before the download, not after it, when the folder is unusable.
+		await mkdir(output.dir, { recursive: true }).catch((error) => {
+			throw new Error(
+				`SC_GATE_DL_CLI_DIR=${output.dir} cannot be used: ${error instanceof Error ? error.message : String(error)}`,
+			);
+		});
+	}
 
 	const soundcloudArg = process.argv[2];
 	const soundcloudArgValidation = soundcloudArg

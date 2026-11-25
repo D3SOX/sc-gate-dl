@@ -24,7 +24,9 @@ export function cliOutputFromEnv(
 	env: Record<string, string | undefined> = process.env,
 ): CliOutput {
 	const formatValue = env.SC_GATE_DL_CLI_FORMAT?.trim().toLowerCase() || 'mp3';
-	const format = CLI_FORMATS[formatValue];
+	const format = Object.hasOwn(CLI_FORMATS, formatValue)
+		? CLI_FORMATS[formatValue]
+		: undefined;
 	if (!format) {
 		throw new Error(
 			`SC_GATE_DL_CLI_FORMAT=${formatValue} is not supported. Use ${Object.keys(CLI_FORMATS).join(', ')}.`,
@@ -42,8 +44,8 @@ export function cliOutputFromEnv(
 
 	return {
 		format,
-		bitrateKbps: outputBitrateFromEnv(env.SC_GATE_DL_BITRATE),
+		bitrateKbps: outputBitrateFromEnv(env.SC_GATE_DL_BITRATE ?? ''),
 		dir,
-		reviewTags: reviewTagsFromEnv(env.SC_GATE_DL_REVIEW_TAGS),
+		reviewTags: reviewTagsFromEnv(env.SC_GATE_DL_REVIEW_TAGS ?? ''),
 	};
 }

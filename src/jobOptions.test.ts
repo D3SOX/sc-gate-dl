@@ -68,7 +68,13 @@ describe('parseUnattendedJobOptions', () => {
 
 describe('reviewTagsFromEnv', () => {
 	test('defaults to true when unset or blank', () => {
-		expect(reviewTagsFromEnv(undefined)).toBeTrue();
+		const saved = process.env.SC_GATE_DL_REVIEW_TAGS;
+		delete process.env.SC_GATE_DL_REVIEW_TAGS;
+		try {
+			expect(reviewTagsFromEnv()).toBeTrue();
+		} finally {
+			if (saved !== undefined) process.env.SC_GATE_DL_REVIEW_TAGS = saved;
+		}
 		expect(reviewTagsFromEnv(' ')).toBeTrue();
 	});
 

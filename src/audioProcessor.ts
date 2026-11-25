@@ -273,7 +273,7 @@ export class AudioProcessor {
 		console.log();
 
 		console.log(
-			'Now you can correct the metadata for the resulting MP3 file. All fields are optional and will be used if provided.',
+			'Now you can correct the metadata for the resulting audio file. All fields are optional and will be used if provided.',
 		);
 
 		const correctedTitle = await input({
@@ -320,7 +320,7 @@ export class AudioProcessor {
 		const lossless = codecName
 			? isLosslessCodec(codecName)
 			: isLosslessFormat(filename) || null;
-		const plan = planAudioOutput(filename, lossless, outputFormat);
+		const plan = planAudioOutput(filename, lossless, outputFormat, codecName);
 		if (plan === 'unsupported') {
 			console.warn(
 				`Unsupported file type: ${filename}. Leaving as is... If you want support for this file type, please create an issue about this on ${REPO_URL}/issues`,
@@ -329,8 +329,11 @@ export class AudioProcessor {
 		}
 		const hasMetadata =
 			metadata.title || metadata.artist || metadata.album || metadata.genre;
-		// A declined retag leaves the file byte-identical.
-		if (plan === 'retag' && !hasMetadata) return inputPath;
+		// A declined retag leaves the file byte-identical. A raw .aac stream is
+		// still moved into an .m4a, as the Web UI preview shows.
+		if (plan === 'retag' && !hasMetadata && isMp3Format(filename)) {
+			return inputPath;
+		}
 
 		// Without new artwork, keep the cover the download already has.
 		const artwork = options.artwork?.buffer.byteLength
@@ -346,17 +349,24 @@ export class AudioProcessor {
 		const tags = { metadata, sourceUrl, artworkPath };
 		try {
 			if (artwork && artworkPath) await Bun.write(artworkPath, artwork.buffer);
-			if (plan === 'retag') return await this.retag(inputPath, tags);
+			if (plan === 'retag') {
+				return await this.retag(
+					inputPath,
+					hasMetadata ? tags : { metadata: {}, artworkPath: null },
+				);
+			}
 
 			if (lossless === false && plan === 'flac') {
 				console.warn(
 					`Source codec ${codecName ?? 'unknown'} is lossy; FLAC conversion cannot restore lost audio quality.`,
 				);
 			}
-			// Lossy sources keep their own rate, so a 128k stream never becomes fake 320k.
+			// Lossy sources keep their own rate, so a 128k stream never becomes fake
+			// 320k. MP3 at 44.1 and 48 kHz has no rate below 32k.
+			const minKbps = plan === 'mp3' ? 32 : 8;
 			const targetKbps = lossless
 				? this.bitrateKbps
-				: Math.min(this.bitrateKbps, Math.max(32, bitrateKbps ?? 192));
+				: Math.min(this.bitrateKbps, Math.max(minKbps, bitrateKbps ?? 192));
 			const { extension, codec, label, coverDisposition } = {
 				flac: {
 					extension: '.flac',
@@ -457,8 +467,14 @@ export class AudioProcessor {
 				return path;
 			});
 			if (removeSource && outputPath !== inputPath) {
-				await rm(inputPath);
-				console.log(`✓ Removed ${inputPath}`);
+				// The converted file is in place, so a stuck source must not fail the job.
+				await rm(inputPath).then(
+					() => console.log(`✓ Removed ${inputPath}`),
+					(error) =>
+						console.warn(
+							`Could not remove ${inputPath}: ${error instanceof Error ? error.message : String(error)}`,
+						),
+				);
 			}
 			console.log(`✓ Converted to ${outputPath}`);
 			return outputPath;
@@ -483,7 +499,12 @@ export class AudioProcessor {
 			extension,
 		);
 		if (extname(inputPath).toLowerCase() === extension) {
-			await rename(retagged, inputPath);
+			try {
+				await rename(retagged, inputPath);
+			} catch (error) {
+				await rm(retagged, { force: true });
+				throw error;
+			}
 			console.log(`✓ Retagged ${inputPath}`);
 			return inputPath;
 		}

@@ -39,7 +39,27 @@ describe('cliOutputFromEnv', () => {
 		);
 	});
 
+	test('ignores the process environment for an explicit map', () => {
+		const saved = { ...process.env };
+		process.env.SC_GATE_DL_BITRATE = '256';
+		process.env.SC_GATE_DL_REVIEW_TAGS = 'false';
+		try {
+			expect(cliOutputFromEnv({})).toMatchObject({
+				bitrateKbps: 320,
+				reviewTags: true,
+			});
+		} finally {
+			for (const key of ['SC_GATE_DL_BITRATE', 'SC_GATE_DL_REVIEW_TAGS']) {
+				if (saved[key] === undefined) delete process.env[key];
+				else process.env[key] = saved[key];
+			}
+		}
+	});
+
 	test('rejects unknown values with the setting named', () => {
+		expect(() =>
+			cliOutputFromEnv({ SC_GATE_DL_CLI_FORMAT: 'constructor' }),
+		).toThrow('SC_GATE_DL_CLI_FORMAT');
 		expect(() => cliOutputFromEnv({ SC_GATE_DL_CLI_FORMAT: 'wav' })).toThrow(
 			'SC_GATE_DL_CLI_FORMAT',
 		);

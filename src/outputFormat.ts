@@ -38,7 +38,7 @@ export function needsMp3Conversion(filename: string): boolean {
 export type AudioPlan = 'retag' | 'mp3' | 'm4a-aac' | 'flac' | 'unsupported';
 
 /**
- * What happens to a download for an output format. Lossy MP3 and AAC play
+ * What happens to a download for the MP3 and M4A/AAC outputs. Lossy MP3 and AAC play
  * everywhere, so they are only retagged and never re-encoded; other lossy
  * formats and lossless sources are converted. [sourceIsLossless] is the codec
  * probe, or null when it is unknown.
@@ -47,6 +47,8 @@ export function planAudioOutput(
 	filename: string,
 	sourceIsLossless: boolean | null,
 	outputFormat: Exclude<OutputFormat, 'original'>,
+	/** The probed codec when known; the Web UI preview has none and assumes AAC. */
+	codecName?: string | null,
 ): AudioPlan {
 	if (!isMp3Format(filename) && !needsMp3Conversion(filename)) {
 		return 'unsupported';
@@ -54,7 +56,9 @@ export function planAudioOutput(
 	if (outputFormat === 'flac') return 'flac';
 	if (
 		isMp3Format(filename) ||
-		(sourceIsLossless !== true && hasExtension(filename, ['.m4a', '.aac']))
+		(sourceIsLossless !== true &&
+			(codecName == null || codecName === 'aac') &&
+			hasExtension(filename, ['.m4a', '.aac']))
 	) {
 		return 'retag';
 	}

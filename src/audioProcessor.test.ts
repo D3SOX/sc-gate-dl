@@ -84,6 +84,26 @@ async function probe(path: string): Promise<{
 	};
 }
 
+/** MD5 of every audio packet, to prove a retag copied the audio unchanged. */
+async function audioPacketHashes(path: string): Promise<string[]> {
+	const proc = Bun.spawn([
+		'ffprobe',
+		'-v',
+		'quiet',
+		'-select_streams',
+		'a',
+		'-show_packets',
+		'-show_data_hash',
+		'md5',
+		'-of',
+		'csv=p=0',
+		'-show_entries',
+		'packet=data_hash',
+		path,
+	]);
+	return (await new Response(proc.stdout).text()).trim().split('\n');
+}
+
 describe('AudioProcessor.processAudio with FFmpeg', () => {
 	const sourceUrl = 'https://soundcloud.com/artist/track';
 	let dir: string;
@@ -255,7 +275,7 @@ describe('AudioProcessor.processAudio with FFmpeg', () => {
 				'downloads/song.m4a',
 			);
 			await rm('downloads/song.wav');
-			const before = await Bun.file('downloads/song.m4a').size;
+			const before = await audioPacketHashes('downloads/song.m4a');
 			const output = await processor().processAudio(
 				'song.m4a',
 				{ title: 'Song' },
@@ -265,9 +285,26 @@ describe('AudioProcessor.processAudio with FFmpeg', () => {
 			const { tags, codec } = await probe(output);
 			expect(codec).toBe('aac');
 			expect(tags.title).toBe('Song');
-			expect(Math.abs((await Bun.file(output).size) - before)).toBeLessThan(
-				2048,
+			expect(await audioPacketHashes(output)).toEqual(before);
+		}));
+
+	test('an untagged raw .aac download still moves into an .m4a', () =>
+		inTempDir(async () => {
+			await ffmpeg(
+				'-i',
+				'downloads/song.wav',
+				'-c:a',
+				'aac',
+				'downloads/song.aac',
 			);
+			await rm('downloads/song.wav');
+			const output = await processor().processAudio(
+				'song.aac',
+				{},
+				{ artwork: null, losslessHandling: 'never' },
+			);
+			expect(output).toBe('downloads/song.m4a');
+			expect(await readdir('downloads')).toEqual(['song.m4a']);
 		}));
 
 	test('a raw .aac download moves into an .m4a when tagged', () =>
@@ -342,7 +379,13 @@ describe('AudioProcessor.processAudio with FFmpeg', () => {
 
 describe('outputBitrateFromEnv', () => {
 	test('defaults to 320 when unset or blank', () => {
-		expect(outputBitrateFromEnv(undefined)).toBe(320);
+		const saved = process.env.SC_GATE_DL_BITRATE;
+		delete process.env.SC_GATE_DL_BITRATE;
+		try {
+			expect(outputBitrateFromEnv()).toBe(320);
+		} finally {
+			if (saved !== undefined) process.env.SC_GATE_DL_BITRATE = saved;
+		}
 		expect(outputBitrateFromEnv('')).toBe(320);
 	});
 

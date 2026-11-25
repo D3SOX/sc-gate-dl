@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { planAudioOutput } from './outputFormat';
 import {
 	artistTitleFilename,
 	cookiesToNetscape,
@@ -517,6 +518,12 @@ describe('previewProcessedFilename', () => {
 				sourceIsLossless: true,
 			}),
 		).toBe('song.mp3');
+	});
+
+	test('converts a non-AAC codec in an .m4a', () => {
+		expect(planAudioOutput('song.m4a', false, 'mp3-320', 'opus')).toBe('mp3');
+		expect(planAudioOutput('song.m4a', false, 'mp3-320', 'aac')).toBe('retag');
+		expect(planAudioOutput('song.m4a', false, 'mp3-320', null)).toBe('retag');
 	});
 
 	test('keeps AAC as m4a for mp3 output', () => {
