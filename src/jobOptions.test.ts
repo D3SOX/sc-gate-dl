@@ -1,5 +1,9 @@
 import { describe, expect, test } from 'bun:test';
-import { parseBrowserMode, parseUnattendedJobOptions } from './jobOptions';
+import {
+	parseBrowserMode,
+	parseUnattendedJobOptions,
+	reviewTagsFromEnv,
+} from './jobOptions';
 import type { BrowserMode } from './types';
 
 const linuxModes: BrowserMode[] = ['headless', 'xvfb', 'headed'];
@@ -59,5 +63,21 @@ describe('parseUnattendedJobOptions', () => {
 		expect(
 			parseUnattendedJobOptions({ reviewTags: false }, null, linuxModes),
 		).toEqual({ browserMode: undefined, reviewTags: false });
+	});
+});
+
+describe('reviewTagsFromEnv', () => {
+	test('defaults to true when unset or blank', () => {
+		expect(reviewTagsFromEnv(undefined)).toBeTrue();
+		expect(reviewTagsFromEnv(' ')).toBeTrue();
+	});
+
+	test('reads true and false in any case', () => {
+		expect(reviewTagsFromEnv('FALSE')).toBeFalse();
+		expect(reviewTagsFromEnv('True')).toBeTrue();
+	});
+
+	test('rejects other values', () => {
+		expect(() => reviewTagsFromEnv('0')).toThrow('SC_GATE_DL_REVIEW_TAGS');
 	});
 });

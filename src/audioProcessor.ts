@@ -1,5 +1,5 @@
 import { existsSync } from 'node:fs';
-import { rename } from 'node:fs/promises';
+import { rename, rm } from 'node:fs/promises';
 import { basename, extname, join } from 'node:path';
 import { confirm, input } from '@inquirer/prompts';
 import type { SoundcloudTrack } from 'soundcloud.ts';
@@ -7,15 +7,13 @@ import {
 	pickUniqueDownloadFilename,
 	withDownloadRenameLock,
 } from './downloadRename';
+import { planAudioOutput } from './outputFormat';
 import type { Metadata, OutputFormat } from './types';
 import {
 	getDefaultMetadata,
 	isLosslessFormat,
 	isMp3Format,
-	needsMp3Conversion,
 	REPO_URL,
-	toFlacFilename,
-	toMp3Filename,
 } from './utils';
 
 const ARTWORK_EXTENSIONS = new Set(['jpg', 'jpeg', 'png', 'webp', 'gif']);
@@ -83,14 +81,41 @@ function ffmpegTagArgs(
 	return args;
 }
 
-export class AudioProcessor {
-	private ffmpegBin: string;
-	private ffprobeBin: string;
-
-	constructor(ffmpegBin: string, ffprobeBin: string) {
-		this.ffmpegBin = ffmpegBin;
-		this.ffprobeBin = ffprobeBin;
+/** Output bitrate in kbps from `SC_GATE_DL_BITRATE`. Unset or blank means 320. */
+export function outputBitrateFromEnv(
+	value = process.env.SC_GATE_DL_BITRATE,
+): number {
+	const text = value?.trim();
+	if (!text) return 320;
+	const kbps = /^\d+$/.test(text) ? Number(text) : Number.NaN;
+	if (!(kbps >= 64 && kbps <= 320)) {
+		throw new Error(
+			`SC_GATE_DL_BITRATE=${text} is not a valid bitrate. Use a number of kbps from 64 to 320, or leave it unset for 320.`,
+		);
 	}
+	return kbps;
+}
+
+export function isLosslessCodec(codecName: string | null): boolean {
+	const codec = codecName?.toLowerCase() ?? '';
+	return (
+		['alac', 'flac', 'wavpack', 'ape', 'tta'].includes(codec) ||
+		codec.startsWith('pcm_') ||
+		codec.startsWith('dsd_')
+	);
+}
+
+function replaceExtension(filename: string, extension: string): string {
+	return `${basename(filename, extname(filename))}${extension}`;
+}
+
+export class AudioProcessor {
+	constructor(
+		private readonly ffmpegBin: string,
+		private readonly ffprobeBin: string,
+		/** MP3/AAC bitrate for lossless sources, from `SC_GATE_DL_BITRATE`. */
+		private readonly bitrateKbps = 320,
+	) {}
 
 	/** Run a binary with argv (no shell); throws on non-zero exit. */
 	private async run(
@@ -291,11 +316,26 @@ export class AudioProcessor {
 			sourceUrl,
 		} = options;
 		const inputPath = join('./downloads', filename);
+		const { codecName, bitrateKbps } = await this.probeAudioStream(inputPath);
+		const lossless = codecName
+			? isLosslessCodec(codecName)
+			: isLosslessFormat(filename) || null;
+		const plan = planAudioOutput(filename, lossless, outputFormat);
+		if (plan === 'unsupported') {
+			console.warn(
+				`Unsupported file type: ${filename}. Leaving as is... If you want support for this file type, please create an issue about this on ${REPO_URL}/issues`,
+			);
+			return inputPath;
+		}
+		const hasMetadata =
+			metadata.title || metadata.artist || metadata.album || metadata.genre;
+		// A declined retag leaves the file byte-identical.
+		if (plan === 'retag' && !hasMetadata) return inputPath;
+
 		// Without new artwork, keep the cover the download already has.
 		const artwork = options.artwork?.buffer.byteLength
 			? options.artwork
 			: await this.extractCoverArt(inputPath, Number.POSITIVE_INFINITY);
-
 		// The artwork name may come from a client upload, so never use it as a path.
 		const artworkPath = artwork
 			? join(
@@ -306,44 +346,56 @@ export class AudioProcessor {
 		const tags = { metadata, sourceUrl, artworkPath };
 		try {
 			if (artwork && artworkPath) await Bun.write(artworkPath, artwork.buffer);
-			if (outputFormat === 'flac') {
-				const outputPath = await this.convertToFlac(inputPath, tags, filename);
-				await this.maybeRemoveSource(
-					inputPath,
-					outputPath,
-					filename,
-					losslessHandling,
-				);
-				return outputPath;
-			}
+			if (plan === 'retag') return await this.retag(inputPath, tags);
 
-			// Convert non-MP3 audio (lossless or lossy containers like m4a) to MP3.
-			if (needsMp3Conversion(filename)) {
-				const outputPath = await this.convertToMp3(inputPath, tags, filename);
-
-				await this.maybeRemoveSource(
-					inputPath,
-					outputPath,
-					filename,
-					losslessHandling,
-				);
-				return outputPath;
-			}
-			// otherwise if it is an MP3, we retag it with the correct metadata
-			else if (isMp3Format(filename)) {
-				// if metadata is empty, skip retagging
-				const hasMetadata =
-					metadata.title || metadata.artist || metadata.album || metadata.genre;
-
-				if (hasMetadata) {
-					await this.retagMp3(inputPath, tags);
-				}
-			} else {
+			if (lossless === false && plan === 'flac') {
 				console.warn(
-					`Unsupported file type: ${filename}. Leaving as is... If you want support for this file type, please create an issue about this on ${REPO_URL}/issues`,
+					`Source codec ${codecName ?? 'unknown'} is lossy; FLAC conversion cannot restore lost audio quality.`,
 				);
 			}
-			return inputPath;
+			// Lossy sources keep their own rate, so a 128k stream never becomes fake 320k.
+			const targetKbps = lossless
+				? this.bitrateKbps
+				: Math.min(this.bitrateKbps, Math.max(32, bitrateKbps ?? 192));
+			const { extension, codec, label, coverDisposition } = {
+				flac: {
+					extension: '.flac',
+					codec: ['-c:a', 'flac', '-compression_level', '8'],
+					label: 'FLAC',
+					coverDisposition: ['-disposition:v', 'attached_pic'],
+				},
+				mp3: {
+					extension: '.mp3',
+					codec: [
+						'-c:a',
+						'libmp3lame',
+						'-b:a',
+						`${targetKbps}k`,
+						'-id3v2_version',
+						'3',
+					],
+					label: `MP3 (${targetKbps}kbps)`,
+					coverDisposition: [],
+				},
+				'm4a-aac': {
+					extension: '.m4a',
+					codec: ['-c:a', 'aac', '-b:a', `${targetKbps}k`],
+					label: `M4A/AAC (${targetKbps}kbps)`,
+					coverDisposition: ['-disposition:v', 'attached_pic'],
+				},
+			}[plan];
+
+			console.log(`Converting to ${label}...`);
+			const converted = await this.writeWithFfmpeg(
+				ffmpegTagArgs(inputPath, codec, tags, coverDisposition),
+				extension,
+			);
+			return await this.placeConverted(
+				converted,
+				inputPath,
+				replaceExtension(filename, extension),
+				losslessHandling,
+			);
 		} finally {
 			// clean up temporary artwork file
 			if (artworkPath) {
@@ -354,25 +406,94 @@ export class AudioProcessor {
 		}
 	}
 
-	private async maybeRemoveSource(
-		inputPath: string,
-		outputPath: string,
-		filename: string,
-		losslessHandling: 'prompt' | 'always' | 'never',
-	): Promise<void> {
-		if (inputPath === outputPath) return;
+	/** Run FFmpeg into a hidden temporary file in downloads/ and return its path. */
+	private async writeWithFfmpeg(
+		args: string[],
+		extension: string,
+	): Promise<string> {
+		const outputPath = join(
+			'./downloads',
+			`.converting-${crypto.randomUUID()}${extension}`,
+		);
+		try {
+			await this.run(this.ffmpegBin, [...args, '-y', outputPath]);
+		} catch (error) {
+			await rm(outputPath, { force: true });
+			throw error;
+		}
+		return outputPath;
+	}
 
-		let removeSourceFile = losslessHandling !== 'never';
-		if (losslessHandling === 'prompt') {
-			removeSourceFile = await confirm({
-				message: `Do you want to remove the ${isLosslessFormat(filename) ? 'lossless' : 'source'} file now?`,
-				default: true,
+	/**
+	 * Give a converted file its final name and remove the source when wanted.
+	 * When both share a name, the source is replaced only if it is removed
+	 * anyway; otherwise the converted file gets a free name.
+	 */
+	private async placeConverted(
+		convertedPath: string,
+		inputPath: string,
+		desiredFilename: string,
+		losslessHandling: 'prompt' | 'always' | 'never',
+	): Promise<string> {
+		const sourceFilename = basename(inputPath);
+		try {
+			const removeSource =
+				losslessHandling === 'prompt'
+					? await confirm({
+							message: `Do you want to remove the ${isLosslessFormat(sourceFilename) ? 'lossless' : 'source'} file now?`,
+							default: true,
+						})
+					: losslessHandling === 'always';
+			const outputPath = await withDownloadRenameLock(async () => {
+				const finalName = pickUniqueDownloadFilename({
+					desiredFilename,
+					currentFilename: removeSource ? sourceFilename : '',
+					jobId: crypto.randomUUID(),
+					exists: (name) => existsSync(join('./downloads', name)),
+					isOwnedByOtherJob: () => false,
+				});
+				const path = join('./downloads', finalName);
+				await rename(convertedPath, path);
+				return path;
 			});
+			if (removeSource && outputPath !== inputPath) {
+				await rm(inputPath);
+				console.log(`✓ Removed ${inputPath}`);
+			}
+			console.log(`✓ Converted to ${outputPath}`);
+			return outputPath;
+		} finally {
+			await rm(convertedPath, { force: true });
 		}
-		if (removeSourceFile) {
-			await Bun.file(inputPath).unlink();
-			console.log(`✓ Removed ${inputPath}`);
+	}
+
+	/** Rewrite the tags of an MP3 or AAC file without re-encoding it. */
+	private async retag(inputPath: string, tags: TagOptions): Promise<string> {
+		const mp3 = isMp3Format(inputPath);
+		const extension = mp3 ? '.mp3' : '.m4a';
+		console.log(`Retagging ${mp3 ? 'MP3' : 'M4A'}...`);
+		// Existing tags stay; only the fields given here are replaced.
+		const retagged = await this.writeWithFfmpeg(
+			ffmpegTagArgs(
+				inputPath,
+				mp3 ? ['-c:a', 'copy', '-id3v2_version', '3'] : ['-c:a', 'copy'],
+				tags,
+				mp3 ? [] : ['-disposition:v', 'attached_pic'],
+			),
+			extension,
+		);
+		if (extname(inputPath).toLowerCase() === extension) {
+			await rename(retagged, inputPath);
+			console.log(`✓ Retagged ${inputPath}`);
+			return inputPath;
 		}
+		// A raw .aac stream cannot hold tags, so it moves into an .m4a.
+		return this.placeConverted(
+			retagged,
+			inputPath,
+			replaceExtension(basename(inputPath), extension),
+			'always',
+		);
 	}
 
 	private async runFfprobe(inputPath: string): Promise<FfprobeResult | null> {
@@ -428,172 +549,6 @@ export class AudioProcessor {
 	async isLosslessAudio(inputPath: string): Promise<boolean | null> {
 		const { codecName } = await this.probeAudioStream(inputPath);
 		if (!codecName) return null;
-		const codec = codecName.toLowerCase();
-		return (
-			codec === 'alac' ||
-			codec === 'flac' ||
-			codec === 'wavpack' ||
-			codec === 'ape' ||
-			codec.startsWith('pcm_')
-		);
-	}
-
-	/**
-	 * Target MP3 bitrate: lossless → 320; lossy → source rate (capped at 320).
-	 * Never upscales a 128k stream to fake 320.
-	 */
-	private async resolveMp3BitrateKbps(
-		inputPath: string,
-		filename: string,
-	): Promise<number> {
-		const probed = await this.probeAudioStream(inputPath);
-		const losslessCodec = probed.codecName?.toLowerCase() === 'alac';
-		if (isLosslessFormat(filename) || losslessCodec) {
-			return 320;
-		}
-
-		if (probed.bitrateKbps == null) {
-			return 192;
-		}
-		return Math.min(320, Math.max(32, probed.bitrateKbps));
-	}
-
-	/** Pick a free MP3 destination and reserve it on disk before FFmpeg runs. */
-	private async allocateMp3OutputPath(
-		inputPath: string,
-		filename: string,
-	): Promise<string> {
-		const downloadsDir = './downloads';
-		const desiredFilename = toMp3Filename(filename);
-		const currentFilename = basename(inputPath);
-
-		return withDownloadRenameLock(async () => {
-			const finalName = pickUniqueDownloadFilename({
-				desiredFilename,
-				currentFilename,
-				jobId: crypto.randomUUID(),
-				exists: (name) => existsSync(join(downloadsDir, name)),
-				isOwnedByOtherJob: () => false,
-			});
-			const outputPath = join(downloadsDir, finalName);
-			// Reserve the name so concurrent converts cannot pick the same path.
-			if (finalName !== currentFilename && !existsSync(outputPath)) {
-				await Bun.write(outputPath, new Uint8Array());
-			}
-			return outputPath;
-		});
-	}
-
-	private async convertToMp3(
-		inputPath: string,
-		tags: TagOptions,
-		filename: string,
-	): Promise<string> {
-		const outputPath = await this.allocateMp3OutputPath(inputPath, filename);
-		const bitrateKbps = await this.resolveMp3BitrateKbps(inputPath, filename);
-
-		const args = ffmpegTagArgs(
-			inputPath,
-			['-c:a', 'libmp3lame', '-b:a', `${bitrateKbps}k`, '-id3v2_version', '3'],
-			tags,
-		);
-		args.push('-y', outputPath);
-
-		console.log(`Converting to MP3 (${bitrateKbps}kbps)...`);
-		try {
-			await this.run(this.ffmpegBin, args);
-		} catch (error) {
-			// Drop the empty reservation if conversion failed.
-			if (existsSync(outputPath) && (await Bun.file(outputPath).size) === 0) {
-				await Bun.file(outputPath)
-					.unlink()
-					.catch(() => {});
-			}
-			throw error;
-		}
-		console.log(`✓ Converted to ${outputPath}`);
-		return outputPath;
-	}
-
-	private async convertToFlac(
-		inputPath: string,
-		tags: TagOptions,
-		filename: string,
-	): Promise<string> {
-		const replacingFlac = extname(filename).toLowerCase() === '.flac';
-		const outputPath = replacingFlac
-			? join('./downloads', `.converting-${crypto.randomUUID()}.flac`)
-			: await withDownloadRenameLock(async () => {
-					const desiredFilename = toFlacFilename(filename);
-					const finalName = pickUniqueDownloadFilename({
-						desiredFilename,
-						currentFilename: basename(inputPath),
-						jobId: crypto.randomUUID(),
-						exists: (name) => existsSync(join('./downloads', name)),
-						isOwnedByOtherJob: () => false,
-					});
-					const path = join('./downloads', finalName);
-					if (!existsSync(path)) await Bun.write(path, new Uint8Array());
-					return path;
-				});
-
-		const losslessSource = await this.isLosslessAudio(inputPath);
-		if (losslessSource === false) {
-			const { codecName } = await this.probeAudioStream(inputPath);
-			console.warn(
-				`Source codec ${codecName ?? 'unknown'} is lossy; FLAC conversion cannot restore lost audio quality.`,
-			);
-		}
-
-		const args = ffmpegTagArgs(
-			inputPath,
-			['-c:a', 'flac', '-compression_level', '8'],
-			tags,
-			['-disposition:v', 'attached_pic'],
-		);
-		args.push('-y', outputPath);
-
-		console.log('Converting to FLAC...');
-		try {
-			await this.run(this.ffmpegBin, args);
-			if (replacingFlac) {
-				await Bun.file(inputPath).unlink();
-				await rename(outputPath, inputPath);
-				console.log(`✓ Converted to ${inputPath}`);
-				return inputPath;
-			}
-		} catch (error) {
-			await Bun.file(outputPath)
-				.unlink()
-				.catch(() => {});
-			throw error;
-		}
-
-		console.log(`✓ Converted to ${outputPath}`);
-		return outputPath;
-	}
-
-	private async retagMp3(inputPath: string, tags: TagOptions): Promise<void> {
-		const filename = basename(inputPath);
-		const outputPath = join(
-			'./downloads',
-			filename.replace(/\.mp3$/i, '_retagged.mp3'),
-		);
-
-		// Existing tags stay; only the fields given here are replaced.
-		const args = ffmpegTagArgs(
-			inputPath,
-			['-c:a', 'copy', '-id3v2_version', '3'],
-			tags,
-		);
-		args.push('-y', outputPath);
-
-		console.log('Retagging MP3...');
-		await this.run(this.ffmpegBin, args);
-
-		// replace the original file with the retagged one
-		await Bun.write(inputPath, Bun.file(outputPath));
-		await Bun.file(outputPath).unlink();
-		console.log(`✓ Retagged ${inputPath}`);
+		return isLosslessCodec(codecName);
 	}
 }

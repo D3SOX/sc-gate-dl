@@ -2,7 +2,11 @@ import { describe, expect, test } from 'bun:test';
 import { mkdir, mkdtemp, readdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { AudioProcessor, artworkExtension } from './audioProcessor';
+import {
+	AudioProcessor,
+	artworkExtension,
+	outputBitrateFromEnv,
+} from './audioProcessor';
 
 describe('artworkExtension', () => {
 	test('keeps known image extensions and falls back to jpg', () => {
@@ -48,6 +52,8 @@ async function ffmpeg(...args: string[]): Promise<void> {
 async function probe(path: string): Promise<{
 	tags: Record<string, string>;
 	covers: number;
+	codec?: string;
+	kbps: number;
 }> {
 	const proc = Bun.spawn([
 		'ffprobe',
@@ -61,7 +67,7 @@ async function probe(path: string): Promise<{
 	]);
 	const data = JSON.parse(await new Response(proc.stdout).text()) as {
 		format: { tags?: Record<string, string> };
-		streams: { codec_type: string }[];
+		streams: { codec_type: string; codec_name: string; bit_rate?: string }[];
 	};
 	const tags = Object.fromEntries(
 		Object.entries(data.format.tags ?? {}).map(([k, v]) => [
@@ -69,9 +75,12 @@ async function probe(path: string): Promise<{
 			v,
 		]),
 	);
+	const audio = data.streams.find((s) => s.codec_type === 'audio');
 	return {
 		tags,
 		covers: data.streams.filter((s) => s.codec_type === 'video').length,
+		codec: audio?.codec_name,
+		kbps: Math.round(Number(audio?.bit_rate) / 1000),
 	};
 }
 
@@ -195,4 +204,144 @@ describe('AudioProcessor.processAudio with FFmpeg', () => {
 				expect(covers).toBe(0);
 			}));
 	}
+
+	test('M4A/AAC output encodes a lossless source at the configured bitrate', () =>
+		inTempDir(async () => {
+			const output = await new AudioProcessor(
+				'ffmpeg',
+				'ffprobe',
+				192,
+			).processAudio(
+				'song.wav',
+				{ title: 'Song' },
+				{
+					artwork: {
+						buffer: await Bun.file('cover.png').arrayBuffer(),
+						fileName: 'cover.png',
+					},
+					outputFormat: 'm4a-aac',
+					losslessHandling: 'always',
+					sourceUrl,
+				},
+			);
+			expect(output).toBe('downloads/song.m4a');
+			const { tags, covers, codec, kbps } = await probe(output);
+			expect(codec).toBe('aac');
+			expect(kbps).toBeLessThanOrEqual(200);
+			expect(kbps).toBeGreaterThan(150);
+			expect(tags.title).toBe('Song');
+			expect(tags.comment).toBe(sourceUrl);
+			expect(covers).toBe(1);
+			expect(await readdir('downloads')).toEqual(['song.m4a']);
+		}));
+
+	test('an AAC download is retagged, not re-encoded, for MP3 output', () =>
+		inTempDir(async () => {
+			await ffmpeg(
+				'-i',
+				'downloads/song.wav',
+				'-c:a',
+				'aac',
+				'downloads/song.m4a',
+			);
+			await rm('downloads/song.wav');
+			const before = await Bun.file('downloads/song.m4a').size;
+			const output = await processor().processAudio(
+				'song.m4a',
+				{ title: 'Song' },
+				{ artwork: null, losslessHandling: 'always', sourceUrl },
+			);
+			expect(output).toBe('downloads/song.m4a');
+			const { tags, codec } = await probe(output);
+			expect(codec).toBe('aac');
+			expect(tags.title).toBe('Song');
+			expect(Math.abs((await Bun.file(output).size) - before)).toBeLessThan(
+				2048,
+			);
+		}));
+
+	test('a raw .aac download moves into an .m4a when tagged', () =>
+		inTempDir(async () => {
+			await ffmpeg(
+				'-i',
+				'downloads/song.wav',
+				'-c:a',
+				'aac',
+				'downloads/song.aac',
+			);
+			await rm('downloads/song.wav');
+			const output = await processor().processAudio(
+				'song.aac',
+				{ title: 'Song' },
+				{ artwork: null, losslessHandling: 'never' },
+			);
+			expect(output).toBe('downloads/song.m4a');
+			expect((await probe(output)).tags.title).toBe('Song');
+			expect(await readdir('downloads')).toEqual(['song.m4a']);
+		}));
+
+	test('an Ogg download is converted to MP3', () =>
+		inTempDir(async () => {
+			await ffmpeg(
+				'-i',
+				'downloads/song.wav',
+				'-c:a',
+				'libvorbis',
+				'downloads/song.ogg',
+			);
+			await rm('downloads/song.wav');
+			const output = await processor().processAudio(
+				'song.ogg',
+				{ title: 'Song' },
+				{ artwork: null, losslessHandling: 'always' },
+			);
+			expect(output).toBe('downloads/song.mp3');
+			expect((await probe(output)).codec).toBe('mp3');
+		}));
+
+	test('an ALAC source with the same name is kept unless it is removed', () =>
+		inTempDir(async () => {
+			await ffmpeg(
+				'-i',
+				'downloads/song.wav',
+				'-c:a',
+				'alac',
+				'downloads/song.m4a',
+			);
+			await rm('downloads/song.wav');
+			const kept = await processor().processAudio(
+				'song.m4a',
+				{ title: 'Song' },
+				{ artwork: null, outputFormat: 'm4a-aac', losslessHandling: 'never' },
+			);
+			expect(kept).not.toBe('downloads/song.m4a');
+			expect((await probe('downloads/song.m4a')).codec).toBe('alac');
+			expect((await probe(kept)).codec).toBe('aac');
+			await rm(kept);
+
+			const replaced = await processor().processAudio(
+				'song.m4a',
+				{ title: 'Song' },
+				{ artwork: null, outputFormat: 'm4a-aac', losslessHandling: 'always' },
+			);
+			expect(replaced).toBe('downloads/song.m4a');
+			expect((await probe(replaced)).codec).toBe('aac');
+			expect(await readdir('downloads')).toEqual(['song.m4a']);
+		}));
+});
+
+describe('outputBitrateFromEnv', () => {
+	test('defaults to 320 when unset or blank', () => {
+		expect(outputBitrateFromEnv(undefined)).toBe(320);
+		expect(outputBitrateFromEnv('')).toBe(320);
+	});
+
+	test('accepts 64 to 320 kbps', () => {
+		expect(outputBitrateFromEnv('64')).toBe(64);
+		expect(outputBitrateFromEnv(' 256 ')).toBe(256);
+	});
+
+	test.each(['63', '321', '128k', 'abc'])('rejects %p', (value) => {
+		expect(() => outputBitrateFromEnv(value)).toThrow('SC_GATE_DL_BITRATE');
+	});
 });

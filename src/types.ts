@@ -33,10 +33,17 @@ export interface Metadata {
 	genre?: string;
 }
 
-export type OutputFormat = 'original' | 'mp3-320' | 'flac';
+/** `mp3-320` keeps its name for API clients; its bitrate is `SC_GATE_DL_BITRATE`. */
+export const OUTPUT_FORMATS = [
+	'original',
+	'mp3-320',
+	'm4a-aac',
+	'flac',
+] as const;
+export type OutputFormat = (typeof OUTPUT_FORMATS)[number];
 
 export function isOutputFormat(value: unknown): value is OutputFormat {
-	return value === 'original' || value === 'mp3-320' || value === 'flac';
+	return OUTPUT_FORMATS.includes(value as OutputFormat);
 }
 
 /**

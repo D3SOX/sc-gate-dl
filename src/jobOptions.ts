@@ -41,3 +41,16 @@ export function parseUnattendedJobOptions(
 	}
 	return { browserMode, reviewTags: body.reviewTags === true };
 }
+
+/** `SC_GATE_DL_REVIEW_TAGS`: unset or blank means true; anything but true/false throws. */
+export function reviewTagsFromEnv(
+	value = process.env.SC_GATE_DL_REVIEW_TAGS,
+): boolean {
+	const text = value?.trim().toLowerCase() || 'true';
+	if (text !== 'true' && text !== 'false') {
+		throw new Error(
+			`SC_GATE_DL_REVIEW_TAGS=${value?.trim()} is not supported. Use true or false.`,
+		);
+	}
+	return text === 'true';
+}

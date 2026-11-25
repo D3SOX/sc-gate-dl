@@ -1,6 +1,8 @@
+import { join } from 'node:path';
 import { confirm, input, select } from '@inquirer/prompts';
 import { resolveDownloadedAudio } from './archiveAudio';
 import { AudioProcessor } from './audioProcessor';
+import { cliOutputFromEnv } from './cliOutput';
 import { loadConfig, saveConfig } from './config';
 import { DirectDownloader } from './directDownload';
 import { DownloadgaterDownloader } from './downloadgater';
@@ -8,11 +10,13 @@ import { DroploudDownloader } from './droploud';
 import { GaterushDownloader } from './gaterush';
 import { HypedditDownloader } from './hypeddit';
 import { HypedditHttpDownloader } from './hypedditHttp';
+import { moveIntoLibrary } from './libraryDestination';
 import { MypresskitDownloader } from './mypresskit';
 import { PumpyoursoundDownloader } from './pumpyoursound';
 import { SoundcloudClient } from './soundcloud';
 import { StillhypeDownloader } from './stillhype';
 import {
+	getDefaultMetadata,
 	getFfmpegBin,
 	getFfprobeBin,
 	resolveGateUrlOrFollow,
@@ -38,6 +42,7 @@ try {
 	const HYPEDDIT_EMAIL = process.env.HYPEDDIT_EMAIL;
 
 	const config = await loadConfig();
+	const output = cliOutputFromEnv();
 
 	const soundcloudArg = process.argv[2];
 	const soundcloudArgValidation = soundcloudArg
@@ -333,34 +338,49 @@ try {
 
 	if (downloadFilename) {
 		downloadFilename = await resolveDownloadedAudio(downloadFilename);
-		const artworkUrl = soundcloudClient.getArtworkUrl(track);
-		// A missing cover must not lose a finished download.
-		const artwork = await soundcloudClient
-			.fetchArtwork(artworkUrl)
-			.catch((error) => {
-				console.warn(
-					`Failed to fetch artwork: ${error instanceof Error ? error.message : String(error)}`,
-				);
-				return null;
-			});
+		let outputPath = join('./downloads', downloadFilename);
+		if (output.format !== 'original') {
+			const artworkUrl = soundcloudClient.getArtworkUrl(track);
+			// A missing cover must not lose a finished download.
+			const artwork = await soundcloudClient
+				.fetchArtwork(artworkUrl)
+				.catch((error) => {
+					console.warn(
+						`Failed to fetch artwork: ${error instanceof Error ? error.message : String(error)}`,
+					);
+					return null;
+				});
 
-		const audioProcessor = new AudioProcessor(ffmpegBin, ffprobeBin);
-		const metadata = await audioProcessor.promptForMetadata(
-			track,
-			downloadFilename,
-		);
+			const audioProcessor = new AudioProcessor(
+				ffmpegBin,
+				ffprobeBin,
+				output.bitrateKbps,
+			);
+			const metadata = output.reviewTags
+				? await audioProcessor.promptForMetadata(track, downloadFilename)
+				: getDefaultMetadata(track);
 
-		const losslessHandling = config
-			? config.deleteLosslessAfterConversion
-				? 'always'
-				: 'never'
-			: 'prompt';
+			const losslessHandling = config
+				? config.deleteLosslessAfterConversion
+					? 'always'
+					: 'never'
+				: 'prompt';
 
-		await audioProcessor.processAudio(downloadFilename, metadata, {
-			artwork,
-			losslessHandling,
-			sourceUrl: soundcloudUrl,
-		});
+			outputPath = await audioProcessor.processAudio(
+				downloadFilename,
+				metadata,
+				{
+					artwork,
+					losslessHandling,
+					outputFormat: output.format,
+					sourceUrl: soundcloudUrl,
+				},
+			);
+		}
+		if (output.dir) {
+			const saved = await moveIntoLibrary(outputPath, output.dir);
+			console.log(`✓ Saved ${join(output.dir, saved)}`);
+		}
 	}
 } catch (error) {
 	if (error instanceof Error && error.name === 'ExitPromptError') {

@@ -501,7 +501,7 @@ describe('previewProcessedFilename', () => {
 		).toBe('Artist - Title.mp3');
 	});
 
-	test('converts lossless and lossy containers to mp3 when not renaming', () => {
+	test('converts lossless and non-AAC lossy files to mp3 when not renaming', () => {
 		expect(
 			previewProcessedFilename('song.flac', { nameAsArtistTitle: false }),
 		).toBe('song.mp3');
@@ -509,7 +509,40 @@ describe('previewProcessedFilename', () => {
 			previewProcessedFilename('song.aiff', { nameAsArtistTitle: false }),
 		).toBe('song.mp3');
 		expect(
-			previewProcessedFilename('song.m4a', { nameAsArtistTitle: false }),
+			previewProcessedFilename('song.ogg', { nameAsArtistTitle: false }),
+		).toBe('song.mp3');
+		expect(
+			previewProcessedFilename('song.m4a', {
+				nameAsArtistTitle: false,
+				sourceIsLossless: true,
+			}),
+		).toBe('song.mp3');
+	});
+
+	test('keeps AAC as m4a for mp3 output', () => {
+		expect(
+			previewProcessedFilename('song.m4a', {
+				nameAsArtistTitle: false,
+				sourceIsLossless: false,
+			}),
+		).toBe('song.m4a');
+		expect(
+			previewProcessedFilename('song.aac', { nameAsArtistTitle: false }),
+		).toBe('song.m4a');
+	});
+
+	test('previews m4a for M4A/AAC output and keeps lossy mp3', () => {
+		expect(
+			previewProcessedFilename('song.wav', {
+				nameAsArtistTitle: false,
+				outputFormat: 'm4a-aac',
+			}),
+		).toBe('song.m4a');
+		expect(
+			previewProcessedFilename('song.mp3', {
+				nameAsArtistTitle: false,
+				outputFormat: 'm4a-aac',
+			}),
 		).toBe('song.mp3');
 	});
 
