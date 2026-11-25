@@ -266,7 +266,7 @@ export type GateProvider =
 export type GateUrlMatch = {
 	url: string;
 	provider: GateProvider;
-	type: 'purchase_url' | 'description';
+	type: 'purchase_url' | 'description' | 'buy_module';
 };
 
 const HYPEDDIT_URL_RE = /https:\/\/hypeddit\.com\/[^\s]+/;
@@ -789,10 +789,12 @@ export function extractGateUrl(track: SoundcloudTrack): GateUrlMatch | null {
 
 /**
  * Like extractGateUrl, but also follows redirects / scans smart-link HTML when
- * purchase_url or description contain unrecognized http(s) links.
+ * purchase_url or description contain unrecognized http(s) links, and reads
+ * the "Free download" box when the track has no purchase_url.
  */
 export async function extractAndResolveGateUrl(
 	track: SoundcloudTrack,
+	fetchBuyModule: (url: string) => Promise<string> = fetchBuyModuleHtml,
 ): Promise<GateUrlMatch | null> {
 	const sync = extractGateUrl(track);
 	if (sync) return sync;
@@ -802,6 +804,61 @@ export async function extractAndResolveGateUrl(
 		if (resolved) {
 			return { ...resolved, type: candidate.type };
 		}
+	}
+
+	// Without a purchase_url, SoundCloud can still show a "Free download" box
+	// from its separate buy module, so that is the last place left to look.
+	if (!track.purchase_url && track.permalink_url) {
+		try {
+			const html = await fetchBuyModule(buyModuleUrl(track.permalink_url));
+			const fromModule = findGateInBuyModuleHtml(html);
+			if (fromModule) return { ...fromModule, type: 'buy_module' };
+		} catch (error) {
+			console.log(
+				`SoundCloud buy module could not be read (${error instanceof Error ? error.message : 'unknown error'}).`,
+			);
+		}
+	}
+	return null;
+}
+
+function buyModuleUrl(permalinkUrl: string): string {
+	const url = new URL('https://soundcloud.com/n/embeds/buy-module/module');
+	url.searchParams.set('permalink_url', permalinkUrl);
+	url.searchParams.set('crossfade', 'true');
+	url.searchParams.set('embedded', 'module');
+	url.searchParams.set('theme', 'dark');
+	return url.toString();
+}
+
+async function fetchBuyModuleHtml(url: string): Promise<string> {
+	const response = await fetch(url, {
+		headers: { 'user-agent': GATE_RESOLVE_USER_AGENT },
+		redirect: 'error',
+		signal: AbortSignal.timeout(15_000),
+	});
+	if (!response.ok) {
+		await response.body?.cancel().catch(() => {});
+		throw new Error(`HTTP ${response.status}`);
+	}
+	return response.text();
+}
+
+/**
+ * The buy module wraps its Download link as `gate.sc?url=<encoded target>`.
+ * Only a known download gate, Bandcamp or direct file link counts; the social
+ * links on the same page are ignored.
+ */
+export function findGateInBuyModuleHtml(
+	html: string,
+): { url: string; provider: GateProvider } | null {
+	for (const match of html.matchAll(
+		/https:\/\/gate\.sc\/?\?[^"'\s<]*?\burl=([^"'&\s<]+)/g,
+	)) {
+		const gate = matchKnownDownloadGateUrl(
+			safeDecodeURIComponent(match[1] ?? ''),
+		);
+		if (gate) return gate;
 	}
 	return null;
 }
