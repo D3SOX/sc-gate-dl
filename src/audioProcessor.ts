@@ -502,7 +502,7 @@ export class AudioProcessor {
 			try {
 				await rename(retagged, inputPath);
 			} catch (error) {
-				await rm(retagged, { force: true });
+				await rm(retagged, { force: true }).catch(() => {});
 				throw error;
 			}
 			console.log(`✓ Retagged ${inputPath}`);
