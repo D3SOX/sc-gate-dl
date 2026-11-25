@@ -124,6 +124,29 @@ export function downloadProgressReporter(
 }
 
 /**
+ * Run a download request whose timeout only covers the response headers. A
+ * large file may take longer than that to stream; `saveDownloadStream` stops a
+ * body that stalls instead.
+ */
+export async function withHeaderTimeout<T>(
+	cancel: AbortSignal,
+	timeoutMs: number,
+	request: (signal: AbortSignal) => Promise<T>,
+): Promise<T> {
+	const timer = new AbortController();
+	const id = setTimeout(
+		() =>
+			timer.abort(new Error(`No response within ${timeoutMs / 1000} seconds`)),
+		timeoutMs,
+	);
+	try {
+		return await request(AbortSignal.any([cancel, timer.signal]));
+	} finally {
+		clearTimeout(id);
+	}
+}
+
+/**
  * Stream a download body to `destPath` through a `.part` file that is renamed
  * into place only once the whole body arrived. On failure or cancel the partial
  * file and the reserved `destPath` are removed.
@@ -136,6 +159,8 @@ export async function saveDownloadStream(
 		totalBytes: number;
 		signal?: AbortSignal;
 		maxBytes?: number;
+		/** Fails when no bytes arrive for this long. */
+		idleTimeoutMs?: number;
 		/** Called at most every 250 ms while bytes arrive. */
 		onProgress?: (receivedBytes: number, totalBytes: number) => void;
 	},
@@ -144,6 +169,7 @@ export async function saveDownloadStream(
 		totalBytes,
 		signal,
 		maxBytes = MAX_DOWNLOAD_BYTES,
+		idleTimeoutMs = 60_000,
 		onProgress,
 	} = options;
 	const tempPath = `${destPath}.${crypto.randomUUID()}.part`;
@@ -156,7 +182,21 @@ export async function saveDownloadStream(
 	try {
 		while (true) {
 			if (signal?.aborted) throw new Error('Download cancelled');
-			const { done, value } = await reader.read();
+			let idle: ReturnType<typeof setTimeout> | undefined;
+			const { done, value } = await Promise.race([
+				reader.read(),
+				new Promise<never>((_, reject) => {
+					idle = setTimeout(
+						() =>
+							reject(
+								new Error(
+									`Download stalled: no data for ${idleTimeoutMs / 1000} seconds`,
+								),
+							),
+						idleTimeoutMs,
+					);
+				}),
+			]).finally(() => clearTimeout(idle));
 			if (done) break;
 			received += value.byteLength;
 			if (received > maxBytes) {

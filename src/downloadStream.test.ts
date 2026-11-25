@@ -7,6 +7,7 @@ import {
 	downloadProgressReporter,
 	saveDownloadStream,
 	withContentTypeExtension,
+	withHeaderTimeout,
 } from './downloadStream';
 
 const MB = 1024 * 1024;
@@ -173,5 +174,46 @@ describe('saveDownloadStream', () => {
 			}),
 		).rejects.toThrow('Download cancelled');
 		expect(await readdir(dir)).toEqual([]);
+	});
+
+	test('a body that stops sending fails after the idle timeout', async () => {
+		const dest = join(dir, 'song.wav');
+		const stalled = new ReadableStream<Uint8Array>({
+			start(controller) {
+				controller.enqueue(new Uint8Array(1));
+			},
+		});
+		await expect(
+			saveDownloadStream(stalled, dest, { totalBytes: 0, idleTimeoutMs: 50 }),
+		).rejects.toThrow('stalled');
+		expect(await readdir(dir)).toEqual([]);
+	});
+});
+
+describe('withHeaderTimeout', () => {
+	test('times out a request without a response', async () => {
+		await expect(
+			withHeaderTimeout(
+				new AbortController().signal,
+				20,
+				(signal) =>
+					new Promise((_, reject) =>
+						signal.addEventListener('abort', () => reject(signal.reason)),
+					),
+			),
+		).rejects.toThrow('No response');
+	});
+
+	test('no longer aborts once the response arrived', async () => {
+		let requestSignal: AbortSignal | undefined;
+		await withHeaderTimeout(
+			new AbortController().signal,
+			20,
+			async (signal) => {
+				requestSignal = signal;
+			},
+		);
+		await Bun.sleep(40);
+		expect(requestSignal?.aborted).toBeFalse();
 	});
 });

@@ -10,6 +10,7 @@ import {
 	downloadProgressReporter,
 	saveDownloadStream,
 	withContentTypeExtension,
+	withHeaderTimeout,
 } from './downloadStream';
 import type { ProgressCallback } from './hypeddit';
 import { safeFetch } from './safeOutboundUrl';
@@ -1298,13 +1299,15 @@ export class StillhypeDownloader {
 		const maxRedirects = 10;
 
 		for (let hop = 0; hop < maxRedirects; hop++) {
-			const result = await safeFetch(current, {
-				headers: { 'User-Agent': USER_AGENT },
-				signal: AbortSignal.any([
-					this.downloadAbortController.signal,
-					AbortSignal.timeout(60_000),
-				]),
-			});
+			const result = await withHeaderTimeout(
+				this.downloadAbortController.signal,
+				60_000,
+				(signal) =>
+					safeFetch(current, {
+						headers: { 'User-Agent': USER_AGENT },
+						signal,
+					}),
+			);
 			finalUrl = result.url;
 			response = result.response;
 			if (response.status >= 300 && response.status < 400) {

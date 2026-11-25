@@ -11,6 +11,7 @@ import {
 	MAX_DOWNLOAD_BYTES,
 	saveDownloadStream,
 	withContentTypeExtension,
+	withHeaderTimeout,
 } from './downloadStream';
 import type { ProgressCallback } from './hypeddit';
 import { safeFetch } from './safeOutboundUrl';
@@ -77,16 +78,18 @@ export class DirectDownloader {
 		let finalUrl = current;
 
 		for (let hop = 0; hop < MAX_REDIRECTS; hop++) {
-			const result = await safeFetch(current, {
-				signal: AbortSignal.any([
-					this.abortController.signal,
-					AbortSignal.timeout(FETCH_TIMEOUT_MS),
-				]),
-				headers: {
-					'user-agent': USER_AGENT,
-					accept: '*/*',
-				},
-			});
+			const result = await withHeaderTimeout(
+				this.abortController.signal,
+				FETCH_TIMEOUT_MS,
+				(signal) =>
+					safeFetch(current, {
+						signal,
+						headers: {
+							'user-agent': USER_AGENT,
+							accept: '*/*',
+						},
+					}),
+			);
 			finalUrl = result.url;
 			response = result.response;
 

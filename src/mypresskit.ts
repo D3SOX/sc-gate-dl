@@ -11,6 +11,7 @@ import {
 	downloadProgressReporter,
 	saveDownloadStream,
 	withContentTypeExtension,
+	withHeaderTimeout,
 } from './downloadStream';
 import type { ProgressCallback } from './hypeddit';
 import { safeFetch } from './safeOutboundUrl';
@@ -652,18 +653,20 @@ export class MypresskitDownloader {
 		await mkdir('./downloads', { recursive: true });
 		this.emitProgress('downloading', 'Downloading MyPressKit file...', 0);
 
-		const { response, url: finalUrl } = await safeFetch(downloadUrl, {
-			headers: {
-				Cookie: cookieHeader,
-				Referer: referer,
-				'User-Agent': USER_AGENT,
-				Accept: '*/*',
-			},
-			signal: AbortSignal.any([
-				this.downloadAbortController.signal,
-				AbortSignal.timeout(120_000),
-			]),
-		});
+		const { response, url: finalUrl } = await withHeaderTimeout(
+			this.downloadAbortController.signal,
+			120_000,
+			(signal) =>
+				safeFetch(downloadUrl, {
+					headers: {
+						Cookie: cookieHeader,
+						Referer: referer,
+						'User-Agent': USER_AGENT,
+						Accept: '*/*',
+					},
+					signal,
+				}),
+		);
 
 		if (!response.ok || !response.body) {
 			throw new Error(
