@@ -1,5 +1,5 @@
 import { constants } from 'node:fs';
-import { copyFile, link, mkdir, rm } from 'node:fs/promises';
+import { copyFile, link, mkdir, open, rename, rm } from 'node:fs/promises';
 import { basename, extname, join, resolve } from 'node:path';
 
 /** Absolute library folder from `SC_GATE_DL_LIBRARY_DIR`, or null when unset. */
@@ -14,42 +14,79 @@ function errorCode(error: unknown): unknown {
 	return error instanceof Error && 'code' in error ? error.code : undefined;
 }
 
+export type LibraryFs = {
+	link: typeof link;
+	copyFile: typeof copyFile;
+	rename: typeof rename;
+};
+
 /**
  * Move a finished file into the library folder without replacing an existing
  * file. A taken name gets a ` (2)`, ` (3)`, … suffix. Returns the final name.
+ * From another filesystem, the file is copied next to the target first, so the
+ * library never shows a partial file.
  */
 export async function moveIntoLibrary(
 	sourcePath: string,
 	libraryDir: string,
 	filename = basename(sourcePath),
+	fs: LibraryFs = { link, copyFile, rename },
 ): Promise<string> {
 	await mkdir(libraryDir, { recursive: true });
 	const extension = extname(filename);
 	const stem = basename(filename, extension);
-	for (let n = 1; ; n += 1) {
-		const candidate = n === 1 ? filename : `${stem} (${n})${extension}`;
-		const target = join(libraryDir, candidate);
+	let staging: string | null = null;
+
+	/** Claim [target] without replacing a file; false when the name is taken. */
+	async function placeAt(target: string): Promise<boolean> {
 		try {
 			// A hard link claims the name atomically and never exposes a partial file.
-			await link(sourcePath, target);
+			await fs.link(staging ?? sourcePath, target);
+			return true;
 		} catch (linkError) {
-			if (errorCode(linkError) === 'EEXIST') continue;
-			// Other filesystems or devices, or no hard-link support.
-			try {
-				await copyFile(sourcePath, target, constants.COPYFILE_EXCL);
-			} catch (copyError) {
-				if (errorCode(copyError) === 'EEXIST') continue;
-				await rm(target, { force: true });
-				throw copyError;
+			if (errorCode(linkError) === 'EEXIST') return false;
+			if (!staging) {
+				// Another filesystem or device.
+				staging = join(
+					libraryDir,
+					`.${crypto.randomUUID()}${extension}.partial`,
+				);
+				await fs.copyFile(sourcePath, staging, constants.COPYFILE_EXCL);
+				return placeAt(target);
 			}
+			// No hard links here: claim the name with an empty file, then replace it.
+			try {
+				await (await open(target, 'wx')).close();
+			} catch (claimError) {
+				if (errorCode(claimError) === 'EEXIST') return false;
+				throw claimError;
+			}
+			try {
+				await fs.rename(staging, target);
+			} catch (renameError) {
+				await rm(target, { force: true });
+				throw renameError;
+			}
+			staging = null;
+			return true;
 		}
-		try {
-			await rm(sourcePath, { force: true });
-		} catch (removeError) {
-			// Keep one copy so a retry cannot add a suffixed duplicate.
-			await rm(target, { force: true }).catch(() => {});
-			throw removeError;
+	}
+
+	try {
+		for (let n = 1; ; n += 1) {
+			const candidate = n === 1 ? filename : `${stem} (${n})${extension}`;
+			const target = join(libraryDir, candidate);
+			if (!(await placeAt(target))) continue;
+			try {
+				await rm(sourcePath, { force: true });
+			} catch (removeError) {
+				// Keep one copy so a retry cannot add a suffixed duplicate.
+				await rm(target, { force: true }).catch(() => {});
+				throw removeError;
+			}
+			return candidate;
 		}
-		return candidate;
+	} finally {
+		if (staging) await rm(staging, { force: true });
 	}
 }

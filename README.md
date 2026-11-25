@@ -168,7 +168,8 @@ Wait for Astro to be started. It will then tell you the address it's available o
 The Web UI also listens on the local network and automatically calls the API on
 port `3000` of the same host. For example, a Web UI opened at
 `http://192.168.1.50:4321` uses `http://192.168.1.50:3000`. Set
-`PUBLIC_API_BASE_URL` when the public API uses a different host or port. If a
+`PUBLIC_API_BASE_URL` when the public API uses a different host or port, for
+example after moving the API to another port with `SC_GATE_DL_PORT`. If a
 reverse proxy gives the Web UI a different origin, add it to the comma-separated
 `SC_GATE_DL_ALLOWED_ORIGINS` environment variable. The API rejects `POST`
 requests from browser pages on any other origin with `403`, so a website you

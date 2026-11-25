@@ -36,6 +36,53 @@ type FfprobeResult = {
 	}>;
 };
 
+type Artwork = { buffer: ArrayBuffer; fileName: string };
+
+export type ProcessAudioOptions = {
+	/** New cover. Without one, an embedded cover of the source is kept. */
+	artwork?: Artwork | null;
+	losslessHandling?: 'prompt' | 'always' | 'never';
+	outputFormat?: Exclude<OutputFormat, 'original'>;
+	/** Written to the comment tag so the file links back to the track. */
+	sourceUrl?: string;
+};
+
+type TagOptions = {
+	metadata: Metadata;
+	sourceUrl?: string;
+	artworkPath: string | null;
+};
+
+/** FFmpeg inputs, maps and tags shared by every conversion and retag. */
+function ffmpegTagArgs(
+	inputPath: string,
+	audioCodec: string[],
+	{ metadata, sourceUrl, artworkPath }: TagOptions,
+	coverDisposition: string[] = [],
+): string[] {
+	const args = ['-i', inputPath];
+	if (artworkPath) args.push('-i', artworkPath);
+	args.push('-map', '0:a', ...audioCodec);
+	if (artworkPath) {
+		args.push(
+			'-map',
+			'1:v',
+			'-c:v',
+			'copy',
+			...coverDisposition,
+			'-metadata:s:v',
+			'title=Album cover',
+			'-metadata:s:v',
+			'comment=Cover (front)',
+		);
+	}
+	for (const key of ['title', 'artist', 'album', 'genre'] as const) {
+		if (metadata[key]) args.push('-metadata', `${key}=${metadata[key]}`);
+	}
+	if (sourceUrl) args.push('-metadata', `comment=${sourceUrl}`);
+	return args;
+}
+
 export class AudioProcessor {
 	private ffmpegBin: string;
 	private ffprobeBin: string;
@@ -99,9 +146,11 @@ export class AudioProcessor {
 		};
 	}
 
-	/** Extract embedded cover art from an MP3 (APIC / attached picture). */
-	async extractMp3CoverArt(
+	/** Extract embedded cover art (MP3 APIC, FLAC picture, M4A covr). */
+	async extractCoverArt(
 		inputPath: string,
+		/** Keeps oversized covers out of the job store; retagging passes Infinity. */
+		maxCoverBytes = 10 * 1024 * 1024,
 	): Promise<{ buffer: ArrayBuffer; fileName: string } | null> {
 		const probeData = await this.runFfprobe(inputPath);
 		const coverStream = (probeData?.streams ?? []).find(
@@ -135,8 +184,6 @@ export class AudioProcessor {
 			if (!(await file.exists()) || file.size === 0) {
 				return null;
 			}
-			// Bound memory: keep oversized embedded covers out of the job store.
-			const maxCoverBytes = 10 * 1024 * 1024;
 			if (file.size > maxCoverBytes) {
 				console.warn(
 					`Skipping embedded cover art: ${file.size} bytes exceeds ${maxCoverBytes}`,
@@ -236,26 +283,31 @@ export class AudioProcessor {
 	async processAudio(
 		filename: string,
 		metadata: Metadata,
-		artwork: { buffer: ArrayBuffer; fileName: string },
-		losslessHandling: 'prompt' | 'always' | 'never' = 'prompt',
-		outputFormat: Exclude<OutputFormat, 'original'> = 'mp3-320',
+		options: ProcessAudioOptions = {},
 	): Promise<string> {
+		const {
+			losslessHandling = 'prompt',
+			outputFormat = 'mp3-320',
+			sourceUrl,
+		} = options;
 		const inputPath = join('./downloads', filename);
+		// Without new artwork, keep the cover the download already has.
+		const artwork = options.artwork?.buffer.byteLength
+			? options.artwork
+			: await this.extractCoverArt(inputPath, Number.POSITIVE_INFINITY);
 
 		// The artwork name may come from a client upload, so never use it as a path.
-		const artworkPath = join(
-			'./downloads',
-			`.artwork-${crypto.randomUUID()}.${artworkExtension(artwork.fileName)}`,
-		);
+		const artworkPath = artwork
+			? join(
+					'./downloads',
+					`.artwork-${crypto.randomUUID()}.${artworkExtension(artwork.fileName)}`,
+				)
+			: null;
+		const tags = { metadata, sourceUrl, artworkPath };
 		try {
-			await Bun.write(artworkPath, artwork.buffer);
+			if (artwork && artworkPath) await Bun.write(artworkPath, artwork.buffer);
 			if (outputFormat === 'flac') {
-				const outputPath = await this.convertToFlac(
-					inputPath,
-					artworkPath,
-					metadata,
-					filename,
-				);
+				const outputPath = await this.convertToFlac(inputPath, tags, filename);
 				await this.maybeRemoveSource(
 					inputPath,
 					outputPath,
@@ -267,12 +319,7 @@ export class AudioProcessor {
 
 			// Convert non-MP3 audio (lossless or lossy containers like m4a) to MP3.
 			if (needsMp3Conversion(filename)) {
-				const outputPath = await this.convertToMp3(
-					inputPath,
-					artworkPath,
-					metadata,
-					filename,
-				);
+				const outputPath = await this.convertToMp3(inputPath, tags, filename);
 
 				await this.maybeRemoveSource(
 					inputPath,
@@ -289,7 +336,7 @@ export class AudioProcessor {
 					metadata.title || metadata.artist || metadata.album || metadata.genre;
 
 				if (hasMetadata) {
-					await this.retagMp3(inputPath, artworkPath, metadata);
+					await this.retagMp3(inputPath, tags);
 				}
 			} else {
 				console.warn(
@@ -299,10 +346,10 @@ export class AudioProcessor {
 			return inputPath;
 		} finally {
 			// clean up temporary artwork file
-			try {
-				await Bun.file(artworkPath).unlink();
-			} catch {
-				// ignore cleanup errors
+			if (artworkPath) {
+				await Bun.file(artworkPath)
+					.unlink()
+					.catch(() => {});
 			}
 		}
 	}
@@ -439,49 +486,17 @@ export class AudioProcessor {
 
 	private async convertToMp3(
 		inputPath: string,
-		artworkPath: string,
-		metadata: Metadata,
+		tags: TagOptions,
 		filename: string,
 	): Promise<string> {
 		const outputPath = await this.allocateMp3OutputPath(inputPath, filename);
 		const bitrateKbps = await this.resolveMp3BitrateKbps(inputPath, filename);
 
-		const args: string[] = [
-			'-i',
+		const args = ffmpegTagArgs(
 			inputPath,
-			'-i',
-			artworkPath,
-			'-map',
-			'0:a',
-			'-c:a',
-			'libmp3lame',
-			'-b:a',
-			`${bitrateKbps}k`,
-			'-id3v2_version',
-			'3',
-			'-map',
-			'1:v',
-			'-c:v',
-			'copy',
-			'-metadata:s:v',
-			'title=Album cover',
-			'-metadata:s:v',
-			'comment=Cover (front)',
-		];
-
-		if (metadata.title) {
-			args.push('-metadata', `title=${metadata.title}`);
-		}
-		if (metadata.artist) {
-			args.push('-metadata', `artist=${metadata.artist}`);
-		}
-		if (metadata.album) {
-			args.push('-metadata', `album=${metadata.album}`);
-		}
-		if (metadata.genre) {
-			args.push('-metadata', `genre=${metadata.genre}`);
-		}
-
+			['-c:a', 'libmp3lame', '-b:a', `${bitrateKbps}k`, '-id3v2_version', '3'],
+			tags,
+		);
 		args.push('-y', outputPath);
 
 		console.log(`Converting to MP3 (${bitrateKbps}kbps)...`);
@@ -502,8 +517,7 @@ export class AudioProcessor {
 
 	private async convertToFlac(
 		inputPath: string,
-		artworkPath: string,
-		metadata: Metadata,
+		tags: TagOptions,
 		filename: string,
 	): Promise<string> {
 		const replacingFlac = extname(filename).toLowerCase() === '.flac';
@@ -531,33 +545,12 @@ export class AudioProcessor {
 			);
 		}
 
-		const args = [
-			'-i',
+		const args = ffmpegTagArgs(
 			inputPath,
-			'-i',
-			artworkPath,
-			'-map',
-			'0:a',
-			'-map',
-			'1:v',
-			'-c:a',
-			'flac',
-			'-compression_level',
-			'8',
-			'-c:v',
-			'copy',
-			'-disposition:v',
-			'attached_pic',
-			'-metadata:s:v',
-			'title=Album cover',
-			'-metadata:s:v',
-			'comment=Cover (front)',
-		];
-
-		if (metadata.title) args.push('-metadata', `title=${metadata.title}`);
-		if (metadata.artist) args.push('-metadata', `artist=${metadata.artist}`);
-		if (metadata.album) args.push('-metadata', `album=${metadata.album}`);
-		if (metadata.genre) args.push('-metadata', `genre=${metadata.genre}`);
+			['-c:a', 'flac', '-compression_level', '8'],
+			tags,
+			['-disposition:v', 'attached_pic'],
+		);
 		args.push('-y', outputPath);
 
 		console.log('Converting to FLAC...');
@@ -580,53 +573,19 @@ export class AudioProcessor {
 		return outputPath;
 	}
 
-	private async retagMp3(
-		inputPath: string,
-		artworkPath: string,
-		metadata: Metadata,
-	): Promise<void> {
+	private async retagMp3(inputPath: string, tags: TagOptions): Promise<void> {
 		const filename = basename(inputPath);
 		const outputPath = join(
 			'./downloads',
 			filename.replace(/\.mp3$/i, '_retagged.mp3'),
 		);
 
-		const args: string[] = [
-			'-i',
+		// Existing tags stay; only the fields given here are replaced.
+		const args = ffmpegTagArgs(
 			inputPath,
-			'-i',
-			artworkPath,
-			'-map',
-			'0:a',
-			'-c:a',
-			'copy',
-			'-id3v2_version',
-			'3',
-			'-map_metadata',
-			'-1', // clear existing metadata
-			'-map',
-			'1:v',
-			'-c:v',
-			'copy',
-			'-metadata:s:v',
-			'title=Album cover',
-			'-metadata:s:v',
-			'comment=Cover (front)',
-		];
-
-		if (metadata.title) {
-			args.push('-metadata', `title=${metadata.title}`);
-		}
-		if (metadata.artist) {
-			args.push('-metadata', `artist=${metadata.artist}`);
-		}
-		if (metadata.album) {
-			args.push('-metadata', `album=${metadata.album}`);
-		}
-		if (metadata.genre) {
-			args.push('-metadata', `genre=${metadata.genre}`);
-		}
-
+			['-c:a', 'copy', '-id3v2_version', '3'],
+			tags,
+		);
 		args.push('-y', outputPath);
 
 		console.log('Retagging MP3...');
