@@ -943,6 +943,8 @@ const TEST_FIXTURES_ALLOWED_ENV = 'SC_GATE_DL_ALLOW_TEST_FIXTURES';
 const TEST_FIXTURE_JOB_ENV = 'SC_GATE_DL_TEST_FIXTURE_JOB';
 const TEST_FIXTURE_JOB_FORMAT_ENV = 'SC_GATE_DL_TEST_FIXTURE_JOB_FORMAT';
 const TEST_FIXTURE_JOB_REVIEW_ENV = 'SC_GATE_DL_TEST_FIXTURE_JOB_FINISH';
+const TEST_FIXTURE_JOB_DESTINATION_ENV =
+	'SC_GATE_DL_TEST_FIXTURE_JOB_DESTINATION';
 
 /** Test hook: seed one job waiting for tags so HTTP tests need no live gate. */
 async function seedFixtureJob(): Promise<string | null> {
@@ -953,7 +955,9 @@ async function seedFixtureJob(): Promise<string | null> {
 	const job = jobStore.create(
 		'https://soundcloud.com/lister_aus/lister-nik-sitz-anavax-dj-got',
 		format,
-		'client',
+		process.env[TEST_FIXTURE_JOB_DESTINATION_ENV] === 'library'
+			? 'library'
+			: 'client',
 	);
 	jobStore.update(job.id, {
 		downloadFilename: fixture,
