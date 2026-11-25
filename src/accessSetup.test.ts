@@ -100,10 +100,10 @@ describe('ensureSoundcloudAccess', () => {
 });
 
 describe('checkSpotifyCookies', () => {
-	test('missing Spotify cookies are optional and block nothing', async () => {
+	test('missing Spotify cookies are reported as required', async () => {
 		const result = await checkSpotifyCookies(join(dir, 'spotify-cookies.json'));
 		expect(result.state).toBe('missing');
-		expect(result.required).toBe(false);
+		expect(result.required).toBe(true);
 	});
 
 	test('a readable cookie file is reported as present', async () => {
@@ -113,6 +113,27 @@ describe('checkSpotifyCookies', () => {
 			'[{"name":"sp_dc","value":"x","domain":".spotify.com"}]',
 		);
 		expect((await checkSpotifyCookies(path)).state).toBe('present');
+	});
+
+	test('an expired sp_dc cookie is reported as expired', async () => {
+		const path = join(dir, 'spotify-cookies.json');
+		await writeFile(
+			path,
+			'[{"name":"sp_dc","value":"x","domain":".spotify.com","expirationDate":1000}]',
+		);
+		expect((await checkSpotifyCookies(path)).state).toBe('expired');
+		const future = Date.now() / 1000 + 86_400;
+		await writeFile(
+			path,
+			`[{"name":"sp_dc","value":"x","domain":".spotify.com","expirationDate":${future}}]`,
+		);
+		expect((await checkSpotifyCookies(path)).state).toBe('present');
+	});
+
+	test('cookies without sp_dc are invalid', async () => {
+		const path = join(dir, 'spotify-cookies.json');
+		await writeFile(path, '[{"name":"other","value":"x"}]');
+		expect((await checkSpotifyCookies(path)).state).toBe('invalid');
 	});
 
 	test('a broken cookie file is reported as invalid without printing it', async () => {

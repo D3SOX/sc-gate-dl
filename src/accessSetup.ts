@@ -55,27 +55,41 @@ export async function ensureSoundcloudAccess(
 }
 
 export interface SpotifyCookieStatus {
-	state: 'present' | 'missing' | 'invalid';
-	/** Spotify is only needed by some gates, so it never blocks a download. */
-	required: false;
+	state: 'present' | 'missing' | 'invalid' | 'expired';
+	/** Spotify gates fail mid-download without a login, so it is always checked. */
+	required: true;
 }
 
+/**
+ * Offline check of the saved Spotify login: the file must parse and hold an
+ * `sp_dc` login cookie that has not passed its expiry. It does not call Spotify,
+ * so a cookie revoked server-side is only found when a gate fails.
+ */
 export async function checkSpotifyCookies(
 	path = 'spotify-cookies.json',
+	now: () => number = Date.now,
 ): Promise<SpotifyCookieStatus> {
 	let text: string;
 	try {
 		text = await readFile(path, 'utf8');
 	} catch {
-		return { state: 'missing', required: false };
+		return { state: 'missing', required: true };
 	}
 	try {
 		const parsed = JSON.parse(text) as unknown;
-		return {
-			state: Array.isArray(parsed) && parsed.length > 0 ? 'present' : 'invalid',
-			required: false,
-		};
+		if (!Array.isArray(parsed) || parsed.length === 0) {
+			return { state: 'invalid', required: true };
+		}
+		const login = (
+			parsed as { name?: unknown; expirationDate?: unknown }[]
+		).find((cookie) => cookie?.name === 'sp_dc');
+		if (!login) return { state: 'invalid', required: true };
+		const expires = login.expirationDate;
+		if (typeof expires === 'number' && expires * 1000 <= now()) {
+			return { state: 'expired', required: true };
+		}
+		return { state: 'present', required: true };
 	} catch {
-		return { state: 'invalid', required: false };
+		return { state: 'invalid', required: true };
 	}
 }

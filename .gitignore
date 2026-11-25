@@ -53,3 +53,6 @@ scripts
 
 # playwright MCP browser logs
 .playwright-mcp
+
+# local test credentials
+.env.test

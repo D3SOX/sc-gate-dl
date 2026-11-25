@@ -37,6 +37,13 @@ rewrites a stored browser preference.
 into the bundle when the Web UI is built. Restarting the server does not change an
 already-built bundle.
 
+## CLI arguments
+
+`bun start [--login] [url]`. `--login` runs the guided SoundCloud and Spotify login
+before anything else. Broken logins go straight to the browser; working ones are only redone after a yes to "Log in again anyway?". Without it the guided
+login is only offered when a login is missing, expired or invalid, and only in a
+terminal. `SC_GATE_DL_ENV_FILE` (tests only) points the `.env` writer elsewhere.
+
 ## CLI configuration (`config.json`)
 
 `headless`, `xvfb`, `initializeLogins`, `deleteLosslessAfterConversion`,
@@ -92,8 +99,8 @@ at once. Every renewed pair is therefore written to two places in the same call:
 
 Browser cookies stay in `soundcloud-cookies.json` and `spotify-cookies.json` (both
 ignored). They are not copied into `.env`: they are session data for the browser, not
-settings. Spotify is optional; a missing or broken `spotify-cookies.json` never blocks
-a download.
+settings. Spotify is mandatory like SoundCloud: a missing, broken or expired
+`spotify-cookies.json` stops the CLI before any download (`bun start --login` fixes it).
 
 When a renewal is not possible (refresh token revoked, expired or rotated elsewhere),
 the check reports `expired` or `invalid` and says to log in again and set

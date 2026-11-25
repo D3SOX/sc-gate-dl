@@ -1009,6 +1009,9 @@ export async function checkConfiguredSoundcloudAccess(
 			const saved = JSON.parse(
 				await readFile(SOUNDCLOUD_TOKEN_FILE, 'utf8'),
 			) as { refreshToken: string };
+			// Later checks and clients in this process must see the renewed pair.
+			process.env.SC_OAUTH_TOKEN = accessToken;
+			process.env.SC_REFRESH_TOKEN = saved.refreshToken;
 			return { accessToken, refreshToken: saved.refreshToken };
 		},
 	});

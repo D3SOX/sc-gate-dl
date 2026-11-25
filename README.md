@@ -51,7 +51,7 @@ bun install
 
 ### Environment Variables
 
-Create a `.env` file in the project root by copying the `.env.example` file and filling in the values.
+Create a `.env` file in the project root by copying the `.env.example` file and filling in the values. For SoundCloud you can skip the manual steps below: leave `SC_CLIENT_ID`, `SC_OAUTH_TOKEN` and `SC_REFRESH_TOKEN` empty and run `bun start --login` ([guided login](#guided-login-soundcloud-and-spotify)).
 
 For `HYPEDDIT_NAME` and `SC_COMMENT` currently everything works (I use just `asd`)
 
@@ -98,9 +98,9 @@ gate jobs and yt-dlp.
 2. Open the extension and click on the export button
 3. Save what was copied to the clipboard to a file called `soundcloud-cookies.json` in the project root
 
-#### Spotify Cookies (Optional)
+#### Spotify Cookies
 
-If you plan to download tracks that require Spotify gates, you'll also need Spotify cookies:
+Spotify gates need Spotify cookies. `bun start --login` creates `spotify-cookies.json` for you. To do it by hand:
 
 **Steps:**
 
@@ -141,6 +141,36 @@ You can also pass a SoundCloud track URL directly.
 ```bash
 bun start https://soundcloud.com/artist/track
 ```
+
+#### Guided login (SoundCloud and Spotify)
+
+SoundCloud and Spotify are both treated as required. At every start the CLI checks them before it opens a gate:
+
+| State | Meaning | What happens |
+| --- | --- | --- |
+| SoundCloud `valid` | Token works | Nothing |
+| SoundCloud expired, token renewable | Access token older than 24 h | Renewed silently; new pair saved to `.env` and `soundcloud-token.json` |
+| SoundCloud `missing`, `expired`, `invalid` | Not set, refresh token revoked or rotated elsewhere | Guided login is offered |
+| SoundCloud `unverifiable` | Network error or rate limit | Stored login is kept; no login is offered |
+| Spotify cookies `missing`, `invalid` or `expired` | No `spotify-cookies.json`, no `sp_dc` login cookie, or it is past its expiry | Guided login is offered |
+
+Workflow when a login is offered (needs a terminal; without one the CLI stops with "Run `bun start --login` in a terminal"):
+
+1. Start `bun start <url>`; answer **yes** to "Log in now to ...".
+2. A visible browser opens. Log in to SoundCloud, then to Spotify (MFA and CAPTCHA are yours to solve).
+3. The tool saves `SC_CLIENT_ID` and `SC_REFRESH_TOKEN` to `.env` and renews `SC_OAUTH_TOKEN` right after (an old access token stays in `.env` if the renewal fails). `.env` is written with mode 600; other lines and comments are kept. SoundCloud cookies to `soundcloud-cookies.json` and Spotify cookies to `spotify-cookies.json`. Tokens are never printed.
+4. The login is checked again. If one is still broken the CLI stops before any download; otherwise the download continues. If one provider fails, the other still runs and the message names the failure.
+
+An unknown `--option` stops the CLI. Spotify is stored in `spotify-cookies.json`, not `.env`.
+
+Run the guided login on demand. Broken logins go straight to the browser; for a login that works, `--login` asks "Log in again anyway?" (default no):
+
+```bash
+bun start --login
+bun start --login https://soundcloud.com/artist/track
+```
+
+`--login` can sit before or after the URL. Both logins are mandatory: if one is still missing or invalid after the guided login (declined, failed, or no terminal), the CLI stops before any download. The check runs first, before the URL prompt, and prints one status line. The Spotify check is offline (expiry of the `sp_dc` cookie), so a cookie revoked by Spotify is only noticed when a Spotify gate fails. Details and storage rationale: [docs/configuration.md](docs/configuration.md).
 
 The final MP3 file is saved in the `./downloads` directory with proper metadata and artwork embedded. Set `SC_GATE_DL_CLI_DIR` to save it somewhere else:
 

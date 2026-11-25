@@ -1,4 +1,5 @@
 import { confirm, input, select } from '@inquirer/prompts';
+import { checkSpotifyCookies } from './accessSetup';
 import { AudioProcessor } from './audioProcessor';
 import { cliOutputFromEnv, finishCliDownload } from './cliDestination';
 import { type AppConfig, loadConfig, saveConfig } from './config';
@@ -7,6 +8,12 @@ import { DownloadgaterDownloader } from './downloadgater';
 import { DroploudDownloader } from './droploud';
 import { FangateDownloader } from './fangate';
 import { GaterushDownloader } from './gaterush';
+import {
+	browserSoundcloudLogin,
+	browserSpotifyLogin,
+	type LoginProvider,
+	runGuidedLogins,
+} from './guidedLogin';
 import { HypedditDownloader } from './hypeddit';
 import { HypedditHttpDownloader } from './hypedditHttp';
 import { parseReviewTagsSetting } from './jobOptions';
@@ -35,6 +42,11 @@ export type CliDeps = {
 	saveConfig: (config: AppConfig) => Promise<void>;
 	createSoundcloudClient: () => SoundcloudClient;
 	checkSoundcloudAccess: (log: (line: string) => void) => Promise<unknown>;
+	checkSpotifyAccess?: () => Promise<{ state: string }>;
+	guidedLogin?: (
+		providers: LoginProvider[],
+		log: (line: string) => void,
+	) => Promise<void>;
 	createDirectDownloader: () => Pick<DirectDownloader, 'downloadAudio'>;
 	createFangateDownloader: (
 		config: HypedditConfig,
@@ -62,6 +74,17 @@ export const defaultCliDeps: CliDeps = {
 	saveConfig,
 	createSoundcloudClient: () => new SoundcloudClient(),
 	checkSoundcloudAccess: (log) => checkConfiguredSoundcloudAccess(log),
+	checkSpotifyAccess: () => checkSpotifyCookies(),
+	guidedLogin: (providers, log) =>
+		runGuidedLogins({
+			providers,
+			env: process.env,
+			envPath: process.env.SC_GATE_DL_ENV_FILE ?? '.env',
+			log,
+			soundcloudLogin: browserSoundcloudLogin,
+			spotifyLogin: browserSpotifyLogin,
+			checkSoundcloud: (l) => checkConfiguredSoundcloudAccess(l),
+		}),
 	createDirectDownloader: () => new DirectDownloader(),
 	createDroploudDownloader: (config) => new DroploudDownloader(config),
 	createFangateDownloader: (config) => new FangateDownloader(config),
@@ -91,7 +114,13 @@ export async function runCli(deps: CliDeps): Promise<void> {
 	const config = await deps.loadConfig();
 	const cliOutput = cliOutputFromEnv(env);
 
-	const soundcloudArg = argv[2];
+	const forceLogin = argv.slice(2).includes('--login');
+	const unknownFlag = argv
+		.slice(2)
+		.find((arg) => arg.startsWith('--') && arg !== '--login');
+	if (unknownFlag)
+		throw new Error(`Unknown option ${unknownFlag}. Use --login.`);
+	const soundcloudArg = argv.slice(2).find((arg) => !arg.startsWith('--'));
 	const soundcloudArgValidation = soundcloudArg
 		? validateSoundcloudUrl(soundcloudArg)
 		: true;
@@ -99,6 +128,83 @@ export async function runCli(deps: CliDeps): Promise<void> {
 	if (soundcloudArg && soundcloudArgValidation !== true) {
 		console.log(soundcloudArgValidation);
 	}
+	const log = (line: string) => console.log(line);
+	const logFailure = (what: string) => (error: unknown) => {
+		log(
+			`${what} check failed: ${error instanceof Error ? error.message : 'unknown error'}`,
+		);
+		return null;
+	};
+	const scAccess = (await deps
+		.checkSoundcloudAccess(log)
+		.catch(logFailure('SoundCloud'))) as {
+		state?: string;
+	} | null;
+	const spotifyAccess = await deps
+		.checkSpotifyAccess?.()
+		.catch(logFailure('Spotify'));
+	log(
+		`SoundCloud login: ${scAccess?.state ?? 'unknown'} | Spotify login: ${spotifyAccess?.state ?? 'unknown'}`,
+	);
+	const scNeedsLogin = (state?: string) =>
+		state === 'missing' || state === 'expired' || state === 'invalid';
+	const broken: LoginProvider[] = [];
+	if (scNeedsLogin(scAccess?.state)) broken.push('soundcloud');
+	if (spotifyAccess && spotifyAccess.state !== 'present') {
+		broken.push('spotify');
+	}
+	// --login on a working login asks first; the default is to keep it.
+	const redo: LoginProvider[] = [];
+	if (forceLogin && deps.guidedLogin && process.stdin.isTTY) {
+		for (const provider of ['soundcloud', 'spotify'] as const) {
+			if (
+				!broken.includes(provider) &&
+				(await confirm({
+					message: `${provider === 'soundcloud' ? 'SoundCloud' : 'Spotify'} login is working. Log in again anyway?`,
+					default: false,
+				}))
+			) {
+				redo.push(provider);
+			}
+		}
+	}
+	const needsLogin = [...broken, ...redo];
+	if (deps.guidedLogin && needsLogin.length > 0) {
+		if (!process.stdin.isTTY) {
+			throw new Error(
+				`Login needed for ${broken.join(' and ')}. Run \`bun start --login\` in a terminal.`,
+			);
+		}
+		if (
+			forceLogin ||
+			(await confirm({
+				message: `Log in now to ${needsLogin.join(' and ')}?${needsLogin.includes('soundcloud') ? ' SoundCloud tokens are saved to .env automatically.' : ''}`,
+				default: true,
+			}))
+		) {
+			await deps.guidedLogin(needsLogin, log);
+		}
+		// Both logins are mandatory: a gate would otherwise fail halfway through.
+		const stillBroken: string[] = [];
+		if (broken.includes('soundcloud')) {
+			const after = (await deps
+				.checkSoundcloudAccess(() => {})
+				.catch(logFailure('SoundCloud'))) as { state?: string } | null;
+			if (scNeedsLogin(after?.state)) stillBroken.push('SoundCloud');
+		}
+		if (broken.includes('spotify')) {
+			const after = await deps
+				.checkSpotifyAccess?.()
+				.catch(logFailure('Spotify'));
+			if (after?.state !== 'present') stillBroken.push('Spotify');
+		}
+		if (stillBroken.length > 0) {
+			throw new Error(
+				`${stillBroken.join(' and ')} login is still missing or invalid. Run \`bun start --login\` and finish the login.`,
+			);
+		}
+	}
+
 	const soundcloudUrl =
 		soundcloudArg && soundcloudArgValidation === true
 			? soundcloudArg
@@ -106,8 +212,6 @@ export async function runCli(deps: CliDeps): Promise<void> {
 					message: 'Enter the URL of the SoundCloud track',
 					validate: validateSoundcloudUrl,
 				});
-
-	await deps.checkSoundcloudAccess((line) => console.log(line)).catch(() => {});
 
 	const soundcloudClient = deps.createSoundcloudClient();
 	const track = await soundcloudClient.getTrack(soundcloudUrl);

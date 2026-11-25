@@ -235,7 +235,7 @@ describe('account access on the server', () => {
 				};
 			};
 			expect(typeof body.account?.soundcloud).toBe('string');
-			expect(body.account?.spotify?.required).toBe(false);
+			expect(body.account?.spotify?.required).toBe(true);
 			const text = JSON.stringify(body);
 			expect(text).not.toContain(process.env.SC_OAUTH_TOKEN ?? 'no-token-set');
 			expect(text).not.toContain(
