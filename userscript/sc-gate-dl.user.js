@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         sc-gate-dl
 // @namespace    https://github.com/D3SOX/sc-gate-dl
-// @version      1.11.20
+// @version      1.13.0
 // @description  Add sc-gate-dl download controls and remember your position in the SoundCloud feed
 // @author       D3SOX
 // @match        https://soundcloud.com/*
@@ -225,18 +225,20 @@
 		}
 	}
 
+	const OUTPUT_FORMATS = ['original', 'mp3-320', 'm4a-aac', 'flac'];
+
 	function getOutputFormat() {
 		try {
 			if (typeof GM_getValue === 'function') {
 				const gm = GM_getValue(OUTPUT_FORMAT_KEY, null);
-				if (gm === 'original' || gm === 'mp3-320' || gm === 'flac') return gm;
+				if (OUTPUT_FORMATS.includes(gm)) return gm;
 			}
 		} catch {
 			// ignore
 		}
 		try {
 			const v = localStorage.getItem(OUTPUT_FORMAT_KEY);
-			if (v === 'original' || v === 'mp3-320' || v === 'flac') return v;
+			if (OUTPUT_FORMATS.includes(v)) return v;
 		} catch {
 			// ignore
 		}
@@ -249,7 +251,7 @@
 	}
 
 	function setOutputFormat(value) {
-		if (value !== 'original' && value !== 'mp3-320' && value !== 'flac') return;
+		if (!OUTPUT_FORMATS.includes(value)) return;
 		try {
 			if (typeof GM_setValue === 'function')
 				GM_setValue(OUTPUT_FORMAT_KEY, value);
@@ -1665,7 +1667,11 @@
 				<div class="sc-gate-dl-format-title">Output format</div>
 				<label class="sc-gate-dl-format-option">
 					<input type="radio" name="sc-gate-dl-fmt" value="mp3-320"${current === 'mp3-320' ? ' checked' : ''}/>
-					<span>MP3 320kbps</span>
+					<span>MP3</span>
+				</label>
+				<label class="sc-gate-dl-format-option">
+					<input type="radio" name="sc-gate-dl-fmt" value="m4a-aac"${current === 'm4a-aac' ? ' checked' : ''}/>
+					<span>M4A (AAC)</span>
 				</label>
 				<label class="sc-gate-dl-format-option">
 					<input type="radio" name="sc-gate-dl-fmt" value="flac"${current === 'flac' ? ' checked' : ''}/>
@@ -2959,7 +2965,8 @@ a[${STORE_SERVICE_ATTR}] > button::after {
 						</label>
 						<label>
 							<select class="sc-gate-dl-format" aria-label="Output format" title="Output format">
-								<option value="mp3-320"${format === 'mp3-320' ? ' selected' : ''}>MP3 320</option>
+								<option value="mp3-320"${format === 'mp3-320' ? ' selected' : ''}>MP3</option>
+								<option value="m4a-aac"${format === 'm4a-aac' ? ' selected' : ''}>M4A (AAC)</option>
 								<option value="flac"${format === 'flac' ? ' selected' : ''}>FLAC</option>
 								<option value="original"${format === 'original' ? ' selected' : ''}>Original</option>
 							</select>

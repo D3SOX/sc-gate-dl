@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Toaster, toast } from 'sonner';
+import { previewProcessedFilename } from '../../../src/outputFormat';
 import type {
 	BrowserMode,
 	OutputFormat,
@@ -11,6 +12,7 @@ import { resolveApiBase } from './apiBase';
 import {
 	parseAvailableBrowserModes,
 	parseBrowserViewUrl,
+	parseReviewTags,
 	readRequestedBrowserMode,
 	readRequestedOutputFormat,
 	readStoredBrowserMode,
@@ -138,8 +140,13 @@ const OUTPUT_FORMAT_OPTIONS: {
 }[] = [
 	{
 		value: 'mp3-320',
-		label: 'MP3 320',
-		hint: 'Converts to MP3 at 320 kbps, then lets you check the tags.',
+		label: 'MP3',
+		hint: 'Converts to MP3 (320 kbps unless the server sets SC_GATE_DL_BITRATE). MP3 and AAC downloads are only retagged.',
+	},
+	{
+		value: 'm4a-aac',
+		label: 'M4A (AAC)',
+		hint: 'Converts to AAC in an M4A file, like Apple Music. MP3 and AAC downloads are only retagged.',
 	},
 	{
 		value: 'flac',
@@ -326,64 +333,6 @@ function metadataNeedsCleanup(meta: Metadata): boolean {
 	);
 }
 
-function sanitizeFilenamePart(value: string): string {
-	return value
-		.replace(/[<>:"/\\|?*]/g, '')
-		.replace(/\s+/g, ' ')
-		.trim();
-}
-
-function artistTitleFilename(
-	artist?: string,
-	title?: string,
-	extension = '.mp3',
-): string {
-	const safeArtist = sanitizeFilenamePart(artist || '') || 'Unknown Artist';
-	const safeTitle = sanitizeFilenamePart(title || '') || 'Unknown Title';
-	return `${safeArtist} - ${safeTitle}${extension}`;
-}
-
-function needsMp3Conversion(filename: string): boolean {
-	const lower = filename.toLowerCase();
-	return (
-		lower.endsWith('.wav') ||
-		lower.endsWith('.aiff') ||
-		lower.endsWith('.aif') ||
-		lower.endsWith('.flac') ||
-		lower.endsWith('.m4a') ||
-		lower.endsWith('.aac') ||
-		lower.endsWith('.ogg') ||
-		lower.endsWith('.opus') ||
-		lower.endsWith('.webm')
-	);
-}
-
-function previewProcessedFilename(
-	downloadFilename: string | null,
-	options: {
-		nameAsArtistTitle: boolean;
-		artist?: string;
-		title?: string;
-		outputFormat: OutputFormat;
-	},
-): string {
-	if (!downloadFilename) return '';
-	const extension = options.outputFormat === 'flac' ? '.flac' : '.mp3';
-	if (options.nameAsArtistTitle) {
-		return artistTitleFilename(options.artist, options.title, extension);
-	}
-	if (options.outputFormat === 'flac') {
-		return downloadFilename.replace(/\.[^.]+$/i, '.flac');
-	}
-	if (needsMp3Conversion(downloadFilename)) {
-		return downloadFilename.replace(
-			/\.(wav|aiff|aif|flac|m4a|aac|ogg|opus|webm)$/i,
-			'.mp3',
-		);
-	}
-	return downloadFilename;
-}
-
 export default function App() {
 	const [step, setStep] = useState<Step>('url');
 	const [soundcloudUrl, setSoundcloudUrl] = useState('');
@@ -436,6 +385,7 @@ export default function App() {
 				if (response.ok) {
 					const capabilities = await response.json();
 					modes = parseAvailableBrowserModes(capabilities);
+					reviewTagsRef.current = parseReviewTags(capabilities);
 					viewUrl = parseBrowserViewUrl(capabilities, window.location.hostname);
 				}
 			} catch {
@@ -537,6 +487,7 @@ export default function App() {
 	);
 	const artworkInputRef = useRef<HTMLInputElement>(null);
 	const cleanupToastShownRef = useRef(false);
+	const reviewTagsRef = useRef(true);
 	const browserViewAutoClosedRef = useRef(false);
 	const browserViewAutoOpenedRef = useRef(false);
 	const autoStartedFromQueryRef = useRef(false);
@@ -755,6 +706,13 @@ export default function App() {
 								setStep(
 									data.outputFormat === 'original' ? 'complete' : 'metadata',
 								);
+								// SC_GATE_DL_REVIEW_TAGS=false saves the SoundCloud tags at once.
+								if (
+									data.outputFormat !== 'original' &&
+									!reviewTagsRef.current
+								) {
+									void processMetadataRef.current();
+								}
 							})
 							.catch((err) => {
 								setJob((prev) => ({
@@ -1224,6 +1182,9 @@ export default function App() {
 		}
 	};
 
+	const processMetadataRef = useRef(processMetadata);
+	processMetadataRef.current = processMetadata;
+
 	const handleMetadataSubmit = (e: React.FormEvent) => {
 		e.preventDefault();
 		void processMetadata();
@@ -1237,12 +1198,15 @@ export default function App() {
 	};
 	const canCleanupMetadata = metadataNeedsCleanup(metadata);
 	const inputIsTrackUrl = isTrackUrlInput(soundcloudUrl);
-	const outputFilenamePreview = previewProcessedFilename(job.downloadFilename, {
-		nameAsArtistTitle,
-		artist: metadata.artist,
-		title: metadata.title,
-		outputFormat: job.outputFormat,
-	});
+	const outputFilenamePreview = job.downloadFilename
+		? previewProcessedFilename(job.downloadFilename, {
+				nameAsArtistTitle,
+				artist: metadata.artist,
+				title: metadata.title,
+				outputFormat: job.outputFormat,
+				sourceIsLossless: job.sourceIsLossless,
+			})
+		: '';
 	const isHandlingGate =
 		step === 'gate' && GATE_PROGRESS_STAGES.has(job.progress?.stage ?? '');
 	const isCancelling = job.progress?.stage === 'cancelling';
@@ -2199,9 +2163,7 @@ export default function App() {
 								>
 									{job.outputFormat === 'original'
 										? 'Download original'
-										: job.outputFormat === 'flac'
-											? 'Download FLAC'
-											: 'Download MP3'}
+										: `Download ${job.outputFilename?.match(/\.([^.]+)$/)?.[1]?.toUpperCase() ?? 'file'}`}
 								</a>
 								<button
 									type="button"
