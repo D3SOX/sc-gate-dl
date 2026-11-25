@@ -59,6 +59,7 @@ import {
 	getFfprobeBin,
 	isMp3Format,
 	resolveGateUrlOrFollow,
+	unsupportedGateError,
 	validateGateUrl,
 	validateSoundcloudUrl,
 } from './utils';
@@ -667,6 +668,8 @@ async function runDownloadProcess(jobId: string): Promise<void> {
 			downloadFilename =
 				await directDownloader.downloadAudio(downloadSourceUrl);
 			throwIfCancelled();
+		} else if (provider === 'fangate') {
+			throw unsupportedGateError(provider, downloadSourceUrl);
 		} else {
 			// Hypeddit: always try plain HTTP first (email + social skip gates).
 			jobStore.updateProgress(

@@ -286,4 +286,29 @@ describe('runCli entry wiring', () => {
 			},
 		);
 	});
+
+	test('a fangate.eu gate never falls back to the Hypeddit downloader', async () => {
+		const hypedditCalls: string[] = [];
+		await expect(
+			runCli({
+				...deps({
+					SC_GATE_DL_CLI_FORMAT: 'm4a-aac',
+					SC_GATE_DL_CLI_DIR: destination,
+				}),
+				createSoundcloudClient: () => {
+					const client = fakeSoundcloudClient('droploud') as unknown as {
+						getGateURL: () => Promise<unknown>;
+					};
+					client.getGateURL = async () => ({
+						url: 'https://app.fangate.eu/tracks/user-1-song',
+						provider: 'fangate',
+						type: 'purchase_url',
+					});
+					hypedditCalls.push('client');
+					return client as unknown as SoundcloudClient;
+				},
+			}),
+		).rejects.toThrow('fangate.eu');
+		expect(gateCalls).toEqual([]);
+	}, 60_000);
 });

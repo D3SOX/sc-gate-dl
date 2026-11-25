@@ -14,6 +14,7 @@ import {
 	resolveGateProviderUrl,
 	sanitizeFilenamePart,
 	toM4aFilename,
+	unsupportedGateError,
 	writeBrowserCookies,
 	writeSoundcloudNetscapeCookies,
 } from './utils';
@@ -268,6 +269,39 @@ describe('extractGateUrl', () => {
 			provider: 'pumpyoursound',
 			type: 'description',
 		});
+	});
+
+	test('reports a fangate.eu purchase_url as its own provider', () => {
+		expect(
+			extractGateUrl({
+				purchase_url:
+					'https://app.fangate.eu/tracks/user-2628-we-found-love-trance-edit',
+				description: '',
+			} as Parameters<typeof extractGateUrl>[0]),
+		).toEqual({
+			url: 'https://app.fangate.eu/tracks/user-2628-we-found-love-trance-edit',
+			provider: 'fangate',
+			type: 'purchase_url',
+		});
+	});
+
+	test('a fangate.eu link in the description wins over a Bandcamp link', () => {
+		expect(
+			extractGateUrl({
+				purchase_url: '',
+				description:
+					'Free: https://www.fangate.eu/tracks/user-2628-we-found-love-trance-edit and https://artist.bandcamp.com/track/x',
+			} as Parameters<typeof extractGateUrl>[0])?.provider,
+		).toBe('fangate');
+	});
+
+	test('does not mistake a PumpYourSound fangate for fangate.eu', () => {
+		expect(
+			extractGateUrl({
+				purchase_url: 'https://pumpyoursound.com/f/pys/aguanile-remix/224680',
+				description: '',
+			} as Parameters<typeof extractGateUrl>[0])?.provider,
+		).toBe('pumpyoursound');
 	});
 
 	test('prefers MyPressKit purchase_url over Bandcamp description', () => {
@@ -640,5 +674,18 @@ describe('isLosslessFormat', () => {
 		for (const name of ['a.alac', 'a.m4a', 'a.aac', 'a.ogg', 'a.mp3']) {
 			expect(isLosslessFormat(name)).toBe(false);
 		}
+	});
+});
+
+describe('unsupportedGateError', () => {
+	test('names fangate.eu and the gate URL', () => {
+		const error = unsupportedGateError(
+			'fangate',
+			'https://app.fangate.eu/tracks/user-1-song',
+		);
+		expect(error.message).toContain('fangate.eu');
+		expect(error.message).toContain(
+			'https://app.fangate.eu/tracks/user-1-song',
+		);
 	});
 });

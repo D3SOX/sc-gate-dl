@@ -20,6 +20,7 @@ import {
 	getFfprobeBin,
 	isLosslessFormat,
 	resolveGateUrlOrFollow,
+	unsupportedGateError,
 	validateSoundcloudUrl,
 } from './utils';
 import { YtDlpDownloader, type YtDlpDownloadOptions } from './ytdlp';
@@ -313,6 +314,8 @@ export async function runCli(deps: CliDeps): Promise<void> {
 		} finally {
 			await pumpyoursoundDownloader.close();
 		}
+	} else if (gate.provider === 'fangate') {
+		throw unsupportedGateError(gate.provider, gateUrl);
 	} else if (gate.provider === 'mypresskit') {
 		usedBrowser = true;
 		const mypresskitDownloader = new MypresskitDownloader(gateConfig);

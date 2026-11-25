@@ -253,6 +253,7 @@ export function validateSoundcloudUrl(value: string): true | string {
 export type GateProvider =
 	| 'hypeddit'
 	| 'droploud'
+	| 'fangate'
 	| 'gaterush'
 	| 'downloadgater'
 	| 'stillhype'
@@ -272,6 +273,8 @@ export type GateUrlMatch = {
 
 const HYPEDDIT_URL_RE = /https:\/\/hypeddit\.com\/[^\s]+/;
 const DROPLOUD_URL_RE = /https:\/\/droploud\.com\/(?:gate|track)\/[0-9a-f-]+/i;
+const FANGATE_URL_RE =
+	/https:\/\/(?:app|www)\.fangate\.eu\/tracks\/[A-Za-z0-9_-]+/i;
 const GATERUSH_URL_RE = /https?:\/\/(?:www\.)?gaterush\.me\/[A-Za-z0-9_-]+/i;
 const DOWNLOADGATER_URL_RE =
 	/https?:\/\/(?:www\.)?downloadgater\.com\/g\/[A-Za-z0-9_-]+/i;
@@ -413,6 +416,10 @@ function matchTraditionalGateUrl(
 	const droploudMatch = value.match(DROPLOUD_URL_RE)?.[0];
 	if (droploudMatch) {
 		return { url: trimExtractedUrl(droploudMatch), provider: 'droploud' };
+	}
+	const fangateMatch = value.match(FANGATE_URL_RE)?.[0];
+	if (fangateMatch) {
+		return { url: trimExtractedUrl(fangateMatch), provider: 'fangate' };
 	}
 	const gaterushMatch = value.match(GATERUSH_URL_RE)?.[0];
 	if (gaterushMatch) {
@@ -613,6 +620,7 @@ export function findKnownGateInHtml(
 			[
 				'hypeddit',
 				'droploud',
+				'fangate',
 				'gaterush',
 				'downloadgater',
 				'stillhype',
@@ -870,3 +878,14 @@ export {
 	previewProcessedFilename,
 	sanitizeFilenamePart,
 } from './filenamePreview';
+
+/** Error for a gate provider that is recognized but has no downloader yet. */
+export function unsupportedGateError(
+	provider: GateProvider,
+	url: string,
+): Error {
+	const label = provider === 'fangate' ? 'fangate.eu' : provider;
+	return new Error(
+		`${label} gates are recognized but not supported yet (${url}). Open the gate in a browser and download the file by hand.`,
+	);
+}

@@ -19,6 +19,7 @@ const MAX_ARTWORK_BYTES = 20 * 1024 * 1024;
 
 const GATE_PROVIDER_LABELS: Record<GateProvider, string> = {
 	droploud: 'Droploud',
+	fangate: 'fangate.eu',
 	gaterush: 'GateRush',
 	downloadgater: 'DownloadGater',
 	stillhype: 'StillHype',
