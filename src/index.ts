@@ -17,9 +17,11 @@ import { moveIntoLibrary } from './libraryDestination';
 import { MypresskitDownloader } from './mypresskit';
 import { PumpyoursoundDownloader } from './pumpyoursound';
 import { SoundcloudClient } from './soundcloud';
+import { checkCreatorDownload } from './soundcloudDownload';
 import { soundcloudSessionFromFirefox } from './soundcloudLogin';
 import { StillhypeDownloader } from './stillhype';
 import {
+	type GateUrlMatch,
 	getDefaultMetadata,
 	getFfmpegBin,
 	getFfprobeBin,
@@ -83,7 +85,16 @@ try {
 	const soundcloudClient = new SoundcloudClient();
 	const track = await soundcloudClient.getTrack(soundcloudUrl);
 
-	let gate = await soundcloudClient.getGateURL(track);
+	const creatorDownload = await checkCreatorDownload(track, soundcloudUrl);
+	if (creatorDownload.warning) console.warn(creatorDownload.warning);
+	if (creatorDownload.available) {
+		console.log(
+			'✓ Creator-enabled SoundCloud download found, skipping the gate',
+		);
+	}
+	let gate: GateUrlMatch | null = creatorDownload.available
+		? { url: soundcloudUrl, provider: 'soundcloud', type: 'purchase_url' }
+		: await soundcloudClient.getGateURL(track);
 	let gateUrl = gate?.url ?? null;
 
 	if (!gateUrl) {
@@ -168,7 +179,7 @@ try {
 			: !headless &&
 				(await confirm({
 					message:
-						"Do you want to initialize logins? This is required for the first run. You can skip it for subsequent runs. If you don't use the tool for a while it might be required again.",
+						'Sign in again in the gate browser first? Only needed when a gate fails because its saved login stopped working.',
 					default: false,
 				}));
 	// Signing in needs a visible browser; headless and Xvfb runs would wait for

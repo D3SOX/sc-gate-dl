@@ -38,7 +38,7 @@ import {
 	isForbiddenCrossOriginRequest,
 } from './serverCors';
 import { SoundcloudClient } from './soundcloud';
-import { isSoundcloudDownloadEnabled } from './soundcloudDownload';
+import { checkCreatorDownload } from './soundcloudDownload';
 import {
 	FIREFOX_MISSING_WARNING,
 	soundcloudSessionFromFirefox,
@@ -66,11 +66,7 @@ import {
 	validateGateUrl,
 	validateSoundcloudUrl,
 } from './utils';
-import {
-	canAccessSoundcloudOriginalDownload,
-	YtDlpDownloader,
-	type YtDlpDownloadOptions,
-} from './ytdlp';
+import { YtDlpDownloader, type YtDlpDownloadOptions } from './ytdlp';
 
 const ffmpegBin = await getFfmpegBin();
 const ffprobeBin = await getFfprobeBin();
@@ -1179,16 +1175,10 @@ const server = Bun.serve({
 						);
 					}
 
-					// A creator-enabled SoundCloud download is the preferred source: it
-					// bypasses gates and lets yt-dlp select the original `download` format.
-					const creatorDownloadAvailable = isSoundcloudDownloadEnabled(track);
-					const soundcloudDownloadEnabled =
-						creatorDownloadAvailable &&
-						(await canAccessSoundcloudOriginalDownload(soundcloudUrl));
-					const soundcloudDownloadWarning =
-						creatorDownloadAvailable && !soundcloudDownloadEnabled
-							? 'This track has a creator-enabled SoundCloud download, but yt-dlp could not access it. Add or refresh soundcloud-cookies.json to use the original download; continuing with the gate instead.'
-							: null;
+					const {
+						available: soundcloudDownloadEnabled,
+						warning: soundcloudDownloadWarning,
+					} = await checkCreatorDownload(track, soundcloudUrl);
 					const hypedditUrl = soundcloudDownloadEnabled
 						? { url: soundcloudUrl, provider: 'soundcloud' as const }
 						: skipAutomaticHypedditFetch
