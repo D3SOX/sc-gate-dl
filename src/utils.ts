@@ -878,14 +878,3 @@ export {
 	previewProcessedFilename,
 	sanitizeFilenamePart,
 } from './filenamePreview';
-
-/** Error for a gate provider that is recognized but has no downloader yet. */
-export function unsupportedGateError(
-	provider: GateProvider,
-	url: string,
-): Error {
-	const label = provider === 'fangate' ? 'fangate.eu' : provider;
-	return new Error(
-		`${label} gates are recognized but not supported yet (${url}). Open the gate in a browser and download the file by hand.`,
-	);
-}

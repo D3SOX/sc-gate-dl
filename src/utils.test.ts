@@ -14,7 +14,6 @@ import {
 	resolveGateProviderUrl,
 	sanitizeFilenamePart,
 	toM4aFilename,
-	unsupportedGateError,
 	writeBrowserCookies,
 	writeSoundcloudNetscapeCookies,
 } from './utils';
@@ -674,18 +673,5 @@ describe('isLosslessFormat', () => {
 		for (const name of ['a.alac', 'a.m4a', 'a.aac', 'a.ogg', 'a.mp3']) {
 			expect(isLosslessFormat(name)).toBe(false);
 		}
-	});
-});
-
-describe('unsupportedGateError', () => {
-	test('names fangate.eu and the gate URL', () => {
-		const error = unsupportedGateError(
-			'fangate',
-			'https://app.fangate.eu/tracks/user-1-song',
-		);
-		expect(error.message).toContain('fangate.eu');
-		expect(error.message).toContain(
-			'https://app.fangate.eu/tracks/user-1-song',
-		);
 	});
 });

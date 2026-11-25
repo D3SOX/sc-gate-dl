@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import {
 	type FangateSession,
+	gateSlugFromUrl,
 	planFangateSteps,
 	runFangateSession,
 	sessionUidFromUrl,
@@ -148,5 +149,29 @@ describe('runFangateSession', () => {
 			runFangateSession(fake.api, fake.oauth, 'slug'),
 		).rejects.toThrow('soundcloud_oauth');
 		expect(fake.calls).not.toContain('link');
+	});
+});
+
+describe('gateSlugFromUrl', () => {
+	test('reads the slug from app and www track URLs', () => {
+		expect(
+			gateSlugFromUrl('https://app.fangate.eu/tracks/user-2628-we-found-love'),
+		).toBe('user-2628-we-found-love');
+		expect(gateSlugFromUrl('https://www.fangate.eu/tracks/abc_1-2')).toBe(
+			'abc_1-2',
+		);
+	});
+
+	test('returns null for a URL that is not a track page', () => {
+		expect(gateSlugFromUrl('https://www.fangate.eu/')).toBeNull();
+	});
+});
+
+describe('the server and the CLI both reach the fangate.eu downloader', () => {
+	test('the server maps the provider to FangateDownloader', async () => {
+		const source = await Bun.file(
+			new URL('./server.ts', import.meta.url),
+		).text();
+		expect(source).toContain("fangate: ['fangate.eu', FangateDownloader]");
 	});
 });
