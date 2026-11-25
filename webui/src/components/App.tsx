@@ -1394,7 +1394,16 @@ export default function App() {
 			<div className="app-notes">
 				{!embedded && (
 					<header className="masthead">
-						<p className="masthead-name">sc-gate-dl</p>
+						<p className="masthead-name">
+							<img
+								className="masthead-logo"
+								src="/favicon.svg"
+								alt=""
+								width={24}
+								height={24}
+							/>
+							sc-gate-dl
+						</p>
 						<p className="masthead-tagline">
 							Unlocks gated SoundCloud downloads and tags them.
 						</p>

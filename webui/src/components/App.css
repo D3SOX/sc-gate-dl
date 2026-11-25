@@ -50,6 +50,13 @@
 	letter-spacing: -0.01em;
 }
 
+.masthead-logo {
+	width: 1.5em;
+	height: 1.5em;
+	margin-right: 0.4em;
+	vertical-align: -0.38em;
+}
+
 .masthead-tagline {
 	font-size: 0.9375rem;
 	color: var(--type-soft);

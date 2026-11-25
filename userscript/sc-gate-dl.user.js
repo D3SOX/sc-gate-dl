@@ -1,12 +1,12 @@
 // ==UserScript==
 // @name         sc-gate-dl
 // @namespace    https://github.com/D3SOX/sc-gate-dl
-// @version      1.13.0
+// @version      1.14.0
 // @description  Add sc-gate-dl download controls and remember your position in the SoundCloud feed
 // @author       D3SOX
 // @match        https://soundcloud.com/*
 // @match        https://www.soundcloud.com/*
-// @icon         https://soundcloud.com/favicon.ico
+// @icon         https://raw.githubusercontent.com/D3SOX/sc-gate-dl/master/webui/public/icon-192.png
 // @grant        GM_registerMenuCommand
 // @grant        GM_unregisterMenuCommand
 // @grant        GM_getValue
@@ -124,6 +124,14 @@
 <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" aria-hidden="true" width="24" height="24">
   <path fill="currentColor" d="M12 3.25a.75.75 0 0 1 .75.75v9.19l3.22-3.22a.75.75 0 1 1 1.06 1.06l-4.5 4.5a.75.75 0 0 1-1.06 0l-4.5-4.5a.75.75 0 0 1 1.06-1.06l3.22 3.22V4A.75.75 0 0 1 12 3.25Z"/>
   <path fill="currentColor" d="M4.5 15.25a.75.75 0 0 1 .75.75v2.25h13.5V16a.75.75 0 0 1 1.5 0v2.5A1.75 1.75 0 0 1 18.5 20.25h-13A1.75 1.75 0 0 1 3.75 18.5V16a.75.75 0 0 1 .75-.75Z"/>
+</svg>`;
+
+	const LOGO_ICON = `
+<svg viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg" aria-hidden="true" width="16" height="16">
+  <rect width="64" height="64" rx="14" fill="#0a0a0f"/>
+  <path d="M22 30V19a10 10 0 0 1 20 0v-1" fill="none" stroke="#f0f0f5" stroke-width="5" stroke-linecap="round"/>
+  <rect x="12" y="28" width="40" height="29" rx="6" fill="#ff6b35"/>
+  <path d="M32 34v14m-5.5-5.5 5.5 5.5 5.5-5.5" fill="none" stroke="#0a0a0f" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
 </svg>`;
 
 	const STORE_SERVICE_ATTR = 'data-sc-gate-dl-store-service';
@@ -1867,6 +1875,10 @@
 	max-width: 118px;
 }
 #${PANEL_ID} .sc-gate-dl-browser-mode { max-width: 92px; }
+#${PANEL_ID} .sc-gate-dl-title svg {
+	margin-right: 6px;
+	vertical-align: -4px;
+}
 #${PANEL_ID} .sc-gate-dl-server {
 	display: inline-grid;
 	place-items: center;
@@ -2951,7 +2963,7 @@ a[${STORE_SERVICE_ATTR}] > button::after {
 			const browserMode = getBrowserMode();
 			panel.innerHTML = `
 				<div class="sc-gate-dl-toolbar">
-					<span>sc-gate-dl · <a class="sc-gate-dl-open-tab" href="#" target="_blank" rel="noopener">open in tab</a></span>
+					<span class="sc-gate-dl-title">${LOGO_ICON}sc-gate-dl · <a class="sc-gate-dl-open-tab" href="#" target="_blank" rel="noopener">open in tab</a></span>
 					<span class="sc-gate-dl-actions">
 						<button type="button" class="sc-gate-dl-server" aria-label="Configure server" title="Configure server">
 							<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19.14 12.94a7.8 7.8 0 0 0 .05-.94 7.8 7.8 0 0 0-.05-.94l2.03-1.58a.5.5 0 0 0 .12-.64l-1.92-3.32a.5.5 0 0 0-.61-.22l-2.39.96a7.3 7.3 0 0 0-1.62-.94L14.39 2.8a.5.5 0 0 0-.5-.42h-3.84a.5.5 0 0 0-.5.42l-.36 2.52a7.3 7.3 0 0 0-1.62.94L5.18 5.3a.5.5 0 0 0-.61.22L2.65 8.84a.5.5 0 0 0 .12.64l2.03 1.58a7.8 7.8 0 0 0-.05.94c0 .32.02.63.05.94l-2.03 1.58a.5.5 0 0 0-.12.64l1.92 3.32a.5.5 0 0 0 .61.22l2.39-.96c.5.39 1.04.7 1.62.94l.36 2.52a.5.5 0 0 0 .5.42h3.84a.5.5 0 0 0 .5-.42l.36-2.52a7.3 7.3 0 0 0 1.62-.94l2.39.96a.5.5 0 0 0 .61-.22l1.92-3.32a.5.5 0 0 0-.12-.64l-2.03-1.58ZM12 15.5A3.5 3.5 0 1 1 12 8a3.5 3.5 0 0 1 0 7.5Z"/></svg>
