@@ -144,6 +144,27 @@ describe('AudioProcessor.processAudio with FFmpeg', () => {
 			expect(await readdir('downloads')).toEqual(['song.mp3']);
 		}));
 
+	test('a retag keeps an embedded cover larger than 10 MiB', () =>
+		inTempDir(async () => {
+			await ffmpeg(
+				'-f',
+				'lavfi',
+				'-i',
+				'nullsrc=s=2200x2200,geq=random(1)*255:random(2)*255:random(3)*255',
+				'-frames:v',
+				'1',
+				'cover.png',
+			);
+			expect(Bun.file('cover.png').size).toBeGreaterThan(10 * 1024 * 1024);
+			await taggedMp3WithCover();
+			await processor().processAudio(
+				'song.mp3',
+				{ title: 'New title' },
+				{ artwork: null },
+			);
+			expect((await probe('downloads/song.mp3')).covers).toBe(1);
+		}));
+
 	test('a retag with new artwork replaces the old cover', () =>
 		inTempDir(async () => {
 			await taggedMp3WithCover();

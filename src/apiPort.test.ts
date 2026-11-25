@@ -3,7 +3,13 @@ import { apiPortFromEnv } from './apiPort';
 
 describe('apiPortFromEnv', () => {
 	test('defaults to 3000 when unset or blank', () => {
-		expect(apiPortFromEnv(undefined)).toBe(3000);
+		const saved = process.env.SC_GATE_DL_PORT;
+		delete process.env.SC_GATE_DL_PORT;
+		try {
+			expect(apiPortFromEnv()).toBe(3000);
+		} finally {
+			if (saved !== undefined) process.env.SC_GATE_DL_PORT = saved;
+		}
 		expect(apiPortFromEnv(' ')).toBe(3000);
 	});
 

@@ -149,6 +149,8 @@ export class AudioProcessor {
 	/** Extract embedded cover art (MP3 APIC, FLAC picture, M4A covr). */
 	async extractCoverArt(
 		inputPath: string,
+		/** Keeps oversized covers out of the job store; retagging passes Infinity. */
+		maxCoverBytes = 10 * 1024 * 1024,
 	): Promise<{ buffer: ArrayBuffer; fileName: string } | null> {
 		const probeData = await this.runFfprobe(inputPath);
 		const coverStream = (probeData?.streams ?? []).find(
@@ -182,8 +184,6 @@ export class AudioProcessor {
 			if (!(await file.exists()) || file.size === 0) {
 				return null;
 			}
-			// Bound memory: keep oversized embedded covers out of the job store.
-			const maxCoverBytes = 10 * 1024 * 1024;
 			if (file.size > maxCoverBytes) {
 				console.warn(
 					`Skipping embedded cover art: ${file.size} bytes exceeds ${maxCoverBytes}`,
@@ -294,7 +294,7 @@ export class AudioProcessor {
 		// Without new artwork, keep the cover the download already has.
 		const artwork = options.artwork?.buffer.byteLength
 			? options.artwork
-			: await this.extractCoverArt(inputPath);
+			: await this.extractCoverArt(inputPath, Number.POSITIVE_INFINITY);
 
 		// The artwork name may come from a client upload, so never use it as a path.
 		const artworkPath = artwork

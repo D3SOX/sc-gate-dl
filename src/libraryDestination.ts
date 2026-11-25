@@ -49,7 +49,7 @@ export async function moveIntoLibrary(
 				// Another filesystem or device.
 				staging = join(
 					libraryDir,
-					`.${filename}.${crypto.randomUUID()}.partial`,
+					`.${crypto.randomUUID()}${extension}.partial`,
 				);
 				await fs.copyFile(sourcePath, staging, constants.COPYFILE_EXCL);
 				return placeAt(target);
