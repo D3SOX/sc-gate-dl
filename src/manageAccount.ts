@@ -1,6 +1,6 @@
 import { mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
-import { SoundcloudClient } from './src/soundcloud.ts';
+import { SoundcloudClient } from './soundcloud.ts';
 
 const clientId = process.env.MANAGED_SC_CLIENT_ID;
 const oauthToken = process.env.MANAGED_SC_OAUTH_TOKEN;

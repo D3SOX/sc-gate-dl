@@ -14,7 +14,7 @@
 	"license": "AGPL-3.0-or-later",
 	"scripts": {
 		"start": "bun run .",
-		"manage-acc": "bun run ./manage-acc.ts",
+		"manage-acc": "bun run ./src/manageAccount.ts",
 		"start:server": "bun run ./src/server.ts",
 		"dev:server": "bun --watch ./src/server.ts",
 		"dev:webui": "cd webui && bun run dev",
