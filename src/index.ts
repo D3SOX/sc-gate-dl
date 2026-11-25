@@ -155,11 +155,19 @@ try {
 		? false
 		: config
 			? config.initializeLogins
-			: await confirm({
+			: !headless &&
+				(await confirm({
 					message:
 						"Do you want to initialize logins? This is required for the first run. You can skip it for subsequent runs. If you don't use the tool for a while it might be required again.",
 					default: false,
-				});
+				}));
+	// Signing in needs a visible browser; headless and Xvfb runs would wait for
+	// a login nobody can see.
+	if (initializeLogins && headless) {
+		throw new Error(
+			'Initializing logins needs a visible browser. Set "headless" to false in config.json for this run.',
+		);
+	}
 
 	const gateConfig = {
 		name: HYPEDDIT_NAME,

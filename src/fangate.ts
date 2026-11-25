@@ -86,11 +86,16 @@ export async function runFangateSession(
 ): Promise<string> {
 	let session = await api.createSession(slug);
 	const handled = new Set<string>();
-	for (let round = 0; round < MAX_STEPS; round++) {
+	for (let round = 0; ; round++) {
 		const step = session.completed
 			? undefined
 			: session.steps.find((s) => !s.completed && !handled.has(s.key));
 		if (!step) return api.downloadLink(session.uid);
+		if (round === MAX_STEPS) {
+			throw new Error(
+				`fangate.eu session still had open steps after ${MAX_STEPS} steps.`,
+			);
+		}
 
 		const action = fangateStepAction(step);
 		handled.add(step.key);
@@ -111,9 +116,6 @@ export async function runFangateSession(
 			);
 		}
 	}
-	throw new Error(
-		`fangate.eu session still had open steps after ${MAX_STEPS} steps.`,
-	);
 }
 
 /** The fangate.eu session JSON API; `signal` aborts every request. */

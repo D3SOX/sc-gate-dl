@@ -166,6 +166,40 @@ describe('runFangateSession', () => {
 		expect(fake.calls.filter((call) => call.startsWith('log:')).length).toBe(1);
 		expect(fake.calls.at(-1)).toBe('link');
 	});
+
+	test('finishes a gate with twenty steps and rejects a twenty-first', async () => {
+		const visits = (count: number): FangateStep[] =>
+			Array.from({ length: count }, (_, i) => ({
+				key: `visit:${i}`,
+				type: 'visit',
+				platform: 'instagram',
+				skippable: true,
+				completed: false,
+			}));
+		const withSteps = (steps: FangateStep[]) => {
+			const fake = fakeApi();
+			const current = { ...session, steps };
+			fake.api.createSession = async () => structuredClone(current);
+			fake.api.getSession = async () => structuredClone(current);
+			fake.api.logAction = async (_uid, key) => {
+				fake.calls.push(`log:${key}`);
+				current.steps = current.steps.map((step) =>
+					step.key === key ? { ...step, completed: true } : step,
+				);
+			};
+			return fake;
+		};
+
+		const twenty = withSteps(visits(20));
+		await runFangateSession(twenty.api, 'slug', { oauth: twenty.oauth });
+		expect(twenty.calls.at(-1)).toBe('link');
+
+		const more = withSteps(visits(21));
+		await expect(
+			runFangateSession(more.api, 'slug', { oauth: more.oauth }),
+		).rejects.toThrow('open steps');
+		expect(more.calls).not.toContain('link');
+	});
 });
 
 describe('createFangateApi', () => {
