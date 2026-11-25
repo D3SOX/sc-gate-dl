@@ -62,7 +62,11 @@ function loadAtspi() {
 		g_object_unref: { args: [FFIType.ptr], returns: FFIType.void },
 	});
 	exportToNativeEnv('DBUS_SESSION_BUS_ADDRESS');
-	symbols.atspi_init();
+	// 0 is success and 1 an earlier init; anything else means no bus.
+	const status = symbols.atspi_init();
+	if (status !== 0 && status !== 1) {
+		throw new Error(`AT-SPI failed to start (${status}).`);
+	}
 	return symbols;
 }
 

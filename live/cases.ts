@@ -139,7 +139,7 @@ export const LIVE_CASES: Record<string, LiveCase[]> = {
 				'email, Instagram, YouTube and Spotify social_open, SoundCloud follow/like/repost/comment connect, droploud_follow',
 			soundcloud:
 				'https://soundcloud.com/latinhousegangmusic/karol-g-judeline-rusowsky-1',
-			todo: 'SoundCloud blocks the repost Droploud enforces here, even after a manual slider solve in the browser',
+			todo: 'SoundCloud blocks the repost Droploud enforces here in CloakBrowser; only the plain Firefox repost on Linux with X11 gets it through',
 		},
 		{
 			name: 'SoundCloud without comment on a legacy /gate/ URL',

@@ -46,10 +46,14 @@ const PROFILE_PREFS = [
 /** A fresh, empty Firefox profile; the caller deletes it. */
 export async function createFirefoxProfile(
 	profileRoot: string = firefoxProfileRoot(),
+	extraPrefs: string[] = [],
 ): Promise<string> {
 	await mkdir(profileRoot, { recursive: true });
 	const profile = await mkdtemp(join(profileRoot, 'sc-gate-dl-firefox-'));
-	await writeFile(join(profile, 'user.js'), `${PROFILE_PREFS}\n`);
+	await writeFile(
+		join(profile, 'user.js'),
+		`${[PROFILE_PREFS, ...extraPrefs].join('\n')}\n`,
+	);
 	return profile;
 }
 

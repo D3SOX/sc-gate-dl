@@ -56,7 +56,7 @@ You sign in to SoundCloud once, in a Firefox window with a fresh temporary profi
 
 If SoundCloud shows "You have been blocked", reload the page. If that keeps happening, SoundCloud is blocking your network, so try again later or from another connection. The Firefox window uses your system proxy settings, and the CloakBrowser window uses `CLOAKBROWSER_PROXY`.
 
-Droploud makes you repost the track on SoundCloud, which SoundCloud's bot protection rejects from an automated browser. On Linux with an X11 display, such as the server's Xvfb, sc-gate-dl reposts in a plain Firefox with the gate browser's SoundCloud session instead. It reads the page through the accessibility bus (AT-SPI) and clicks Repost, and slides SoundCloud's verification slider if one appears, with X11 input, then closes Firefox. On other systems and on Wayland, the repost stays in CloakBrowser.
+Droploud makes you repost the track on SoundCloud, which SoundCloud's bot protection rejects from an automated browser. On Linux with an X11 display, such as the server's Xvfb, sc-gate-dl reposts in a plain Firefox with the gate browser's SoundCloud session instead. It reads the page through the accessibility bus (AT-SPI) and clicks Repost, and slides SoundCloud's verification slider if one appears, with X11 input, then closes Firefox. Firefox uses the gate browser's `CLOAKBROWSER_PROXY` or `PROXY_URL`, which has to be a SOCKS or HTTP proxy without a login for this. On other systems, in Wayland sessions and with a proxy Firefox can't use, the repost stays in CloakBrowser.
 
 sc-gate-dl saves the logins here:
 

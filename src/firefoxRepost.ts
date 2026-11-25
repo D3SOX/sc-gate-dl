@@ -40,7 +40,13 @@ export function findRepostButton(
 			node.role === 'button' && visible(node) && node.doc !== captchaDoc,
 	);
 	if (
-		buttons.some((node) => /^(unpost|unrepost)\b|edit repost/i.test(node.name))
+		buttons.some((node) =>
+			/^(unpost|unrepost)\b|edit repost/i.test(node.name),
+		) ||
+		// The caption dialog after a repost hides the rest of the page.
+		nodes.some(
+			(node) => node.role === 'dialog' && /^you reposted\b/i.test(node.name),
+		)
 	)
 		return { state: 'reposted' };
 	const repost = buttons.find((node) => /^repost$/i.test(node.name.trim()));
@@ -95,10 +101,60 @@ export function findCaptcha(nodes: AccessibleNode[]): Captcha | null {
 /** SoundCloud turned the browser or network away instead of asking for a slide. */
 export class SoundcloudBlockedError extends Error {}
 
-/** The Firefox to repost with, or null when this machine cannot. */
+const pref = (name: string, value: string | number | boolean) =>
+	`user_pref(${JSON.stringify(name)}, ${JSON.stringify(value)});`;
+
+/**
+ * Firefox settings for the gate browser's proxy (`CLOAKBROWSER_PROXY` or
+ * `PROXY_URL`): none without one, null when Firefox cannot use it. Its
+ * settings have no place for a proxy login.
+ */
+export function firefoxProxyPrefs(
+	proxy: string | undefined = process.env.CLOAKBROWSER_PROXY?.trim() ||
+		process.env.PROXY_URL?.trim() ||
+		undefined,
+): string[] | null {
+	if (!proxy) return [];
+	let url: URL;
+	try {
+		url = new URL(proxy);
+	} catch {
+		return null;
+	}
+	if (url.username || url.password || !url.hostname || !url.port) return null;
+	const host = url.hostname.replace(/^\[(.*)\]$/, '$1');
+	const port = Number(url.port);
+	const socks = /^socks(4|5)h?:$/.exec(url.protocol);
+	if (socks) {
+		return [
+			pref('network.proxy.type', 1),
+			pref('network.proxy.socks', host),
+			pref('network.proxy.socks_port', port),
+			pref('network.proxy.socks_version', Number(socks[1])),
+			pref('network.proxy.socks_remote_dns', true),
+		];
+	}
+	if (url.protocol === 'http:') {
+		return [
+			pref('network.proxy.type', 1),
+			pref('network.proxy.http', host),
+			pref('network.proxy.http_port', port),
+			pref('network.proxy.ssl', host),
+			pref('network.proxy.ssl_port', port),
+		];
+	}
+	return null;
+}
+
+/**
+ * The Firefox to repost with, or null when this machine cannot: it needs
+ * AT-SPI, an X11 session (XTest does not reach Wayland windows) and a proxy
+ * setting Firefox can take over.
+ */
 export function firefoxRepostAvailable(): string | null {
 	const firefox = findFirefox();
-	if (!firefox || !atspiAvailable()) return null;
+	if (!firefox || !atspiAvailable() || process.env.WAYLAND_DISPLAY) return null;
+	if (!firefoxProxyPrefs()) return null;
 	const input = X11Input.open();
 	if (!input) return null;
 	input.close();
@@ -129,7 +185,9 @@ export async function repostInFirefox(
 ): Promise<void> {
 	const input = X11Input.open();
 	if (!input) throw new Error('No X11 display to click in Firefox.');
-	const profile = await createFirefoxProfile();
+	const proxyPrefs = firefoxProxyPrefs();
+	if (!proxyPrefs) throw new Error('Firefox cannot use the configured proxy.');
+	const profile = await createFirefoxProfile(undefined, proxyPrefs);
 	let firefoxProcess: ReturnType<typeof Bun.spawn> | null = null;
 	try {
 		await writeFirefoxCookies(firefox, profile, cookies);
@@ -147,13 +205,8 @@ export async function repostInFirefox(
 				trackUrl,
 			],
 			{
-				// Firefox only joins the accessibility bus when asked to, and X11
-				// input reaches it only as an X11 window.
-				env: {
-					...process.env,
-					GNOME_ACCESSIBILITY: '1',
-					MOZ_ENABLE_WAYLAND: '0',
-				},
+				// Firefox only joins the accessibility bus when asked to.
+				env: { ...process.env, GNOME_ACCESSIBILITY: '1' },
 				stdin: 'ignore',
 				stdout: 'ignore',
 				stderr: 'ignore',
@@ -163,29 +216,8 @@ export async function repostInFirefox(
 		const running = () => firefoxProcess?.exitCode === null;
 		const deadline = Date.now() + timeoutMs;
 
-		let button: RepostButton = null;
-		while (!button && running() && Date.now() < deadline) {
-			await timeout(1_000);
-			button = findRepostButton(accessibleNodes(pid));
-		}
-		if (!button) {
-			throw new Error(
-				running()
-					? 'The SoundCloud track never showed its Repost button in Firefox.'
-					: 'Firefox closed before the repost.',
-			);
-		}
-		if (
-			button.state === 'reposted' ||
-			(await isReposted().catch(() => false))
-		) {
-			log('Firefox: the track is already reposted.');
-			return;
-		}
-
-		// A repost clicked the moment the page loads looks automated; stay on the
-		// track a few seconds first, like a listener.
-		await timeout(4_000 + Math.random() * 4_000);
+		// DataDome can also challenge the page load, before the button shows.
+		let ready = false;
 		let clicks = 0;
 		let lastClick = 0;
 		let lastApiCheck = Date.now();
@@ -216,6 +248,25 @@ export async function repostInFirefox(
 			captchaSince = 0;
 
 			const current = findRepostButton(nodes);
+			if (!ready) {
+				if (!current) {
+					await timeout(1_000);
+					continue;
+				}
+				if (
+					current.state === 'reposted' ||
+					(await isReposted().catch(() => false))
+				) {
+					log('Firefox: the track is already reposted.');
+					return;
+				}
+				// A repost clicked the moment the page loads looks automated; stay
+				// on the track a few seconds first, like a listener.
+				await timeout(4_000 + Math.random() * 4_000);
+				ready = true;
+				lastApiCheck = Date.now();
+				continue;
+			}
 			if (current?.state === 'reposted') {
 				// The button flips before SoundCloud answers; a rejected repost
 				// brings up the challenge within a few seconds.
@@ -224,13 +275,9 @@ export async function repostInFirefox(
 					log('Firefox: SoundCloud repost saved.');
 					return;
 				}
-			} else {
+			} else if (current?.state === 'repost') {
 				repostedSince = 0;
-				if (
-					current?.state === 'repost' &&
-					clicks < 3 &&
-					Date.now() - lastClick > 10_000
-				) {
+				if (clicks < 3 && Date.now() - lastClick > 10_000) {
 					await input.click(current.at);
 					clicks++;
 					lastClick = Date.now();
@@ -247,9 +294,11 @@ export async function repostInFirefox(
 			await timeout(1_000);
 		}
 		throw new Error(
-			running()
-				? 'Timed out reposting the track in Firefox.'
-				: 'Firefox closed before the repost finished.',
+			!running()
+				? 'Firefox closed before the repost finished.'
+				: ready
+					? 'Timed out reposting the track in Firefox.'
+					: 'The SoundCloud track never showed its Repost button in Firefox.',
 		);
 	} finally {
 		input.close();

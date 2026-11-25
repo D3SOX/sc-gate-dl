@@ -913,32 +913,29 @@ export class DroploudDownloader {
 		firefox: string,
 		popup: Page,
 	): Promise<Error | null> {
-		let trackUrl: string;
 		try {
-			({ trackUrl } = await this.soundcloudPopupTrack(popup));
-		} finally {
-			await this.closePage(popup);
-		}
-		this.emitProgress(
-			'handling_gates',
-			'Reposting on SoundCloud in Firefox...',
-			50,
-			{
-				currentGate: 'sc',
-				browserActive: true,
-			},
-		);
-		console.log(`Droploud: reposting ${trackUrl} in Firefox…`);
-		// SoundCloud's session from this browser; DataDome's cookie belongs to it.
-		const cookies = (
-			await this.browser.defaultBrowserContext().cookies()
-		).filter(
-			(cookie) =>
-				/(^|\.)soundcloud\.com$/i.test(cookie.domain.replace(/^\./, '')) &&
-				cookie.name !== 'datadome',
-		);
-		const soundcloud = hasSoundcloudLogin() ? new SoundcloudClient() : null;
-		try {
+			let trackUrl: string;
+			try {
+				({ trackUrl } = await this.soundcloudPopupTrack(popup));
+			} finally {
+				await this.closePage(popup);
+			}
+			this.emitProgress(
+				'handling_gates',
+				'Reposting on SoundCloud in Firefox...',
+				50,
+				{ currentGate: 'sc', browserActive: true },
+			);
+			console.log(`Droploud: reposting ${trackUrl} in Firefox…`);
+			// SoundCloud's session from this browser; DataDome's cookie belongs to it.
+			const cookies = (
+				await this.browser.defaultBrowserContext().cookies()
+			).filter(
+				(cookie) =>
+					/(^|\.)soundcloud\.com$/i.test(cookie.domain.replace(/^\./, '')) &&
+					cookie.name !== 'datadome',
+			);
+			const soundcloud = hasSoundcloudLogin() ? new SoundcloudClient() : null;
 			await repostInFirefox(firefox, trackUrl, cookies, {
 				isReposted: soundcloud
 					? () => soundcloud.isTrackReposted(trackUrl)
