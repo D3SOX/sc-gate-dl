@@ -65,6 +65,8 @@ try {
 		confirm: (message, defaultValue) =>
 			confirm({ message, default: defaultValue }),
 	});
+	// `bun start --login` without a URL only logs in.
+	if (args.login && !args.url) process.exit(0);
 
 	const soundcloudArg = args.url;
 	const soundcloudArgValidation = soundcloudArg

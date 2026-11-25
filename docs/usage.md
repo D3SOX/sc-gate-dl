@@ -12,7 +12,8 @@ Set up sc-gate-dl as described in [Installation](installation.md) first.
 ```bash
 bun start                                   # asks for the track URL
 bun start https://soundcloud.com/artist/track
-bun start --login                           # log in again first
+bun start --login                           # only log in
+bun start --login https://soundcloud.com/artist/track  # log in first
 ```
 
 The finished file lands in `./downloads` with tags and artwork. The [output settings](configuration.md#-output) change the format, the folder, and whether the CLI asks you to review the tags. When the track has no gate, the CLI offers to download it from SoundCloud with yt-dlp, or asks you for a gate, Bandcamp or direct file link.
