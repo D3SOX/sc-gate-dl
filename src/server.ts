@@ -939,7 +939,7 @@ const TEST_FIXTURE_JOB_ENV = 'SC_GATE_DL_TEST_FIXTURE_JOB';
 const TEST_FIXTURE_JOB_FORMAT_ENV = 'SC_GATE_DL_TEST_FIXTURE_JOB_FORMAT';
 
 /** Test hook: seed one job waiting for tags so HTTP tests need no live gate. */
-function seedFixtureJob(): string | null {
+async function seedFixtureJob(): Promise<string | null> {
 	const fixture = process.env[TEST_FIXTURE_JOB_ENV];
 	if (!fixture) return null;
 	const format = (process.env[TEST_FIXTURE_JOB_FORMAT_ENV] ??
@@ -955,11 +955,20 @@ function seedFixtureJob(): string | null {
 		artworkBuffer: null,
 		artworkFileName: null,
 	});
+	if (isMp3Format(fixture)) {
+		const existingArtwork = await audioProcessor.extractMp3CoverArt(
+			join('./downloads', fixture),
+		);
+		jobStore.update(job.id, {
+			existingArtworkBuffer: existingArtwork?.buffer ?? null,
+			existingArtworkFileName: existingArtwork?.fileName ?? null,
+		});
+	}
 	jobStore.updateProgress(job.id, 'waiting_metadata', 'Check the tags', 100);
 	return job.id;
 }
 
-const fixtureJobId = seedFixtureJob();
+const fixtureJobId = await seedFixtureJob();
 if (fixtureJobId) console.log(`[test-fixture] job ${fixtureJobId}`);
 
 const server = Bun.serve({
