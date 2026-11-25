@@ -2,6 +2,7 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import { cp, mkdir, rm } from 'node:fs/promises';
 import { basename, extname, join } from 'node:path';
 import type { SoundcloudTrack } from 'soundcloud.ts';
+import { apiPortFromEnv } from './apiPort';
 import { hasZipSignature, resolveDownloadedAudio } from './archiveAudio';
 import { AudioProcessor } from './audioProcessor';
 import type { BandcampGateOptions } from './bandcampGate';
@@ -91,6 +92,7 @@ const DELETE_AFTER_DOWNLOAD = deleteAfterDownloadEnabled(
 	process.env.SC_GATE_DL_DELETE_AFTER_DOWNLOAD,
 );
 const LIBRARY_DIR = libraryDirFromEnv();
+const API_PORT = apiPortFromEnv();
 
 const soundcloudClient = new SoundcloudClient();
 const audioProcessor = new AudioProcessor(ffmpegBin, ffprobeBin);
@@ -898,7 +900,7 @@ function wrapRoutes<Path extends string>(
 }
 
 const server = Bun.serve({
-	port: 3000,
+	port: API_PORT,
 	// Increase idle timeout for long-running operations (browser automation, downloads)
 	idleTimeout: 255, // ~4 minutes (max allowed)
 	routes: wrapRoutes({
