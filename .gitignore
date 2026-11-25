@@ -56,3 +56,6 @@ scripts
 
 # local test credentials
 .env.test
+
+# local specs and plans, never committed
+.scratch/
