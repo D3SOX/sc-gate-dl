@@ -51,6 +51,7 @@ describe('GateRush expired OAuth after interactive login', () => {
 			const popup = {
 				isClosed: () => popupClosed,
 				url: () => 'https://secure.soundcloud.com/authorize',
+				frames: () => [],
 				bringToFront: async () => {
 					now = 61_000;
 				},

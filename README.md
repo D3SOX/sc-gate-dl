@@ -57,7 +57,11 @@ For `HYPEDDIT_NAME` and `SC_COMMENT` currently everything works (I use just `asd
 
 For `HYPEDDIT_EMAIL` you can enter any valid email address (For example grab one from [temp-mail.org](https://temp-mail.org))
 
-#### Get SoundCloud API Credentials
+#### Log in
+
+Run `bun start --login` and sign in to SoundCloud and Spotify in the browser windows that open. You sign in to SoundCloud once, in a throwaway window for the API login. The gate browser then reuses that sign-in to get its own login, because the two must not share one. If SoundCloud shows "You have been blocked", reload the page; if that keeps happening, set `CLOAKBROWSER_PROXY` to use another connection. sc-gate-dl saves `SC_CLIENT_ID`, `SC_REFRESH_TOKEN` and `SC_OAUTH_TOKEN` to `.env`, the SoundCloud cookies to `soundcloud-cookies.json` and the Spotify cookies to `spotify-cookies.json`. Each `bun start` checks the logins first and offers this login when SoundCloud's is missing or rejected. Spotify is only needed for Spotify gates, so a missing Spotify login is just a warning. If an sc-gate-dl server runs in the same folder, restart it after a new login.
+
+#### Get SoundCloud API Credentials manually
 
 1. Go to [soundcloud.com](https://soundcloud.com) and log in (skip if you are already logged in)
 2. Open up the developer tools (Right click → Inspect or press F12) and go to the **Network** tab
@@ -85,7 +89,7 @@ Install the [EditThisCookie (fork)](https://chromewebstore.google.com/detail/edi
 
 Used for SoundCloud API/session automation and for **yt-dlp** when downloading a SoundCloud track directly (so downloadable tracks can fetch the original upload, not only the 128k stream).
 
-You can omit `soundcloud-cookies.json` and use **Initialize logins** in the Web
+You can omit `soundcloud-cookies.json` and use `bun start --login` or **Initialize logins** in the Web
 UI instead. It opens SoundCloud's sign-in page in the visible or remote
 browser, even when an older session exists, because gates authorize through
 a sign-in session of their own. Once you are signed in, sc-gate-dl saves the
@@ -101,7 +105,7 @@ gate jobs and yt-dlp.
 
 #### Spotify Cookies (Optional)
 
-If you plan to download tracks that require Spotify gates, you'll also need Spotify cookies:
+If you plan to download tracks that require Spotify gates, you'll also need Spotify cookies. `bun start --login` saves them for you, or export them yourself:
 
 **Steps:**
 
@@ -142,6 +146,8 @@ You can also pass a SoundCloud track URL directly.
 ```bash
 bun start https://soundcloud.com/artist/track
 ```
+
+Add `--login` to log in again first, for example after switching accounts.
 
 The finished file is saved in the `./downloads` directory with proper metadata and artwork embedded. These settings in `.env` change the CLI output:
 

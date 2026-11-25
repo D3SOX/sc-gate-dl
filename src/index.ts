@@ -10,6 +10,7 @@ import { DownloadgaterDownloader } from './downloadgater';
 import { DroploudDownloader } from './droploud';
 import { FangateDownloader } from './fangate';
 import { GaterushDownloader } from './gaterush';
+import { parseCliArgs, prepareCliLogins } from './guidedLogin';
 import { HypedditDownloader } from './hypeddit';
 import { HypedditHttpDownloader } from './hypedditHttp';
 import { moveIntoLibrary } from './libraryDestination';
@@ -27,6 +28,7 @@ import {
 import { YtDlpDownloader, type YtDlpDownloadOptions } from './ytdlp';
 
 try {
+	const args = parseCliArgs(process.argv.slice(2));
 	const ffmpegBin = await getFfmpegBin();
 	const ffprobeBin = await getFfprobeBin();
 
@@ -54,7 +56,14 @@ try {
 		});
 	}
 
-	const soundcloudArg = process.argv[2];
+	await prepareCliLogins({
+		force: args.login,
+		interactive: Boolean(process.stdin.isTTY),
+		confirm: (message, defaultValue) =>
+			confirm({ message, default: defaultValue }),
+	});
+
+	const soundcloudArg = args.url;
 	const soundcloudArgValidation = soundcloudArg
 		? validateSoundcloudUrl(soundcloudArg)
 		: true;
