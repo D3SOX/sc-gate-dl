@@ -174,45 +174,63 @@ export class FangateDownloader {
 		await this.browser?.close().catch(() => {});
 	}
 
+	/**
+	 * The gate's return page only accepts a login that its own download page
+	 * started (it stores the session in localStorage), so the login is started
+	 * by clicking the step there rather than by opening the authorize URL.
+	 */
 	private async oauth(uid: string): Promise<void> {
-		const { url } = await apiJson<{ url: string }>(
-			`/download_sessions/${uid}/oauth_redirect_uri/?oauth_provider=soundcloud`,
-		);
 		const page = await this.browser.newPage();
 		try {
-			await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60_000 });
+			await page.goto(`https://www.fangate.eu/download/${uid}`, {
+				waitUntil: 'domcontentloaded',
+				timeout: 60_000,
+			});
+			await page.waitForFunction(
+				() =>
+					Array.from(document.querySelectorAll('button')).some((b) =>
+						/log in on soundcloud/i.test(b.textContent ?? ''),
+					),
+				{ timeout: 30_000 },
+			);
+			await page.evaluate(() => {
+				const button = Array.from(document.querySelectorAll('button')).find(
+					(b) => /log in on soundcloud/i.test(b.textContent ?? ''),
+				);
+				(button as HTMLButtonElement | undefined)?.click();
+			});
+			await page.waitForFunction(
+				() => location.hostname.includes('soundcloud.com'),
+				{
+					timeout: 30_000,
+				},
+			);
 			await waitForSoundcloudLogin(page, {
 				interactive: this.config.browserMode !== 'headless',
 				onWaiting: () => {},
 			});
 			await this.clickAllow(page);
-			await page
-				.waitForFunction(() => location.hostname.endsWith('fangate.eu'), {
-					timeout: 120_000,
-				})
-				.catch(() => {});
-			await new Promise((resolve) => setTimeout(resolve, 3_000));
+			await this.waitForStepDone(uid);
 		} finally {
 			if (!page.isClosed()) await page.close().catch(() => {});
 		}
 	}
 
+	/** The return page confirms the login with the API; wait until it shows. */
+	private async waitForStepDone(uid: string): Promise<void> {
+		const deadline = Date.now() + 120_000;
+		while (Date.now() < deadline) {
+			const session = await httpFangateApi.getSession(uid);
+			if (session.steps.some((s) => s.type === 'oauth' && s.completed)) return;
+			await new Promise((resolve) => setTimeout(resolve, 1_000));
+		}
+	}
+
 	private async clickAllow(page: Page): Promise<void> {
-		await page
-			.evaluate(() => {
-				const buttons = Array.from(document.querySelectorAll('button'));
-				const allow =
-					buttons.find((b) =>
-						/^(allow|connect|authorize|accept)$/i.test(
-							(b.textContent || '').trim(),
-						),
-					) ??
-					document.querySelector(
-						'button#submit_approval, button[name="accept"]',
-					);
-				(allow as HTMLButtonElement | null)?.click();
-			})
-			.catch(() => {});
+		await page.waitForSelector('button#submit_approval', {
+			timeout: 30_000,
+		});
+		await page.click('button#submit_approval');
 	}
 
 	async downloadAudio(url: string): Promise<string | null> {
