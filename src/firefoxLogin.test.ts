@@ -133,7 +133,9 @@ test('findFirefox uses SC_GATE_DL_FIREFOX, then firefox on the PATH', () => {
 
 describe('signInWithFirefox', () => {
 	/** A stand-in for Firefox that writes a sign-in cookie into its profile. */
-	async function fakeFirefox(behaviour: 'sign in' | 'quit'): Promise<string> {
+	async function fakeFirefox(
+		behaviour: 'sign in' | 'quit' | 'crash',
+	): Promise<string> {
 		const path = join(dir, 'firefox');
 		await writeFile(
 			path,
@@ -145,6 +147,7 @@ const profile = process.argv[process.argv.indexOf('--profile') + 1];
 writeFileSync(${JSON.stringify(join(dir, 'pid'))}, String(process.pid));
 writeFileSync(${JSON.stringify(join(dir, 'profile'))}, profile);
 if (${JSON.stringify(behaviour)} === 'quit') process.exit(0);
+if (${JSON.stringify(behaviour)} === 'crash') process.kill(process.pid, 'SIGKILL');
 await Bun.sleep(200);
 const db = new Database(join(profile, 'cookies.sqlite'));
 db.run(${JSON.stringify(MOZ_COOKIES)});
@@ -201,6 +204,18 @@ setInterval(() => {}, 1000);
 				url: 'https://soundcloud.com/signin',
 				what: 'the test sign-in',
 				done: () => null,
+				pollMs: 50,
+			}),
+		).rejects.toThrow('Firefox closed before the test sign-in finished.');
+	});
+
+	test('stops when Firefox crashes before the sign-in', async () => {
+		await expect(
+			signInWithFirefox(await fakeFirefox('crash'), {
+				url: 'https://soundcloud.com/signin',
+				what: 'the test sign-in',
+				done: () => null,
+				timeoutMs: 2_000,
 				pollMs: 50,
 			}),
 		).rejects.toThrow('Firefox closed before the test sign-in finished.');

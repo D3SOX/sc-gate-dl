@@ -17,6 +17,18 @@ The API rejects `POST` requests from browser pages on other origins with a 403, 
 
 With this setup, a server without a screen runs Chromium in headed mode on a virtual display, and you watch and control it from the Web UI. You need it for **Initialize logins**, OAuth consent and captchas.
 
+### ⚡ Install script
+
+On Arch Linux or Debian, this command does all the steps below. Run it as the user the services should run as:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/D3SOX/sc-gate-dl/master/install-server.sh | bash
+```
+
+It installs the packages and Bun, clones sc-gate-dl to `~/sc-gate-dl` (set `SC_GATE_DL_DIR` for another folder), creates `.env`, asks for the VNC password, and starts the systemd user services. The API only starts once you're logged in to SoundCloud, so the script then runs `bun start --login` and you sign in through noVNC at `http://SERVER:6080/vnc.html`. Afterwards, check the gate values in `.env` as described in [Installation](installation.md#-1-create-the-env-file) and restart the app service.
+
+Running it again updates sc-gate-dl and restarts the stack. It keeps `.env` and the VNC password, but rewrites the unit files. On Debian, Bandcamp downloads also need yt-dlp's `curl_cffi` backend, which the script doesn't install.
+
 ### ✅ What you need
 
 - A Linux host with systemd user services and a stable hostname or IP address.
@@ -30,7 +42,7 @@ With this setup, a server without a screen runs Chromium in headed mode on a vir
 On Arch Linux and Arch Linux ARM:
 
 ```bash
-sudo pacman -S --needed xorg-server-xvfb xorg-xauth x11vnc
+sudo pacman -S --needed xorg-server-xvfb xorg-xauth x11vnc python
 ```
 
 Install [noVNC](https://github.com/novnc/noVNC) from your distribution, or clone a release into your user account, and set the VNC password:
@@ -169,7 +181,9 @@ RestartSec=3
 ```ini
 [Unit]
 Description=sc-gate-dl remote headed browser stack
-Requires=sc-gate-xvfb.service sc-gate-x11vnc.service \
+# Wants=, not Requires=: with Requires=, every automatic restart of the app
+# would restart the target and, through PartOf=, the display and VNC servers.
+Wants=sc-gate-xvfb.service sc-gate-x11vnc.service \
   sc-gate-novnc.service sc-gate-app.service
 After=sc-gate-xvfb.service sc-gate-x11vnc.service \
   sc-gate-novnc.service sc-gate-app.service

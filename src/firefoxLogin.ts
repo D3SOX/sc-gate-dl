@@ -99,7 +99,7 @@ export async function writeFirefoxCookies(
 		const deadline = Date.now() + 30_000;
 		while (
 			!existsSync(join(profileDir, 'cookies.sqlite')) &&
-			warmup.exitCode === null &&
+			!hasExited(warmup) &&
 			Date.now() < deadline
 		) {
 			await timeout(250);
@@ -304,7 +304,7 @@ export async function signInWithFirefox<T>(
 		);
 		const deadline = Date.now() + timeoutMs;
 		for (;;) {
-			const exited = firefoxProcess.exitCode !== null;
+			const exited = hasExited(firefoxProcess);
 			const cookies = await readFirefoxCookies(profile).catch(() => []);
 			const result = done(cookies);
 			if (result !== null) {
@@ -328,10 +328,15 @@ export async function signInWithFirefox<T>(
 	}
 }
 
+/** A process killed by a signal, such as a crash, has no exit code. */
+export function hasExited(process: ReturnType<typeof Bun.spawn>): boolean {
+	return process.exitCode !== null || process.signalCode !== null;
+}
+
 export async function stopFirefox(
 	firefoxProcess: ReturnType<typeof Bun.spawn>,
 ): Promise<void> {
-	if (firefoxProcess.exitCode !== null) return;
+	if (hasExited(firefoxProcess)) return;
 	firefoxProcess.kill('SIGTERM');
 	const stopped = await Promise.race([
 		firefoxProcess.exited.then(() => true),

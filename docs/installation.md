@@ -13,7 +13,7 @@
 | [Bun](https://bun.sh) | Running sc-gate-dl. |
 | [ffmpeg](https://ffmpeg.org) | Converting and tagging audio. It must be on your `PATH`. |
 | [unzip](https://infozip.sourceforge.net/UnZip.html) | Gates that deliver a ZIP archive. |
-| [yt-dlp](https://github.com/yt-dlp/yt-dlp) | Bandcamp links, and downloading the SoundCloud track itself. Bandcamp also needs yt-dlp's `curl_cffi` backend for Chrome impersonation: `python-curl-cffi` on Arch Linux, or `pip install "yt-dlp[default,curl-cffi]"`. |
+| [yt-dlp](https://github.com/yt-dlp/yt-dlp) | Bandcamp links, and downloading the SoundCloud track itself. Bandcamp also needs yt-dlp's `curl_cffi` backend for Chrome impersonation: `python-curl_cffi` on Arch Linux, or `pip install "yt-dlp[default,curl-cffi]"`. |
 | [Firefox](https://www.mozilla.org/firefox/) (recommended) | SoundCloud sign-ins, and Droploud's repost on Linux with an X11 display. SoundCloud's bot protection lets a plain Firefox through more reliably than an automated browser. Without it, you sign in in CloakBrowser, and Droploud reposts there too. |
 | [curl-impersonate](https://github.com/lexiforest/curl-impersonate) (recommended) | Reposts and other SoundCloud engagement requests, which SoundCloud's DataDome protection often blocks when Bun sends them. sc-gate-dl uses the newest `curl_chromeN` wrapper on your `PATH` and otherwise falls back to Bun's `fetch`, which may get a 403. |
 
@@ -29,6 +29,8 @@ git clone https://github.com/D3SOX/sc-gate-dl
 cd sc-gate-dl
 bun install
 ```
+
+To set up a server with the remote browser view, use the [install script](server.md#-install-script) instead.
 
 ## 📝 1. Create the `.env` file
 

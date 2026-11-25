@@ -59,12 +59,18 @@ try {
 		});
 	}
 
-	await prepareCliLogins({
+	const soundcloudLogin = await prepareCliLogins({
 		force: args.login,
 		interactive: Boolean(process.stdin.isTTY),
 		confirm: (message, defaultValue) =>
 			confirm({ message, default: defaultValue }),
 	});
+	// `bun start --login` without a URL only logs in.
+	if (args.login && !args.url) {
+		const failed =
+			soundcloudLogin === 'missing' || soundcloudLogin === 'invalid';
+		process.exit(failed ? 1 : 0);
+	}
 
 	const soundcloudArg = args.url;
 	const soundcloudArgValidation = soundcloudArg
