@@ -10,7 +10,7 @@ Download and tag SoundCloud tracks unlocked via Hypeddit, Droploud, GateRush, Do
 - 📝 Fetches metadata from the provided SoundCloud link
 - 🎨 Manual metadata correction before finalizing
 - 🎧 Extracts audio from ZIP downloads, prefers lossless files, and converts them to the selected format
-- 🏷️ Tags MP3 files with metadata and artwork from SoundCloud
+- 🏷️ Tags MP3, M4A and FLAC files with metadata and artwork from SoundCloud
 - 🧹 Optional cleanup of the SoundCloud account (unfollow, unlike, delete comments/reposts)
 - 🔎 Search SoundCloud tracks in the Web UI and download one from the results
 - 🧩 Userscript (Violentmonkey) that opens the Web UI in a floating panel next to SoundCloud store/buy links
@@ -149,7 +149,12 @@ bun start https://soundcloud.com/artist/track
 
 Add `--login` to log in again first, for example after switching accounts.
 
-The final MP3 file will be saved in the `./downloads` directory with proper metadata and artwork embedded.
+The finished file is saved in the `./downloads` directory with proper metadata and artwork embedded. These settings in `.env` change the CLI output:
+
+- `SC_GATE_DL_CLI_FORMAT`: `mp3` (default), `m4a-aac`, `flac`, or `original` (no conversion or tagging).
+- `SC_GATE_DL_CLI_DIR`: a folder the finished file is moved to, for example `~/Music/SoundCloud`. An existing file is never replaced; a second copy gets a ` (2)` suffix.
+- `SC_GATE_DL_REVIEW_TAGS=false`: skip the tag prompts and use the SoundCloud tags.
+- `SC_GATE_DL_BITRATE`: MP3 and AAC bitrate in kbps for lossless sources, 64 to 320 (default 320). The server uses it too.
 
 ### Managed account export
 
@@ -174,7 +179,8 @@ Wait for Astro to be started. It will then tell you the address it's available o
 The Web UI also listens on the local network and automatically calls the API on
 port `3000` of the same host. For example, a Web UI opened at
 `http://192.168.1.50:4321` uses `http://192.168.1.50:3000`. Set
-`PUBLIC_API_BASE_URL` when the public API uses a different host or port. If a
+`PUBLIC_API_BASE_URL` when the public API uses a different host or port, for
+example after moving the API to another port with `SC_GATE_DL_PORT`. If a
 reverse proxy gives the Web UI a different origin, add it to the comma-separated
 `SC_GATE_DL_ALLOWED_ORIGINS` environment variable. The API rejects `POST`
 requests from browser pages on any other origin with `403`, so a website you
@@ -188,10 +194,10 @@ SoundCloud. A **Gate** badge marks a track whose listing links a supported
 gate. Tracks without a badge can still have a gate behind a short link, which
 sc-gate-dl looks for when the job starts.
 
-Set `SC_GATE_DL_DELETE_AFTER_DOWNLOAD=true` on the server to remove completed
-MP3, FLAC, and original files after their HTTP response has been transferred in
-full. This applies to headless, Xvfb, and visible-headed jobs. Interrupted or
-failed transfers retain the file so the download can be retried.
+Set `SC_GATE_DL_DELETE_AFTER_DOWNLOAD=true` on the server to remove finished
+files after their HTTP response has been transferred in full. This applies to
+headless, Xvfb, and visible-headed jobs. Interrupted or failed transfers retain
+the file so the download can be retried.
 
 Set `SC_GATE_DL_LIBRARY_DIR` to a folder inside your music server's library,
 for example `/home/YOUR_USER/Music/SoundCloud`, so API clients like
@@ -201,7 +207,8 @@ knows its source. sc-gate-dl then tags the file with the SoundCloud metadata
 and artwork and moves it into that folder as `Artist - Title`. It never
 replaces an existing file. A second copy gets a ` (2)` suffix instead. A job
 created with `"destination": "client"` runs the same way but keeps the file
-for `GET /api/job/:id/file`. Web UI jobs work as before.
+for `GET /api/job/:id/file`. Web UI jobs stop for tags unless the server sets
+`SC_GATE_DL_REVIEW_TAGS=false`, which saves them with the SoundCloud tags at once.
 
 These jobs also accept `"browserMode"` (`headless`, `xvfb`, or `headed`, as
 listed by `GET /api/capabilities`) to pick the gate browser, for example a
@@ -545,7 +552,7 @@ HTTPS so the embedded client connects over `wss://`.
 
 If it's the first time you're running it you will need to initialize the logins by clicking the button in the footer.
 
-You can deep-link a track with `?url=` (also accepted as `?soundcloudUrl=`), optional `outputFormat` (`mp3-320`, `flac`, or `original`), and optional `browserMode` (`headless`, `xvfb`, or `headed`), which pre-fills the form and starts the job. FLAC output preserves lossless sources; converting a lossy source to FLAC changes the container but cannot restore lost quality.
+You can deep-link a track with `?url=` (also accepted as `?soundcloudUrl=`), optional `outputFormat` (`mp3-320`, `m4a-aac`, `flac`, or `original`), and optional `browserMode` (`headless`, `xvfb`, or `headed`), which pre-fills the form and starts the job. FLAC output preserves lossless sources; converting a lossy source to FLAC changes the container but cannot restore lost quality.
 
 ```text
 http://localhost:4321/?url=https://soundcloud.com/artist/track&outputFormat=mp3-320
@@ -620,5 +627,7 @@ Droploud, GateRush, DownloadGater, StillHype, PumpYourSound, and MyPressKit gate
 
 **File Processing**:
 
-- **Lossless (WAV/AIFF/FLAC) files**: Converted to MP3 (320kbps) with metadata and artwork
-- **MP3 files**: Retagged with metadata and artwork (no re-encoding)
+- **Lossless (WAV/AIFF/FLAC/ALAC) files**: Converted to the selected format (MP3 or AAC at `SC_GATE_DL_BITRATE`, 320 kbps by default, or FLAC) with metadata and artwork
+- **MP3 and AAC files**: For MP3 and M4A/AAC output, retagged with metadata and artwork (no re-encoding); a raw `.aac` stream is moved into an `.m4a`. FLAC output converts them like any other source
+- **Other lossy files (Ogg, Opus, WebM)**: Converted to the selected format at their own bitrate, capped at `SC_GATE_DL_BITRATE`
+- Existing tags the SoundCloud metadata does not replace are kept, and the comment tag links back to the SoundCloud track

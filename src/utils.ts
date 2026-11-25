@@ -828,107 +828,6 @@ export function getDefaultMetadata(track: SoundcloudTrack): Metadata {
 	};
 }
 
-const LOSSLESS_EXTENSIONS = [
-	'.wav',
-	'.aiff',
-	'.aif',
-	'.flac',
-	'.ape',
-	'.wv',
-	'.alac',
-] as const;
-/** Lossy containers we still re-encode to MP3 (bitrate chosen from the source). */
-const LOSSY_TO_MP3_EXTENSIONS = [
-	'.m4a',
-	'.aac',
-	'.ogg',
-	'.opus',
-	'.webm',
-] as const;
-const MP3_CONVERTIBLE_EXTENSIONS = [
-	...LOSSLESS_EXTENSIONS,
-	...LOSSY_TO_MP3_EXTENSIONS,
-] as const;
-const MP3_CONVERTIBLE_EXT_PATTERN = new RegExp(
-	`\\.(${MP3_CONVERTIBLE_EXTENSIONS.map((ext) => ext.slice(1)).join('|')})$`,
-	'i',
-);
-
-function hasExtension(
-	filename: string,
-	extensions: readonly string[],
-): boolean {
-	const lower = filename.toLowerCase();
-	return extensions.some((ext) => lower.endsWith(ext));
-}
-
-export function isLosslessFormat(filename: string): boolean {
-	return hasExtension(filename, LOSSLESS_EXTENSIONS);
-}
-
-export function isMp3Format(filename: string): boolean {
-	return filename.toLowerCase().endsWith('.mp3');
-}
-
-/** True when the file must be re-encoded to MP3 for the MP3 output path. */
-export function needsMp3Conversion(filename: string): boolean {
-	return (
-		isLosslessFormat(filename) ||
-		hasExtension(filename, LOSSY_TO_MP3_EXTENSIONS)
-	);
-}
-
-export function toMp3Filename(filename: string): string {
-	return filename.replace(MP3_CONVERTIBLE_EXT_PATTERN, '.mp3');
-}
-
-export function toFlacFilename(filename: string): string {
-	return filename.replace(/\.[^.]+$/i, '.flac');
-}
-
-/** Strip characters that are unsafe or awkward in filenames. */
-export function sanitizeFilenamePart(value: string): string {
-	return value
-		.replace(/[<>:"/\\|?*]/g, '')
-		.replace(/\s+/g, ' ')
-		.trim();
-}
-
-/** `Artist - Title` (+ extension) from metadata fields. */
-export function artistTitleFilename(
-	artist?: string,
-	title?: string,
-	extension = '.mp3',
-): string {
-	const safeArtist = sanitizeFilenamePart(artist || '') || 'Unknown Artist';
-	const safeTitle = sanitizeFilenamePart(title || '') || 'Unknown Title';
-	const ext = extension.startsWith('.') ? extension : `.${extension}`;
-	return `${safeArtist} - ${safeTitle}${ext}`;
-}
-
-/** Predicted output name for the metadata step (always ends as MP3). */
-export function previewProcessedFilename(
-	downloadFilename: string,
-	options: {
-		nameAsArtistTitle: boolean;
-		artist?: string;
-		title?: string;
-		outputFormat?: 'mp3-320' | 'flac';
-	},
-): string {
-	const extension = options.outputFormat === 'flac' ? '.flac' : '.mp3';
-	if (options.nameAsArtistTitle) {
-		return artistTitleFilename(options.artist, options.title, extension);
-	}
-	if (options.outputFormat === 'flac') {
-		return toFlacFilename(downloadFilename);
-	}
-	if (needsMp3Conversion(downloadFilename)) {
-		return toMp3Filename(downloadFilename);
-	}
-	return downloadFilename;
-}
-
 export function safeDecodeURIComponent(value: string): string {
 	try {
 		return decodeURIComponent(value);
@@ -936,3 +835,12 @@ export function safeDecodeURIComponent(value: string): string {
 		return value;
 	}
 }
+
+export {
+	artistTitleFilename,
+	isLosslessFormat,
+	isMp3Format,
+	needsMp3Conversion,
+	previewProcessedFilename,
+	sanitizeFilenamePart,
+} from './outputFormat';

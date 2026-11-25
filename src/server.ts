@@ -2,8 +2,9 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import { cp, mkdir, rm } from 'node:fs/promises';
 import { basename, extname, join } from 'node:path';
 import type { SoundcloudTrack } from 'soundcloud.ts';
+import { apiPortFromEnv } from './apiPort';
 import { hasZipSignature, resolveDownloadedAudio } from './archiveAudio';
-import { AudioProcessor } from './audioProcessor';
+import { AudioProcessor, outputBitrateFromEnv } from './audioProcessor';
 import type { BandcampGateOptions } from './bandcampGate';
 import { isXvfbSupported } from './browserLaunch';
 import { attachmentContentDisposition } from './contentDisposition';
@@ -19,7 +20,11 @@ import { DroploudDownloader } from './droploud';
 import { GaterushDownloader } from './gaterush';
 import { HypedditDownloader, type ProgressCallback } from './hypeddit';
 import { HypedditHttpDownloader } from './hypedditHttp';
-import { parseBrowserMode, parseUnattendedJobOptions } from './jobOptions';
+import {
+	parseBrowserMode,
+	parseUnattendedJobOptions,
+	reviewTagsFromEnv,
+} from './jobOptions';
 import { JobQueue } from './jobQueue';
 import { jobStore } from './jobStore';
 import { libraryDirFromEnv, moveIntoLibrary } from './libraryDestination';
@@ -38,8 +43,10 @@ import {
 	type HypedditConfig,
 	isBrowserMode,
 	isJobDestination,
+	isOutputFormat,
 	type Job,
 	type Metadata,
+	OUTPUT_FORMATS,
 	type OutputFormat,
 } from './types';
 import {
@@ -91,9 +98,16 @@ const DELETE_AFTER_DOWNLOAD = deleteAfterDownloadEnabled(
 	process.env.SC_GATE_DL_DELETE_AFTER_DOWNLOAD,
 );
 const LIBRARY_DIR = libraryDirFromEnv();
+const API_PORT = apiPortFromEnv();
+/** Web UI jobs stop for tags unless `SC_GATE_DL_REVIEW_TAGS=false`. */
+const REVIEW_TAGS = reviewTagsFromEnv();
 
 const soundcloudClient = new SoundcloudClient();
-const audioProcessor = new AudioProcessor(ffmpegBin, ffprobeBin);
+const audioProcessor = new AudioProcessor(
+	ffmpegBin,
+	ffprobeBin,
+	outputBitrateFromEnv(),
+);
 const availableBrowserModes: BrowserMode[] = isXvfbSupported()
 	? ['headless', 'xvfb', 'headed']
 	: ['headless', 'headed'];
@@ -168,9 +182,6 @@ async function finalizeJobFile(
 			);
 		}
 	} else {
-		if (!options.artwork?.buffer) {
-			throw new Error('No artwork available');
-		}
 		jobStore.updateProgress(
 			job.id,
 			'processing_audio',
@@ -180,9 +191,12 @@ async function finalizeJobFile(
 		const outputPath = await audioProcessor.processAudio(
 			sourceFilename,
 			metadata,
-			options.artwork,
-			'always',
-			job.outputFormat,
+			{
+				artwork: options.artwork,
+				losslessHandling: 'always',
+				outputFormat: job.outputFormat,
+				sourceUrl: job.soundcloudUrl,
+			},
 		);
 		outputFilename = basename(outputPath);
 		// Conversion may have deleted the source, so point the job at the new
@@ -198,7 +212,7 @@ async function finalizeJobFile(
 				artistTitleFilename(
 					metadata.artist,
 					metadata.title,
-					job.outputFormat === 'flac' ? '.flac' : '.mp3',
+					extname(outputFilename),
 				),
 			);
 		}
@@ -709,7 +723,8 @@ async function runDownloadProcess(jobId: string): Promise<void> {
 		downloadFilename = await resolveDownloadedAudio(downloadFilename);
 		jobStore.update(jobId, { downloadFilename });
 		throwIfCancelled();
-		if (job.outputFormat === 'flac') {
+		// The Web UI needs it to preview the output name and warn about FLAC.
+		if (job.outputFormat !== 'original') {
 			const sourceIsLossless = await audioProcessor.isLosslessAudio(
 				join('./downloads', downloadFilename),
 			);
@@ -731,7 +746,7 @@ async function runDownloadProcess(jobId: string): Promise<void> {
 			const existingMetadata =
 				await audioProcessor.readMp3Metadata(downloadedPath);
 			const existingArtwork =
-				await audioProcessor.extractMp3CoverArt(downloadedPath);
+				await audioProcessor.extractCoverArt(downloadedPath);
 			jobStore.update(jobId, {
 				existingMetadata: existingMetadata ?? {},
 				existingArtworkBuffer: existingArtwork?.buffer ?? null,
@@ -898,7 +913,7 @@ function wrapRoutes<Path extends string>(
 }
 
 const server = Bun.serve({
-	port: 3000,
+	port: API_PORT,
 	// Increase idle timeout for long-running operations (browser automation, downloads)
 	idleTimeout: 255, // ~4 minutes (max allowed)
 	routes: wrapRoutes({
@@ -920,6 +935,7 @@ const server = Bun.serve({
 				browserViewUrl: BROWSER_VIEW_URL ?? null,
 				search: true,
 				libraryDestination: LIBRARY_DIR !== null,
+				reviewTags: REVIEW_TAGS,
 			}),
 
 		'/api/search': {
@@ -1070,15 +1086,10 @@ const server = Bun.serve({
 						return jsonResponse({ error: validation }, { status: 400 });
 					}
 
-					if (
-						outputFormat !== undefined &&
-						outputFormat !== 'original' &&
-						outputFormat !== 'mp3-320' &&
-						outputFormat !== 'flac'
-					) {
+					if (outputFormat !== undefined && !isOutputFormat(outputFormat)) {
 						return jsonResponse(
 							{
-								error: 'outputFormat must be "original", "mp3-320", or "flac"',
+								error: `outputFormat must be one of ${OUTPUT_FORMATS.map((format) => `"${format}"`).join(', ')}`,
 							},
 							{ status: 400 },
 						);
@@ -1744,17 +1755,10 @@ const server = Bun.serve({
 						);
 					}
 
-					const keepsFile = job.outputFormat === 'original' || preserveMetadata;
 					const artwork =
 						customArtwork ||
 						jobArtwork(job) ||
 						(job.destination ? existingJobArtwork(job) : null);
-					if (!keepsFile && !artwork?.buffer) {
-						return jsonResponse(
-							{ error: 'No artwork available' },
-							{ status: 400 },
-						);
-					}
 
 					// A concurrent submit or cancel may have won while the body was read.
 					if (notWaiting()) {

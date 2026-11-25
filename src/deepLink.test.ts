@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import {
 	parseAvailableBrowserModes,
 	parseBrowserViewUrl,
+	parseReviewTags,
 	readRequestedBrowserMode,
 	readRequestedOutputFormat,
 	readStoredBrowserMode,
@@ -120,5 +121,21 @@ describe('browser-view capability', () => {
 			parseBrowserViewUrl({ browserViewUrl: 'javascript:alert(1)' }),
 		).toBeNull();
 		expect(parseBrowserViewUrl({ browserViewUrl: 'not a URL' })).toBeNull();
+	});
+});
+
+describe('output format and review settings', () => {
+	test('accepts M4A/AAC from a deep link and storage', () => {
+		expect(readRequestedOutputFormat('?outputFormat=m4a-aac')).toBe('m4a-aac');
+		expect(readStoredOutputFormat({ getItem: () => 'm4a-aac' }, 'key')).toBe(
+			'm4a-aac',
+		);
+	});
+
+	test('reviews tags unless the server turns it off', () => {
+		expect(parseReviewTags({ reviewTags: false })).toBeFalse();
+		expect(parseReviewTags({ reviewTags: true })).toBeTrue();
+		expect(parseReviewTags({})).toBeTrue();
+		expect(parseReviewTags(null)).toBeTrue();
 	});
 });
