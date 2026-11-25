@@ -1,7 +1,7 @@
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { Browser, Cookie } from 'puppeteer';
+import type { Browser, Cookie, Page } from 'puppeteer';
 import { launchAppBrowser } from './browserLaunch';
 import { setEnvValues } from './envFile';
 import {
@@ -66,8 +66,13 @@ export async function checkSpotifyCookies(
 		const cookies = JSON.parse(text) as unknown;
 		if (!Array.isArray(cookies)) return 'invalid';
 		const login = (
-			cookies as { name?: unknown; expirationDate?: unknown }[]
-		).find((cookie) => cookie?.name === 'sp_dc');
+			cookies as { name?: unknown; value?: unknown; expirationDate?: unknown }[]
+		).find(
+			(cookie) =>
+				cookie?.name === 'sp_dc' &&
+				typeof cookie.value === 'string' &&
+				cookie.value !== '',
+		);
 		if (!login) return 'invalid';
 		return typeof login.expirationDate === 'number' &&
 			login.expirationDate * 1000 <= now()
@@ -138,16 +143,27 @@ export function pickSoundcloudSignInCookies(cookies: Cookie[]): Cookie[] {
 /** `sp_dc` is Spotify's long-lived login cookie; it only exists after a login. */
 export function pickSpotifyCookies(cookies: Cookie[]): Cookie[] | null {
 	const own = cookies.filter(isCookieOf(SPOTIFY_HOST_RE));
-	return own.some((cookie) => cookie.name === 'sp_dc') ? own : null;
+	return own.some((cookie) => cookie.name === 'sp_dc' && cookie.value !== '')
+		? own
+		: null;
+}
+
+/** A closed login window never finishes its login, so stop waiting. */
+function throwIfWindowClosed(page: Page, what: string): void {
+	if (page.isClosed() || !page.browser().connected) {
+		throw new Error(`The browser window closed before ${what} finished.`);
+	}
 }
 
 async function waitFor<T>(
+	page: Page,
 	what: string,
 	poll: () => Promise<T | null>,
 	timeoutMs: number,
 ): Promise<T> {
 	const deadline = Date.now() + timeoutMs;
 	while (Date.now() < deadline) {
+		throwIfWindowClosed(page, what);
 		const value = await poll().catch(() => null);
 		if (value) return value;
 		await timeout(1_000);
@@ -190,6 +206,7 @@ export async function captureSoundcloudApiLogin(
 			const deadline = Date.now() + 10 * 60_000;
 			const hintIfBlocked = soundcloudBlockHint(page);
 			for (;;) {
+				throwIfWindowClosed(page, 'the SoundCloud sign-in');
 				await hintIfBlocked();
 				const cookies = await context.cookies().catch(() => []);
 				const signedIn = cookies.some(
@@ -213,6 +230,7 @@ export async function captureSoundcloudApiLogin(
 					.catch(() => {});
 			}
 			const session = await waitFor(
+				page,
 				'the SoundCloud client id',
 				async () => pickSoundcloudSession(await context.cookies(), clientId),
 				60_000,
@@ -270,7 +288,8 @@ export async function loginToSpotify(browser: Browser): Promise<void> {
 		});
 		console.log('Sign in to Spotify in the browser window...');
 		await waitFor(
-			'Spotify sign-in',
+			page,
+			'the Spotify sign-in',
 			async () => pickSpotifyCookies(await context.cookies()),
 			10 * 60_000,
 		);

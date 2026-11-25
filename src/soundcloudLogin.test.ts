@@ -2,6 +2,7 @@ import { describe, expect, spyOn, test } from 'bun:test';
 import type { Cookie, Page } from 'puppeteer';
 import {
 	isSoundcloudLoginDocument,
+	isSoundcloudLoginPage,
 	soundcloudBlockHint,
 	throwIfSoundcloudBlocked,
 	waitForSoundcloudLogin,
@@ -75,6 +76,25 @@ describe('SoundCloud interactive login detection', () => {
 				frame('fe'),
 			]),
 		).not.toThrow();
+	});
+
+	test('a block frame counts even when the page cannot be read', async () => {
+		const page = {
+			isClosed: () => false,
+			url: () => 'https://soundcloud.com/signin',
+			evaluate: async () => {
+				throw new Error('Execution context was destroyed.');
+			},
+			frames: () => [
+				{
+					url: () =>
+						'https://geo.captcha-delivery.com/captcha/?initialCid=a&cid=b&t=bv',
+				},
+			],
+		} as unknown as Page;
+		await expect(isSoundcloudLoginPage(page)).rejects.toThrow(
+			'SoundCloud blocked',
+		);
 	});
 });
 

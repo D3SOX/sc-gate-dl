@@ -9,6 +9,7 @@ import {
 	clientIdFromUrl,
 	type LoginProvider,
 	loginToSoundcloud,
+	loginToSpotify,
 	parseCliArgs,
 	pickSoundcloudSession,
 	pickSoundcloudSignInCookies,
@@ -56,15 +57,21 @@ describe('checkSpotifyCookies', () => {
 		expect(await check('[{"name":"sp_t","value":"1"}]')).toBe('invalid');
 		expect(
 			await check(
-				JSON.stringify([{ name: 'sp_dc', expirationDate: NOW / 1000 - 1 }]),
+				JSON.stringify([
+					{ name: 'sp_dc', value: '1', expirationDate: NOW / 1000 - 1 },
+				]),
 			),
 		).toBe('expired');
 		expect(
 			await check(
-				JSON.stringify([{ name: 'sp_dc', expirationDate: NOW / 1000 + 60 }]),
+				JSON.stringify([
+					{ name: 'sp_dc', value: '1', expirationDate: NOW / 1000 + 60 },
+				]),
 			),
 		).toBe('present');
 		expect(await check('[{"name":"sp_dc","value":"1"}]')).toBe('present');
+		expect(await check('[{"name":"sp_dc","value":""}]')).toBe('invalid');
+		expect(await check('[{"name":"sp_dc"}]')).toBe('invalid');
 	});
 });
 
@@ -159,6 +166,37 @@ describe('login capture', () => {
 				cookie('other', '1', '.example.com'),
 			]),
 		).toHaveLength(1);
+		expect(
+			pickSpotifyCookies([cookie('sp_dc', '', '.spotify.com')]),
+		).toBeNull();
+	});
+
+	test('stops waiting for Spotify when the login window closes', async () => {
+		let closed = false;
+		let calls = 0;
+		const page = {
+			goto: async () => null,
+			isClosed: () => closed,
+			browser: () => ({ connected: !closed }),
+			close: async () => {},
+		};
+		const browser = {
+			defaultBrowserContext: () => ({
+				// The first read looks for an old login; the next ones poll.
+				cookies: async () => {
+					if (calls++ === 0) return [];
+					closed = true;
+					throw new Error('Connection closed.');
+				},
+				deleteCookie: async () => {},
+			}),
+			newPage: async () => page,
+		} as unknown as Browser;
+		const started = Date.now();
+		await expect(loginToSpotify(browser)).rejects.toThrow(
+			'window closed before the Spotify sign-in',
+		);
+		expect(Date.now() - started).toBeLessThan(5_000);
 	});
 });
 

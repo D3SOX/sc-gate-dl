@@ -121,6 +121,43 @@ describe('SoundcloudTokenRefresher', () => {
 		);
 	});
 
+	test('takes over the token another process rotated during its own refresh', async () => {
+		let valid = 'seed';
+		const endpoint = async (_url: string, init: RequestInit) => {
+			const used = new URLSearchParams(String(init.body)).get('refresh_token');
+			requests.push(new URLSearchParams(String(init.body)));
+			if (used !== valid) return new Response('{}', { status: 400 });
+			valid = `${used}-next`;
+			return Response.json({
+				access_token: jwt(NOW + 24 * HOUR),
+				refresh_token: valid,
+			});
+		};
+		const startProcess = (
+			fetch: (url: string, init: RequestInit) => Promise<Response>,
+		) =>
+			new SoundcloudTokenRefresher({
+				clientId: 'client',
+				refreshToken: 'seed',
+				file,
+				now: () => NOW,
+				fetch,
+			});
+		const other = startProcess(endpoint);
+		// This process has read the file; the other one refreshes before its
+		// request arrives, so SoundCloud rejects the consumed token.
+		const late = startProcess(async (url, init) => {
+			await other.accessToken();
+			return endpoint(url, init);
+		});
+
+		expect(await late.accessToken()).toBe(jwt(NOW + 24 * HOUR));
+		expect(requests.map((body) => body.get('refresh_token'))).toEqual([
+			'seed',
+			'seed',
+		]);
+	});
+
 	test('a server and a CLI in one folder share the rotating chain', async () => {
 		// Like SoundCloud: every refresh revokes the refresh token it used.
 		let valid = 'seed';

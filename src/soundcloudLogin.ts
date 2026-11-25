@@ -107,13 +107,12 @@ export async function isSoundcloudLoginPage(page: Page): Promise<boolean> {
 				),
 		}))
 		.catch(() => null);
-	if (documentState) {
-		throwIfSoundcloudBlocked(
-			page.url(),
-			documentState.text,
-			page.frames().map((frame) => frame.url()),
-		);
-	}
+	// The block frame shows even when the page itself cannot be read.
+	throwIfSoundcloudBlocked(
+		page.url(),
+		documentState?.text ?? '',
+		page.frames().map((frame) => frame.url()),
+	);
 	return documentState
 		? isSoundcloudLoginDocument(
 				page.url(),
