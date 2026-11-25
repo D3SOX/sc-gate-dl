@@ -1,9 +1,14 @@
 import { Presets, SingleBar } from 'cli-progress';
 import type { Browser, CookieData, Frame, HTTPResponse, Page } from 'puppeteer';
 import { CancellableBrowserLaunch } from './browserLaunch';
+import {
+	firefoxRepostAvailable,
+	repostInFirefox,
+	SoundcloudBlockedError,
+} from './firefoxRepost';
 import type { ProgressCallback } from './hypeddit';
 import Selectors from './selectors';
-import { SoundcloudClient } from './soundcloud';
+import { hasSoundcloudLogin, SoundcloudClient } from './soundcloud';
 import { signInToSoundcloud, waitForSoundcloudLogin } from './soundcloudLogin';
 import type { HypedditConfig } from './types';
 import { loadCookies, timeout } from './utils';
@@ -781,42 +786,11 @@ export class DroploudDownloader {
 					'Droploud did not open the SoundCloud track. Popups may be blocked.',
 				);
 			}
-			let blocked = false;
-			// A rejected repost can also come back as a silent 403 with no block page.
-			// It answers 403 with a slider challenge first; only the last answer
-			// counts, after the challenge was solved and Repost clicked again.
-			let lastRepostStatus: number | null = null;
-			const onRepostResponse = (response: HTTPResponse) => {
-				if (
-					response.url().startsWith('https://graph.soundcloud.com/graphql') &&
-					/ToggleTrackRepost/.test(response.request().postData() ?? '')
-				)
-					lastRepostStatus = response.status();
-			};
-			popup.on('response', onRepostResponse);
-			try {
-				await this.performSoundcloudManualActions(popup, { repost: true });
-			} catch (error) {
-				// Droploud's own Verify below is the authority; report this only if it fails.
-				repostError = error instanceof Error ? error : new Error(String(error));
-				console.warn(`Droploud: ${repostError.message}`);
-			} finally {
-				// The Repost button flips even when SoundCloud's anti-bot rejects the
-				// request and swaps the track for a block page; nothing gets saved then.
-				popup.off('response', onRepostResponse);
-				const live = (await this.resolveSoundcloudPage(popup)) ?? popup;
-				// The popup keeps showing the rejection even when the API fallback
-				// saved the repost afterwards; then Droploud's Verify decides.
-				blocked =
-					!this.repostSavedViaApi &&
-					((lastRepostStatus === 403 && repostError !== null) ||
-						(await this.soundcloudBlocked(live)));
-				await this.closePage(popup);
-			}
-			if (blocked) {
-				throw new Error(
-					'SoundCloud blocked this browser or network ("You have been blocked"), so the repost Droploud requires was not saved. Wait a while or use another network, then retry.',
-				);
+			const firefox = firefoxRepostAvailable();
+			if (firefox) {
+				repostError = await this.repostInFirefox(firefox, popup);
+			} else {
+				repostError = await this.repostInPopup(popup);
 			}
 			await page.bringToFront().catch(() => {});
 		}
@@ -889,16 +863,10 @@ export class DroploudDownloader {
 		);
 	}
 
-	/**
-	 * Manual Droploud repost step: open the track in a full-size tab (Droploud's
-	 * window.open popup often never mounts `.soundActions`), then click Repost.
-	 */
-	private async performSoundcloudManualActions(
+	/** Waits for Droploud's popup to load the SoundCloud track; it can swap pages. */
+	private async soundcloudPopupTrack(
 		popup: Page,
-		actions: { repost: boolean },
-	) {
-		if (!actions.repost) return;
-
+	): Promise<{ page: Page; trackUrl: string }> {
 		const deadline = Date.now() + 25_000;
 		while (Date.now() < deadline) {
 			const live = await this.resolveSoundcloudPage(popup);
@@ -933,6 +901,115 @@ export class DroploudDownloader {
 		if (!trackUrl.includes('soundcloud.com')) {
 			throw new Error('SoundCloud popup never navigated to a track URL.');
 		}
+		return { page, trackUrl };
+	}
+
+	/**
+	 * Reposts in a plain Firefox, which SoundCloud's bot protection lets
+	 * through where the automated browser gets a challenge. Returns the error
+	 * to report if Droploud cannot verify the repost afterwards.
+	 */
+	private async repostInFirefox(
+		firefox: string,
+		popup: Page,
+	): Promise<Error | null> {
+		let trackUrl: string;
+		try {
+			({ trackUrl } = await this.soundcloudPopupTrack(popup));
+		} finally {
+			await this.closePage(popup);
+		}
+		this.emitProgress(
+			'handling_gates',
+			'Reposting on SoundCloud in Firefox...',
+			50,
+			{
+				currentGate: 'sc',
+				browserActive: true,
+			},
+		);
+		console.log(`Droploud: reposting ${trackUrl} in Firefox…`);
+		// SoundCloud's session from this browser; DataDome's cookie belongs to it.
+		const cookies = (
+			await this.browser.defaultBrowserContext().cookies()
+		).filter(
+			(cookie) =>
+				/(^|\.)soundcloud\.com$/i.test(cookie.domain.replace(/^\./, '')) &&
+				cookie.name !== 'datadome',
+		);
+		const soundcloud = hasSoundcloudLogin() ? new SoundcloudClient() : null;
+		try {
+			await repostInFirefox(firefox, trackUrl, cookies, {
+				isReposted: soundcloud
+					? () => soundcloud.isTrackReposted(trackUrl)
+					: undefined,
+				log: (line) => console.log(`Droploud: ${line}`),
+			});
+			return null;
+		} catch (error) {
+			if (error instanceof SoundcloudBlockedError) throw error;
+			const repostError =
+				error instanceof Error ? error : new Error(String(error));
+			// Droploud's own Verify is the authority; report this only if it fails.
+			console.warn(`Droploud: ${repostError.message}`);
+			return repostError;
+		}
+	}
+
+	/** Reposts in Droploud's popup of the automated browser. */
+	private async repostInPopup(popup: Page): Promise<Error | null> {
+		let blocked = false;
+		let repostError: Error | null = null;
+		// A rejected repost can also come back as a silent 403 with no block page.
+		// It answers 403 with a slider challenge first; only the last answer
+		// counts, after the challenge was solved and Repost clicked again.
+		let lastRepostStatus: number | null = null;
+		const onRepostResponse = (response: HTTPResponse) => {
+			if (
+				response.url().startsWith('https://graph.soundcloud.com/graphql') &&
+				/ToggleTrackRepost/.test(response.request().postData() ?? '')
+			)
+				lastRepostStatus = response.status();
+		};
+		popup.on('response', onRepostResponse);
+		try {
+			await this.performSoundcloudManualActions(popup, { repost: true });
+		} catch (error) {
+			// Droploud's own Verify below is the authority; report this only if it fails.
+			repostError = error instanceof Error ? error : new Error(String(error));
+			console.warn(`Droploud: ${repostError.message}`);
+		} finally {
+			// The Repost button flips even when SoundCloud's anti-bot rejects the
+			// request and swaps the track for a block page; nothing gets saved then.
+			popup.off('response', onRepostResponse);
+			const live = (await this.resolveSoundcloudPage(popup)) ?? popup;
+			// The popup keeps showing the rejection even when the API fallback
+			// saved the repost afterwards; then Droploud's Verify decides.
+			blocked =
+				!this.repostSavedViaApi &&
+				((lastRepostStatus === 403 && repostError !== null) ||
+					(await this.soundcloudBlocked(live)));
+			await this.closePage(popup);
+		}
+		if (blocked) {
+			throw new Error(
+				'SoundCloud blocked this browser or network ("You have been blocked"), so the repost Droploud requires was not saved. Wait a while or use another network, then retry.',
+			);
+		}
+		return repostError;
+	}
+
+	/**
+	 * Manual Droploud repost step: open the track in a full-size tab (Droploud's
+	 * window.open popup often never mounts `.soundActions`), then click Repost.
+	 */
+	private async performSoundcloudManualActions(
+		popup: Page,
+		actions: { repost: boolean },
+	) {
+		if (!actions.repost) return;
+
+		const { page, trackUrl } = await this.soundcloudPopupTrack(popup);
 
 		// Stay on Droploud's SoundCloud window — do not open a second tab or strip
 		// login cookies (that logged the session out).

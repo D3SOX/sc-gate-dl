@@ -14,7 +14,7 @@
 | [ffmpeg](https://ffmpeg.org) | Converting and tagging audio. It must be on your `PATH`. |
 | [unzip](https://infozip.sourceforge.net/UnZip.html) | Gates that deliver a ZIP archive. |
 | [yt-dlp](https://github.com/yt-dlp/yt-dlp) | Bandcamp links, and downloading the SoundCloud track itself. Bandcamp also needs yt-dlp's `curl_cffi` backend for Chrome impersonation: `python-curl-cffi` on Arch Linux, or `pip install "yt-dlp[default,curl-cffi]"`. |
-| [Firefox](https://www.mozilla.org/firefox/) (recommended) | SoundCloud sign-ins. SoundCloud's bot protection lets a plain Firefox through more reliably than an automated browser. Without it, you sign in in CloakBrowser. |
+| [Firefox](https://www.mozilla.org/firefox/) (recommended) | SoundCloud sign-ins, and Droploud's repost on Linux with an X11 display. SoundCloud's bot protection lets a plain Firefox through more reliably than an automated browser. Without it, you sign in in CloakBrowser, and Droploud reposts there too. |
 | [curl-impersonate](https://github.com/lexiforest/curl-impersonate) (recommended) | Reposts and other SoundCloud engagement requests, which SoundCloud's DataDome protection often blocks when Bun sends them. sc-gate-dl uses the newest `curl_chromeN` wrapper on your `PATH` and otherwise falls back to Bun's `fetch`, which may get a 403. |
 
 You also need accounts:
@@ -55,6 +55,8 @@ Sign in to SoundCloud and Spotify in the windows that open. In the Web UI, **Ini
 You sign in to SoundCloud once, in a Firefox window with a fresh temporary profile. On a server, that window opens on the server's display, which the [remote browser view](server.md#-remote-headed-browser-with-novnc) shows. The gate browser then takes over this session to get a login of its own, because it must not share one with the API. Without Firefox, sc-gate-dl warns and you sign in in a CloakBrowser window instead. A gate that hits SoundCloud's sign-in page in a visible browser runs the same flow.
 
 If SoundCloud shows "You have been blocked", reload the page. If that keeps happening, SoundCloud is blocking your network, so try again later or from another connection. The Firefox window uses your system proxy settings, and the CloakBrowser window uses `CLOAKBROWSER_PROXY`.
+
+Droploud makes you repost the track on SoundCloud, which SoundCloud's bot protection rejects from an automated browser. On Linux with an X11 display, such as the server's Xvfb, sc-gate-dl reposts in a plain Firefox with the gate browser's SoundCloud session instead. It reads the page through the accessibility bus (AT-SPI) and clicks Repost, and slides SoundCloud's verification slider if one appears, with X11 input, then closes Firefox. On other systems and on Wayland, the repost stays in CloakBrowser.
 
 sc-gate-dl saves the logins here:
 

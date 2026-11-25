@@ -31,7 +31,7 @@ All settings go in `.env`, which you create from [`.env.example`](../.env.exampl
 
 | Variable | Meaning |
 | --- | --- |
-| `SC_GATE_DL_FIREFOX` | Firefox build for SoundCloud sign-ins, as a path or command (for example `librewolf`), or `off` to sign in in CloakBrowser. |
+| `SC_GATE_DL_FIREFOX` | Firefox build for SoundCloud sign-ins and Droploud reposts, as a path or command (for example `librewolf`), or `off` to do both in CloakBrowser. |
 | `SC_API_PROXY`, `CLOAKBROWSER_PROXY`, `PROXY_URL` | Residential proxy for when SoundCloud blocks your IP. The gate browser uses `CLOAKBROWSER_PROXY` (SOCKS5 preferred) or `PROXY_URL`. SoundCloud API requests use the first one set, in this order. SoundCloud only blocks reposts, likes and comments this way, so cleanup works without a proxy. |
 | `CLOAKBROWSER_GEOIP` | `false` stops matching the browser's timezone and locale to the proxy's location. |
 | `BROWSER_HEADLESS` | Server: `false` makes headed the default browser mode for jobs that don't choose one. |
