@@ -3,6 +3,7 @@ import {
 	needsSourceLosslessProbe,
 	parseBrowserMode,
 	parseOutputFormat,
+	parseReviewTagsSetting,
 	parseUnattendedJobOptions,
 } from './jobOptions';
 import type { BrowserMode } from './types';
@@ -90,4 +91,25 @@ describe('parseUnattendedJobOptions', () => {
 			parseUnattendedJobOptions({ reviewTags: false }, null, linuxModes),
 		).toEqual({ browserMode: undefined, reviewTags: false });
 	});
+});
+
+describe('parseReviewTagsSetting', () => {
+	test.each([
+		[undefined, false],
+		['false', false],
+		[' FALSE ', false],
+		['true', true],
+		[' True ', true],
+	])('reads %p as %p', (value, expected) => {
+		expect(parseReviewTagsSetting(value)).toBe(expected);
+	});
+
+	test.each(['', '  ', 'yes', '1', 'maybe'])(
+		'rejects %p and names the setting',
+		(value) => {
+			expect(() => parseReviewTagsSetting(value)).toThrow(
+				'SC_GATE_DL_REVIEW_TAGS',
+			);
+		},
+	);
 });

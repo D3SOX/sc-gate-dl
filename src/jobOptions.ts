@@ -60,3 +60,14 @@ export function parseUnattendedJobOptions(
 	}
 	return { browserMode, reviewTags: body.reviewTags === true };
 }
+
+/** `SC_GATE_DL_REVIEW_TAGS`: unset means automatic processing (false). */
+export function parseReviewTagsSetting(value: string | undefined): boolean {
+	if (value === undefined) return false;
+	const text = value.trim().toLowerCase();
+	if (text === 'true') return true;
+	if (text === 'false') return false;
+	throw new Error(
+		`SC_GATE_DL_REVIEW_TAGS=${value} is not valid. Use true or false, or leave it unset for false.`,
+	);
+}

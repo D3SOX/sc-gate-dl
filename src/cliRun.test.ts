@@ -48,11 +48,14 @@ async function audioCodec(path: string): Promise<string> {
 	return codec;
 }
 
+let promptCalls = 0;
+
 class SilentAudioProcessor extends AudioProcessor {
 	override async promptForMetadata(): Promise<{
 		metadata: Record<string, string>;
 		retag: boolean;
 	}> {
+		promptCalls += 1;
 		return { metadata: {}, retag: true };
 	}
 }
@@ -104,7 +107,12 @@ describe('runCli entry wiring', () => {
 		provider: 'direct' | 'droploud' = 'direct',
 	): SoundcloudClient {
 		const client = {
-			getTrack: async () => ({ title: 'Song' }) as SoundcloudTrack,
+			getTrack: async () =>
+				({
+					title: 'Song',
+					genre: 'Techno',
+					user: { username: 'artist', full_name: '' },
+				}) as SoundcloudTrack,
 			getGateURL: async () => ({
 				url: gateUrl,
 				provider,
@@ -192,4 +200,53 @@ describe('runCli entry wiring', () => {
 			{ url: gateUrl, options: { trackUrl: soundcloudUrl } },
 		]);
 	}, 60_000);
+
+	describe('SC_GATE_DL_REVIEW_TAGS', () => {
+		beforeEach(() => {
+			promptCalls = 0;
+		});
+
+		test.each([undefined, 'false', ' FALSE '])(
+			'skips the tag review when the setting is %p',
+			async (value) => {
+				await runCli(
+					deps({
+						SC_GATE_DL_CLI_FORMAT: 'm4a-aac',
+						SC_GATE_DL_CLI_DIR: destination,
+						...(value === undefined ? {} : { SC_GATE_DL_REVIEW_TAGS: value }),
+					}),
+				);
+				expect(promptCalls).toBe(0);
+				expect(await readdir(destination)).toEqual(['song.m4a']);
+			},
+			60_000,
+		);
+
+		test('keeps the interactive review when the setting is true', async () => {
+			await runCli(
+				deps({
+					SC_GATE_DL_CLI_FORMAT: 'm4a-aac',
+					SC_GATE_DL_CLI_DIR: destination,
+					SC_GATE_DL_REVIEW_TAGS: 'true',
+				}),
+			);
+			expect(promptCalls).toBe(1);
+		}, 60_000);
+
+		test.each(['', 'yes'])(
+			'rejects %p before any gate action',
+			async (value) => {
+				await expect(
+					runCli(
+						deps({
+							SC_GATE_DL_CLI_FORMAT: 'm4a-aac',
+							SC_GATE_DL_CLI_DIR: destination,
+							SC_GATE_DL_REVIEW_TAGS: value,
+						}),
+					),
+				).rejects.toThrow('SC_GATE_DL_REVIEW_TAGS');
+				expect(gateCalls).toEqual([]);
+			},
+		);
+	});
 });

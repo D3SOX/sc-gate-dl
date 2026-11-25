@@ -8,12 +8,14 @@ import { DroploudDownloader } from './droploud';
 import { GaterushDownloader } from './gaterush';
 import { HypedditDownloader } from './hypeddit';
 import { HypedditHttpDownloader } from './hypedditHttp';
+import { parseReviewTagsSetting } from './jobOptions';
 import { MypresskitDownloader } from './mypresskit';
 import { PumpyoursoundDownloader } from './pumpyoursound';
 import { SoundcloudClient } from './soundcloud';
 import { StillhypeDownloader } from './stillhype';
 import type { HypedditConfig } from './types';
 import {
+	getDefaultMetadata,
 	getFfmpegBin,
 	getFfprobeBin,
 	isLosslessFormat,
@@ -72,6 +74,7 @@ export async function runCli(deps: CliDeps): Promise<void> {
 	const HYPEDDIT_NAME = env.HYPEDDIT_NAME;
 	const HYPEDDIT_EMAIL = env.HYPEDDIT_EMAIL;
 
+	const reviewTags = parseReviewTagsSetting(env.SC_GATE_DL_REVIEW_TAGS);
 	const config = await deps.loadConfig();
 	const cliOutput = cliOutputFromEnv(env);
 
@@ -391,8 +394,9 @@ export async function runCli(deps: CliDeps): Promise<void> {
 			steps: {
 				fetchArtwork: () =>
 					soundcloudClient.fetchArtwork(soundcloudClient.getArtworkUrl(track)),
-				promptMetadata: (filename) =>
-					audioProcessor.promptForMetadata(track, filename),
+				promptMetadata: reviewTags
+					? (filename) => audioProcessor.promptForMetadata(track, filename)
+					: async () => ({ metadata: getDefaultMetadata(track), retag: true }),
 				confirmRemoveSource: (filename) =>
 					confirm({
 						message: `Do you want to remove the ${isLosslessFormat(filename) ? 'lossless' : 'source'} file now?`,
