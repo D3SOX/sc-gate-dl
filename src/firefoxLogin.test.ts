@@ -1,5 +1,6 @@
 import { Database } from 'bun:sqlite';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { existsSync } from 'node:fs';
 import { chmod, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -142,6 +143,7 @@ import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 const profile = process.argv[process.argv.indexOf('--profile') + 1];
 writeFileSync(${JSON.stringify(join(dir, 'pid'))}, String(process.pid));
+writeFileSync(${JSON.stringify(join(dir, 'profile'))}, profile);
 if (${JSON.stringify(behaviour)} === 'quit') process.exit(0);
 await Bun.sleep(200);
 const db = new Database(join(profile, 'cookies.sqlite'));
@@ -175,6 +177,24 @@ setInterval(() => {}, 1000);
 		expect(() => process.kill(pid, 0)).toThrow();
 	});
 
+	test("creates a missing profile folder, such as Snap's before its first launch", async () => {
+		const profileRoot = join(dir, 'snap', 'firefox', 'common');
+		await signInWithFirefox(await fakeFirefox('sign in'), {
+			url: 'https://soundcloud.com/signin',
+			what: 'the test sign-in',
+			done: (cookies) => (cookies.length > 0 ? true : null),
+			pollMs: 50,
+			profileRoot,
+		});
+		const profile = await readFile(join(dir, 'profile'), 'utf8');
+		expect(profile.startsWith(join(profileRoot, 'sc-gate-dl-firefox-'))).toBe(
+			true,
+		);
+		// The temporary profile is gone again; the folder Snap uses stays.
+		expect(existsSync(profile)).toBe(false);
+		expect(existsSync(profileRoot)).toBe(true);
+	});
+
 	test('stops when Firefox is closed before the sign-in', async () => {
 		await expect(
 			signInWithFirefox(await fakeFirefox('quit'), {
@@ -187,9 +207,14 @@ setInterval(() => {}, 1000);
 	});
 });
 
-test('the profile goes where Snap Firefox can read it', () => {
-	expect(firefoxProfileRoot('/home/u', () => true)).toBe(
-		'/home/u/snap/firefox/common',
+test('the profile goes where Snap Firefox can read it, also before its first launch', () => {
+	const snapFolder = '/home/u/snap/firefox/common';
+	// Installed but never run: only the snap launcher exists.
+	expect(
+		firefoxProfileRoot('/home/u', (path) => path === '/snap/bin/firefox'),
+	).toBe(snapFolder);
+	expect(firefoxProfileRoot('/home/u', (path) => path === snapFolder)).toBe(
+		snapFolder,
 	);
 	expect(firefoxProfileRoot('/home/u', () => false)).toBe(tmpdir());
 });

@@ -1,6 +1,6 @@
 import { Database } from 'bun:sqlite';
 import { existsSync } from 'node:fs';
-import { copyFile, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { copyFile, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { CookieData } from 'puppeteer';
@@ -158,7 +158,10 @@ export function firefoxProfileRoot(
 	exists: (path: string) => boolean = existsSync,
 ): string {
 	const snapFolder = join(home, 'snap', 'firefox', 'common');
-	return exists(snapFolder) ? snapFolder : tmpdir();
+	// Snap creates its folder on the first launch, so check for the snap too.
+	return exists('/snap/bin/firefox') || exists(snapFolder)
+		? snapFolder
+		: tmpdir();
 }
 
 export interface FirefoxSignInOptions<T> {
@@ -169,6 +172,8 @@ export interface FirefoxSignInOptions<T> {
 	done: (cookies: CookieData[]) => T | null;
 	timeoutMs?: number;
 	pollMs?: number;
+	/** Where the temporary profile goes; see `firefoxProfileRoot`. */
+	profileRoot?: string;
 }
 
 /**
@@ -184,11 +189,11 @@ export async function signInWithFirefox<T>(
 		done,
 		timeoutMs = 10 * 60_000,
 		pollMs = 1_000,
+		profileRoot = firefoxProfileRoot(),
 	}: FirefoxSignInOptions<T>,
 ): Promise<{ result: T; cookies: CookieData[] }> {
-	const profile = await mkdtemp(
-		join(firefoxProfileRoot(), 'sc-gate-dl-firefox-'),
-	);
+	await mkdir(profileRoot, { recursive: true });
+	const profile = await mkdtemp(join(profileRoot, 'sc-gate-dl-firefox-'));
 	let firefoxProcess: ReturnType<typeof Bun.spawn> | null = null;
 	try {
 		await writeFile(join(profile, 'user.js'), `${PROFILE_PREFS}\n`);
