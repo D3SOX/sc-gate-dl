@@ -66,7 +66,9 @@ Userscript storage keys: `sc-gate-dl-webui-base`, `sc-gate-dl-api-base`,
 ## Test-only controls (not user configuration)
 
 `SC_GATE_DL_TEST_FIXTURE_JOB`, `SC_GATE_DL_TEST_FIXTURE_JOB_FORMAT` and
-`SC_GATE_DL_TEST_FIXTURE_JOB_FINISH` seed a fake job for HTTP tests.
+`SC_GATE_DL_TEST_FIXTURE_JOB_FINISH` seed a fake job for HTTP tests. They only take
+effect together with `SC_GATE_DL_ALLOW_TEST_FIXTURES=1`, so a stray variable cannot
+create a job in normal operation.
 `SC_GATE_DL_SECOND_VOLUME` points a delivery test at a second filesystem.
 Do not set them in a real deployment.
 

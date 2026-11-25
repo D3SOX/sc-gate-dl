@@ -121,6 +121,7 @@ describe('the review default decides between waiting and finalizing', () => {
 			...(process.env as Record<string, string>),
 			SC_COMMENT: 'test-comment',
 			SC_GATE_DL_PORT: String(port),
+			SC_GATE_DL_ALLOW_TEST_FIXTURES: '1',
 			SC_GATE_DL_TEST_FIXTURE_JOB: FIXTURE,
 			SC_GATE_DL_TEST_FIXTURE_JOB_FINISH: request,
 		};
@@ -186,4 +187,40 @@ describe('the review default decides between waiting and finalizing', () => {
 	test('an explicit request of true overrides a default of false', async () => {
 		expect(await stageAfterStart('false', 'true')).toBe('waiting_metadata');
 	}, 60_000);
+});
+
+describe('the test fixture hook stays out of normal operation', () => {
+	test('a stray fixture variable alone does not create a job', async () => {
+		const port = await freePort();
+		const env: Record<string, string> = {
+			...(process.env as Record<string, string>),
+			SC_COMMENT: 'test-comment',
+			SC_GATE_DL_PORT: String(port),
+			SC_GATE_DL_TEST_FIXTURE_JOB: 'stray.mp3',
+		};
+		delete env.SC_GATE_DL_ALLOW_TEST_FIXTURES;
+		const proc = spawn(['bun', 'run', './src/server.ts'], {
+			env,
+			stdout: 'pipe',
+			stderr: 'ignore',
+		});
+		try {
+			const base = `http://127.0.0.1:${port}`;
+			for (let attempt = 0; attempt < 100; attempt += 1) {
+				try {
+					if ((await fetch(base)).ok) break;
+				} catch {
+					// not listening yet
+				}
+				await Bun.sleep(100);
+			}
+			await Bun.sleep(300);
+			proc.kill();
+			const out = await new Response(proc.stdout).text();
+			expect(out).not.toContain('[test-fixture] job');
+		} finally {
+			proc.kill();
+			await proc.exited;
+		}
+	}, 30_000);
 });

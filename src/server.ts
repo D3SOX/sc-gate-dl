@@ -939,6 +939,7 @@ function wrapRoutes<Path extends string>(
 	return wrapped as Bun.Serve.Routes<undefined, Path>;
 }
 
+const TEST_FIXTURES_ALLOWED_ENV = 'SC_GATE_DL_ALLOW_TEST_FIXTURES';
 const TEST_FIXTURE_JOB_ENV = 'SC_GATE_DL_TEST_FIXTURE_JOB';
 const TEST_FIXTURE_JOB_FORMAT_ENV = 'SC_GATE_DL_TEST_FIXTURE_JOB_FORMAT';
 const TEST_FIXTURE_JOB_REVIEW_ENV = 'SC_GATE_DL_TEST_FIXTURE_JOB_FINISH';
@@ -946,7 +947,7 @@ const TEST_FIXTURE_JOB_REVIEW_ENV = 'SC_GATE_DL_TEST_FIXTURE_JOB_FINISH';
 /** Test hook: seed one job waiting for tags so HTTP tests need no live gate. */
 async function seedFixtureJob(): Promise<string | null> {
 	const fixture = process.env[TEST_FIXTURE_JOB_ENV];
-	if (!fixture) return null;
+	if (!fixture || process.env[TEST_FIXTURES_ALLOWED_ENV] !== '1') return null;
 	const format = (process.env[TEST_FIXTURE_JOB_FORMAT_ENV] ??
 		'mp3-320') as Job['outputFormat'];
 	const job = jobStore.create(

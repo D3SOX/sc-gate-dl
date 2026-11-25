@@ -76,6 +76,7 @@ describe('an existing MP3 cover survives an unattended metadata save', () => {
 				...(process.env as Record<string, string>),
 				SC_COMMENT: 'test-comment',
 				SC_GATE_DL_PORT: String(port),
+				SC_GATE_DL_ALLOW_TEST_FIXTURES: '1',
 				SC_GATE_DL_TEST_FIXTURE_JOB: FIXTURE,
 			},
 			stdout: 'pipe',
