@@ -16,6 +16,7 @@ import {
 	streamWithSuccessfulDownloadCleanup,
 } from './downloadRetention';
 import { DroploudDownloader } from './droploud';
+import { FangateDownloader } from './fangate';
 import { GaterushDownloader } from './gaterush';
 import { HypedditDownloader, type ProgressCallback } from './hypeddit';
 import { HypedditHttpDownloader } from './hypedditHttp';
@@ -340,6 +341,7 @@ const BROWSER_GATES = {
 	stillhype: ['StillHype', StillhypeDownloader],
 	pumpyoursound: ['PumpYourSound', PumpyoursoundDownloader],
 	mypresskit: ['MyPressKit', MypresskitDownloader],
+	fangate: ['fangate.eu', FangateDownloader],
 } satisfies Record<
 	string,
 	[string, new (config: HypedditConfig) => BrowserGateDownloader]
@@ -668,8 +670,6 @@ async function runDownloadProcess(jobId: string): Promise<void> {
 			downloadFilename =
 				await directDownloader.downloadAudio(downloadSourceUrl);
 			throwIfCancelled();
-		} else if (provider === 'fangate') {
-			throw unsupportedGateError(provider, downloadSourceUrl);
 		} else {
 			// Hypeddit: always try plain HTTP first (email + social skip gates).
 			jobStore.updateProgress(

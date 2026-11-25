@@ -1,0 +1,85 @@
+{
+  "uid": "fixture-session",
+  "download_gate": {
+    "slug": "user-2628-we-found-love-trance-edit",
+    "title": "We Found Love (Trance Edit)",
+    "description": null,
+    "public_url": "https://www.fangate.eu/tracks/user-2628-we-found-love-trance-edit",
+    "musical_genre": {
+      "id": 21,
+      "name": "Trance",
+      "slug": "trance",
+      "category": "Dance / Electronic",
+      "created": "2023-12-23T22:19:48.115337Z",
+      "updated": "2023-12-23T22:19:48.115350Z"
+    },
+    "meta_pixel_id": null,
+    "error": false,
+    "error_code": "",
+    "created": "2026-07-31T00:23:50.792147Z",
+    "updated": "2026-11-21T18:51:40.162413Z"
+  },
+  "completed": false,
+  "oauth_providers": [
+    "soundcloud"
+  ],
+  "missing_oauth_providers": [
+    "soundcloud"
+  ],
+  "extra_steps": {
+    "instagram_visit": {
+      "url": "https://www.instagram.com/mischkonsum._/",
+      "key": "instagram_visit"
+    }
+  },
+  "before_auth_steps": {
+    "instagram_visit": {
+      "url": "https://www.instagram.com/mischkonsum._/",
+      "key": "instagram_visit"
+    }
+  },
+  "after_auth_steps": {},
+  "steps": [
+    {
+      "key": "instagram_visit:28827",
+      "type": "visit",
+      "platform": "instagram",
+      "url": "https://www.instagram.com/mischkonsum._/",
+      "skippable": true,
+      "completed": false
+    },
+    {
+      "key": "soundcloud_oauth",
+      "type": "oauth",
+      "platform": "soundcloud",
+      "skippable": false,
+      "completed": false,
+      "actions": [
+        {
+          "action": "soundcloud_follow",
+          "display_name": "MISCHKONSUM",
+          "display_link": "https://soundcloud.com/djmischkonsum?utm_medium=api&utm_campaign=social_sharing&utm_source=id_308891"
+        },
+        {
+          "action": "soundcloud_like",
+          "display_name": "RIHANNA - WE FOUND LOVE (Trance Edit)",
+          "display_link": "https://soundcloud.com/djmischkonsum/rihanna-we-found-love-trance-edit?utm_medium=api&utm_campaign=social_sharing&utm_source=id_308891"
+        },
+        {
+          "action": "soundcloud_repost",
+          "display_name": "RIHANNA - WE FOUND LOVE (Trance Edit)",
+          "display_link": "https://soundcloud.com/djmischkonsum/rihanna-we-found-love-trance-edit?utm_medium=api&utm_campaign=social_sharing&utm_source=id_308891"
+        }
+      ]
+    }
+  ],
+  "progress": {
+    "total": 2,
+    "completed": 0
+  },
+  "extra": {
+    "instagram_url": "https://www.instagram.com/mischkonsum._/"
+  },
+  "created": "2026-11-25T08:44:38.271214Z",
+  "updated": "2026-11-25T08:44:38.271239Z"
+}

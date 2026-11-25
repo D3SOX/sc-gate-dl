@@ -5,6 +5,7 @@ import { type AppConfig, loadConfig, saveConfig } from './config';
 import { DirectDownloader } from './directDownload';
 import { DownloadgaterDownloader } from './downloadgater';
 import { DroploudDownloader } from './droploud';
+import { FangateDownloader } from './fangate';
 import { GaterushDownloader } from './gaterush';
 import { HypedditDownloader } from './hypeddit';
 import { HypedditHttpDownloader } from './hypedditHttp';
@@ -32,6 +33,12 @@ export type CliDeps = {
 	saveConfig: (config: AppConfig) => Promise<void>;
 	createSoundcloudClient: () => SoundcloudClient;
 	createDirectDownloader: () => Pick<DirectDownloader, 'downloadAudio'>;
+	createFangateDownloader: (
+		config: HypedditConfig,
+	) => Pick<
+		FangateDownloader,
+		'initialize' | 'prepareLogins' | 'downloadAudio' | 'close'
+	>;
 	createDroploudDownloader: (
 		config: HypedditConfig,
 	) => Pick<
@@ -53,6 +60,7 @@ export const defaultCliDeps: CliDeps = {
 	createSoundcloudClient: () => new SoundcloudClient(),
 	createDirectDownloader: () => new DirectDownloader(),
 	createDroploudDownloader: (config) => new DroploudDownloader(config),
+	createFangateDownloader: (config) => new FangateDownloader(config),
 	createAudioProcessor: (ffmpegBin, ffprobeBin, bitrateSetting) =>
 		new AudioProcessor(ffmpegBin, ffprobeBin, bitrateSetting),
 };
@@ -315,7 +323,21 @@ export async function runCli(deps: CliDeps): Promise<void> {
 			await pumpyoursoundDownloader.close();
 		}
 	} else if (gate.provider === 'fangate') {
-		throw unsupportedGateError(gate.provider, gateUrl);
+		usedBrowser = true;
+		const fangateDownloader = deps.createFangateDownloader(gateConfig);
+		try {
+			await fangateDownloader.initialize();
+			if (initializeLogins) {
+				await fangateDownloader.prepareLogins();
+				if (config) {
+					await deps.saveConfig({ ...config, initializeLogins: false });
+					console.log('✓ Updated config.json: initializeLogins set to false');
+				}
+			}
+			downloadFilename = await fangateDownloader.downloadAudio(gateUrl);
+		} finally {
+			await fangateDownloader.close();
+		}
 	} else if (gate.provider === 'mypresskit') {
 		usedBrowser = true;
 		const mypresskitDownloader = new MypresskitDownloader(gateConfig);
