@@ -334,7 +334,15 @@ try {
 	if (downloadFilename) {
 		downloadFilename = await resolveDownloadedAudio(downloadFilename);
 		const artworkUrl = soundcloudClient.getArtworkUrl(track);
-		const artwork = await soundcloudClient.fetchArtwork(artworkUrl);
+		// A missing cover must not lose a finished download.
+		const artwork = await soundcloudClient
+			.fetchArtwork(artworkUrl)
+			.catch((error) => {
+				console.warn(
+					`Failed to fetch artwork: ${error instanceof Error ? error.message : String(error)}`,
+				);
+				return null;
+			});
 
 		const audioProcessor = new AudioProcessor(ffmpegBin, ffprobeBin);
 		const metadata = await audioProcessor.promptForMetadata(
@@ -348,12 +356,11 @@ try {
 				: 'never'
 			: 'prompt';
 
-		await audioProcessor.processAudio(
-			downloadFilename,
-			metadata,
+		await audioProcessor.processAudio(downloadFilename, metadata, {
 			artwork,
 			losslessHandling,
-		);
+			sourceUrl: soundcloudUrl,
+		});
 	}
 } catch (error) {
 	if (error instanceof Error && error.name === 'ExitPromptError') {

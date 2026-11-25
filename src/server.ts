@@ -168,9 +168,6 @@ async function finalizeJobFile(
 			);
 		}
 	} else {
-		if (!options.artwork?.buffer) {
-			throw new Error('No artwork available');
-		}
 		jobStore.updateProgress(
 			job.id,
 			'processing_audio',
@@ -180,9 +177,12 @@ async function finalizeJobFile(
 		const outputPath = await audioProcessor.processAudio(
 			sourceFilename,
 			metadata,
-			options.artwork,
-			'always',
-			job.outputFormat,
+			{
+				artwork: options.artwork,
+				losslessHandling: 'always',
+				outputFormat: job.outputFormat,
+				sourceUrl: job.soundcloudUrl,
+			},
 		);
 		outputFilename = basename(outputPath);
 		// Conversion may have deleted the source, so point the job at the new
@@ -731,7 +731,7 @@ async function runDownloadProcess(jobId: string): Promise<void> {
 			const existingMetadata =
 				await audioProcessor.readMp3Metadata(downloadedPath);
 			const existingArtwork =
-				await audioProcessor.extractMp3CoverArt(downloadedPath);
+				await audioProcessor.extractCoverArt(downloadedPath);
 			jobStore.update(jobId, {
 				existingMetadata: existingMetadata ?? {},
 				existingArtworkBuffer: existingArtwork?.buffer ?? null,
@@ -1744,17 +1744,10 @@ const server = Bun.serve({
 						);
 					}
 
-					const keepsFile = job.outputFormat === 'original' || preserveMetadata;
 					const artwork =
 						customArtwork ||
 						jobArtwork(job) ||
 						(job.destination ? existingJobArtwork(job) : null);
-					if (!keepsFile && !artwork?.buffer) {
-						return jsonResponse(
-							{ error: 'No artwork available' },
-							{ status: 400 },
-						);
-					}
 
 					// A concurrent submit or cancel may have won while the body was read.
 					if (notWaiting()) {
