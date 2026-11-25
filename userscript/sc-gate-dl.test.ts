@@ -139,7 +139,7 @@ describe('store link branding', () => {
 	});
 });
 
-describe('fangate.eu store links', () => {
+describe('Fangate store links', () => {
 	test('recognizes track pages on the bare, app and www hosts', () => {
 		for (const host of ['fangate.eu', 'app.fangate.eu', 'www.fangate.eu']) {
 			expect(

@@ -371,7 +371,7 @@ export function validateGateUrl(value: string): true | string {
 	if (/^https?:\/\/\S+/i.test(value.trim())) {
 		return true;
 	}
-	return 'A valid Hypeddit, Droploud, GateRush, DownloadGater, StillHype, PumpYourSound, MyPressKit, fangate.eu, Bandcamp, direct download, SoundCloud, or resolvable http(s) URL is required';
+	return 'A valid Hypeddit, Droploud, GateRush, DownloadGater, StillHype, PumpYourSound, MyPressKit, Fangate, Bandcamp, direct download, SoundCloud, or resolvable http(s) URL is required';
 }
 
 function normalizeGateUrl(
@@ -746,7 +746,7 @@ function collectUnresolvedHttpCandidates(
 
 /**
  * Prefer traditional unlock gates (Hypeddit, Droploud, GateRush, DownloadGater,
- * StillHype, PumpYourSound, MyPressKit, fangate.eu) from purchase_url or description over
+ * StillHype, PumpYourSound, MyPressKit, Fangate) from purchase_url or description over
  * Bandcamp / SoundCloud store links, then direct file links (Dropbox, Drive, …).
  */
 export function extractGateUrl(track: SoundcloudTrack): GateUrlMatch | null {

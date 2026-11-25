@@ -301,7 +301,7 @@ describe('extractGateUrl', () => {
 	});
 });
 
-describe('fangate.eu URLs', () => {
+describe('Fangate URLs', () => {
 	test('match on the bare, app and www hosts, upgraded to https', () => {
 		for (const host of ['fangate.eu', 'app.fangate.eu', 'www.fangate.eu']) {
 			expect(
@@ -315,7 +315,7 @@ describe('fangate.eu URLs', () => {
 		}
 	});
 
-	test('lookalike hosts are not fangate.eu', () => {
+	test('lookalike hosts are not Fangate', () => {
 		for (const url of [
 			'https://notfangate.eu/tracks/song',
 			'https://fangate.eu.example.com/tracks/song',
@@ -325,7 +325,7 @@ describe('fangate.eu URLs', () => {
 		}
 	});
 
-	test('a fangate.eu link in the description wins over a Bandcamp purchase_url', () => {
+	test('a Fangate link in the description wins over a Bandcamp purchase_url', () => {
 		expect(
 			extractGateUrl({
 				purchase_url: 'https://artist.bandcamp.com/track/x',

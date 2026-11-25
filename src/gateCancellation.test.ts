@@ -101,7 +101,7 @@ describe('browser gate cancellation', () => {
 		expect(events).toEqual(['direct', 'close']);
 	});
 
-	test('fangate.eu aborts its API calls and file download before closing', async () => {
+	test('Fangate aborts its API calls and file download before closing', async () => {
 		const downloader = new FangateDownloader(config);
 		const abortController = new AbortController();
 		const events: string[] = [];

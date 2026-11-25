@@ -1685,7 +1685,7 @@ export default function App() {
 										? 'Paste a different gate link, or download the SoundCloud stream with yt-dlp.'
 										: skipAutomaticHypedditFetch
 											? 'Automatic lookup is off. Paste the gate link, or download the SoundCloud stream with yt-dlp instead.'
-											: 'Could not find a gate link on this track. Paste one from Hypeddit, Droploud, GateRush, DownloadGater, StillHype, PumpYourSound, MyPressKit, fangate.eu or Bandcamp, or a direct file link. You can also download the SoundCloud stream with yt-dlp.'}
+											: 'Could not find a gate link on this track. Paste one from Hypeddit, Droploud, GateRush, DownloadGater, StillHype, PumpYourSound, MyPressKit, Fangate or Bandcamp, or a direct file link. You can also download the SoundCloud stream with yt-dlp.'}
 								</p>
 							</div>
 							<form onSubmit={handleHypedditSubmit} className="step-block">
@@ -2213,7 +2213,7 @@ export default function App() {
 						</div>
 						<p>
 							Works with Hypeddit, Droploud, GateRush, DownloadGater, StillHype,
-							PumpYourSound, MyPressKit, fangate.eu, Bandcamp and direct file
+							PumpYourSound, MyPressKit, Fangate, Bandcamp and direct file
 							links.
 						</p>
 						<p>

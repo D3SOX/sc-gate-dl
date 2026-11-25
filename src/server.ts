@@ -320,7 +320,7 @@ const BROWSER_GATES = {
 	stillhype: ['StillHype', StillhypeDownloader],
 	pumpyoursound: ['PumpYourSound', PumpyoursoundDownloader],
 	mypresskit: ['MyPressKit', MypresskitDownloader],
-	fangate: ['fangate.eu', FangateDownloader],
+	fangate: ['Fangate', FangateDownloader],
 } satisfies Record<
 	string,
 	[string, new (config: HypedditConfig) => BrowserGateDownloader]

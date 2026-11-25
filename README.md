@@ -2,7 +2,7 @@
 
 sc-gate-dl downloads SoundCloud tracks that sit behind a download gate and tags them with the track's SoundCloud metadata and artwork. You give it a SoundCloud link, and it finds the gate, unlocks it, and saves the file. It works from the command line, from a Web UI, and from a userscript on soundcloud.com.
 
-Supported sources: Hypeddit, Droploud, GateRush, DownloadGater, StillHype, PumpYourSound, MyPressKit, fangate.eu, Bandcamp, and direct file links.
+Supported sources: Hypeddit, Droploud, GateRush, DownloadGater, StillHype, PumpYourSound, MyPressKit, Fangate, Bandcamp, and direct file links.
 
 - [✨ Features](#-features)
 - [📋 Requirements](#-requirements)
@@ -16,7 +16,7 @@ Supported sources: Hypeddit, Droploud, GateRush, DownloadGater, StillHype, PumpY
 
 ## ✨ Features
 
-- 🎵 Unlocks Hypeddit, Droploud, GateRush, DownloadGater, StillHype, PumpYourSound, MyPressKit and fangate.eu gates, and downloads Bandcamp releases and direct file links such as Dropbox `dl=1` links.
+- 🎵 Unlocks Hypeddit, Droploud, GateRush, DownloadGater, StillHype, PumpYourSound, MyPressKit and Fangate gates, and downloads Bandcamp releases and direct file links such as Dropbox `dl=1` links.
 - 🔄 Finds the gate in the track description, the purchase link, or behind SoundCloud's Free download box.
 - ⚡ Skips the browser for gates that are only checked in the browser, which covers most Hypeddit gates and makes them much faster.
 - 🎧 Unpacks ZIP downloads, prefers the lossless file, and converts it to MP3, M4A/AAC or FLAC.
@@ -284,7 +284,7 @@ In the browser, sc-gate-dl handles each Hypeddit step:
 | Spotify | Authorizes Spotify access. |
 | Download | Starts the download. |
 
-The other sites have their own downloaders with similar email and social steps. StillHype, PumpYourSound, MyPressKit and fangate.eu check SoundCloud follows, likes, reposts and comments on their server, so they need a real SoundCloud OAuth connection. fangate.eu runs through the site's session API: sc-gate-dl skips visit steps that can be skipped, runs SoundCloud OAuth in the browser, and stops with the step's name at any other step.
+The other sites have their own downloaders with similar email and social steps. StillHype, PumpYourSound, MyPressKit and Fangate check SoundCloud follows, likes, reposts and comments on their server, so they need a real SoundCloud OAuth connection. Fangate runs through the site's session API: sc-gate-dl skips visit steps that can be skipped, runs SoundCloud OAuth in the browser, and stops with the step's name at any other step.
 
 ### 💿 Bandcamp
 

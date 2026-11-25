@@ -107,11 +107,11 @@ try {
 		} else {
 			gateUrl = await input({
 				message:
-					'Enter a Hypeddit, Droploud, GateRush, DownloadGater, StillHype, PumpYourSound, MyPressKit, fangate.eu, Bandcamp, direct download, or smart-link URL',
+					'Enter a Hypeddit, Droploud, GateRush, DownloadGater, StillHype, PumpYourSound, MyPressKit, Fangate, Bandcamp, direct download, or smart-link URL',
 				validate: async (value) => {
 					const resolved = await resolveGateUrlOrFollow(value);
 					if (!resolved || resolved.provider === 'soundcloud') {
-						return 'A valid Hypeddit, Droploud, GateRush, DownloadGater, StillHype, PumpYourSound, MyPressKit, fangate.eu, Bandcamp, direct download, or resolvable gate URL is required';
+						return 'A valid Hypeddit, Droploud, GateRush, DownloadGater, StillHype, PumpYourSound, MyPressKit, Fangate, Bandcamp, direct download, or resolvable gate URL is required';
 					}
 					return true;
 				},
@@ -133,7 +133,7 @@ try {
 
 	if (!gateUrl || !gate) {
 		throw new Error(
-			'A valid Hypeddit, Droploud, GateRush, DownloadGater, StillHype, PumpYourSound, MyPressKit, fangate.eu, Bandcamp, direct download, or SoundCloud URL is required',
+			'A valid Hypeddit, Droploud, GateRush, DownloadGater, StillHype, PumpYourSound, MyPressKit, Fangate, Bandcamp, direct download, or SoundCloud URL is required',
 		);
 	}
 

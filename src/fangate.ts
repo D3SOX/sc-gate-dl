@@ -67,7 +67,7 @@ export function fangateStepAction(step: FangateStep): FangateStepAction {
 	if (step.type === 'visit' && step.skippable) return 'skip';
 	if (step.type === 'oauth' && step.platform === 'soundcloud') return 'oauth';
 	throw new Error(
-		`fangate.eu step "${step.key}" (${step.type} on ${step.platform}) is not supported yet.`,
+		`Fangate step "${step.key}" (${step.type} on ${step.platform}) is not supported yet.`,
 	);
 }
 
@@ -93,7 +93,7 @@ export async function runFangateSession(
 		if (!step) return api.downloadLink(session.uid);
 		if (round === MAX_STEPS) {
 			throw new Error(
-				`fangate.eu session still had open steps after ${MAX_STEPS} steps.`,
+				`Fangate session still had open steps after ${MAX_STEPS} steps.`,
 			);
 		}
 
@@ -112,13 +112,13 @@ export async function runFangateSession(
 			!session.steps.find((s) => s.key === step.key)?.completed
 		) {
 			throw new Error(
-				`fangate.eu step "${step.key}" did not complete after the SoundCloud login.`,
+				`Fangate step "${step.key}" did not complete after the SoundCloud login.`,
 			);
 		}
 	}
 }
 
-/** The fangate.eu session JSON API; `signal` aborts every request. */
+/** The Fangate session JSON API; `signal` aborts every request. */
 export function createFangateApi(signal?: AbortSignal): FangateApi {
 	const request = async <T>(path: string, body?: unknown): Promise<T> => {
 		const response = await fetch(`${API}${path}`, {
@@ -138,7 +138,7 @@ export function createFangateApi(signal?: AbortSignal): FangateApi {
 		if (!response.ok) {
 			const detail = (await response.text().catch(() => '')).slice(0, 200);
 			throw new Error(
-				`fangate.eu API ${path} answered HTTP ${response.status}${detail ? `: ${detail}` : ''}`,
+				`Fangate API ${path} answered HTTP ${response.status}${detail ? `: ${detail}` : ''}`,
 			);
 		}
 		return (await response.json()) as T;
@@ -161,7 +161,7 @@ export function createFangateApi(signal?: AbortSignal): FangateApi {
 				`${session(uid)}download_link/`,
 			);
 			if (typeof url !== 'string' || !url) {
-				throw new Error('fangate.eu did not return a download link.');
+				throw new Error('Fangate did not return a download link.');
 			}
 			return url;
 		},
@@ -215,16 +215,16 @@ export class FangateDownloader {
 
 	async downloadAudio(url: string): Promise<string | null> {
 		const slug = gateSlugFromUrl(url);
-		if (!slug) throw new Error(`Not a fangate.eu gate URL: ${url}`);
-		console.log('Opening fangate.eu gate...');
-		this.emitProgress('handling_gates', 'Opening fangate.eu gate...', 25);
+		if (!slug) throw new Error(`Not a Fangate gate URL: ${url}`);
+		console.log('Opening Fangate gate...');
+		this.emitProgress('handling_gates', 'Opening Fangate gate...', 25);
 
 		const api = createFangateApi(this.abortController.signal);
 		const link = await runFangateSession(api, slug, {
 			oauth: (uid) => this.connectSoundcloud(api, uid),
 			onStep: (step, action) => {
 				if (action !== 'skip') return;
-				console.log(`fangate.eu: skipping ${step.key}`);
+				console.log(`Fangate: skipping ${step.key}`);
 				this.emitProgress(
 					'handling_gates',
 					`Skipping the ${step.platform} step...`,
@@ -286,7 +286,7 @@ export class FangateDownloader {
 	/**
 	 * SoundCloud opens in a popup or in the same tab, and may ask for a login
 	 * before or after its Allow page, so check every tab each round until
-	 * fangate.eu reports the step done.
+	 * Fangate reports the step done.
 	 */
 	private async completeSoundcloudOauth(api: FangateApi, uid: string) {
 		const browserActive = this.config.browserMode === 'headed';
@@ -304,7 +304,7 @@ export class FangateDownloader {
 				)
 			) {
 				await saveSoundcloudLogin(this.browser.defaultBrowserContext());
-				console.log('fangate.eu: SoundCloud step completed.');
+				console.log('Fangate: SoundCloud step completed.');
 				return;
 			}
 
@@ -342,7 +342,7 @@ export class FangateDownloader {
 			if (Date.now() - lastAllowAt > 4_000) {
 				for (const candidate of pages) {
 					if (await clickSoundcloudAllow(candidate)) {
-						console.log('fangate.eu: clicked SoundCloud Allow');
+						console.log('Fangate: clicked SoundCloud Allow');
 						lastAllowAt = Date.now();
 						break;
 					}
@@ -351,7 +351,7 @@ export class FangateDownloader {
 			await timeout(1_000);
 		}
 		throw new Error(
-			'Timed out waiting for fangate.eu to confirm the SoundCloud login.',
+			'Timed out waiting for Fangate to confirm the SoundCloud login.',
 		);
 	}
 }
