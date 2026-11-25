@@ -33,6 +33,7 @@ import {
 } from '../src/directDownload';
 import { DownloadgaterDownloader } from '../src/downloadgater';
 import { DroploudDownloader } from '../src/droploud';
+import { FangateDownloader } from '../src/fangate';
 import { GaterushDownloader } from '../src/gaterush';
 import { HypedditDownloader } from '../src/hypeddit';
 import { HypedditHttpDownloader } from '../src/hypedditHttp';
@@ -59,6 +60,7 @@ const BROWSER_GATES = {
 	stillhype: StillhypeDownloader,
 	pumpyoursound: PumpyoursoundDownloader,
 	mypresskit: MypresskitDownloader,
+	fangate: FangateDownloader,
 };
 
 const config = await loadConfig();

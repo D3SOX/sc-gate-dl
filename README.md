@@ -1,10 +1,10 @@
 # sc-gate-dl
 
-Download and tag SoundCloud tracks unlocked via Hypeddit, Droploud, GateRush, DownloadGater, StillHype, PumpYourSound, MyPressKit, Bandcamp, or a direct download link.
+Download and tag SoundCloud tracks unlocked via Hypeddit, Droploud, GateRush, DownloadGater, StillHype, PumpYourSound, MyPressKit, fangate.eu, Bandcamp, or a direct download link.
 
 ## Features
 
-- 🎵 Automatically download audio from Hypeddit, Droploud, GateRush, DownloadGater, StillHype, PumpYourSound, MyPressKit, Bandcamp, and direct file links (e.g. Dropbox `dl=1`)
+- 🎵 Automatically download audio from Hypeddit, Droploud, GateRush, DownloadGater, StillHype, PumpYourSound, MyPressKit, fangate.eu, Bandcamp, and direct file links (e.g. Dropbox `dl=1`)
 - ⚡ Browserless fast path that skips the browser for gates that don't need real verification (see [How It Works](#how-it-works))
 - 🔄 Handles multiple gate types (see [How It Works](#how-it-works))
 - 📝 Fetches metadata from the provided SoundCloud link
@@ -606,7 +606,7 @@ Panel size/position is remembered in `localStorage` (`sc-gate-dl-panel-geom`).
 - Spotify gate: Authorizes Spotify access
 - Download gate: Triggers the audio download
 
-Droploud, GateRush, DownloadGater, StillHype, PumpYourSound, and MyPressKit gates are handled via their own downloaders with similar email / social unlock flows. StillHype, PumpYourSound, and MyPressKit require a real SoundCloud OAuth connection (follow / like / repost / comment are verified server-side). Traditional gate URLs in the track description are preferred over Bandcamp/SoundCloud store links in `purchase_url`. When a track has no `purchase_url` and the description has no gate, the gate behind the track's "Free download" box (SoundCloud's buy module) is used.
+Droploud, GateRush, DownloadGater, StillHype, PumpYourSound, MyPressKit, and fangate.eu gates are handled via their own downloaders with similar email / social unlock flows. StillHype, PumpYourSound, MyPressKit, and fangate.eu require a real SoundCloud OAuth connection (follow / like / repost / comment are verified server-side). fangate.eu gates run through the site's session API: skippable visit steps are skipped, SoundCloud OAuth runs in the browser, and any other step stops the download with the step named. Traditional gate URLs in the track description are preferred over Bandcamp/SoundCloud store links in `purchase_url`. When a track has no `purchase_url` and the description has no gate, the gate behind the track's "Free download" box (SoundCloud's buy module) is used.
 
 **Bandcamp / yt-dlp**: When a SoundCloud track’s purchase URL (or description) points at Bandcamp instead of a gate, the file is downloaded with [yt-dlp](https://github.com/yt-dlp/yt-dlp) (browserless). For Bandcamp album links, the matching track is selected from the SoundCloud title; if auto-match fails, the CLI and Web UI let you pick a track from the album. Traditional unlock gates still take priority if both are present. If no gate or Bandcamp URL is found, the CLI and Web UI can fall back to downloading the SoundCloud track itself via yt-dlp.
 

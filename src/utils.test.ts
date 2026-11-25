@@ -300,6 +300,54 @@ describe('extractGateUrl', () => {
 	});
 });
 
+describe('fangate.eu URLs', () => {
+	test('match on the bare, app and www hosts, upgraded to https', () => {
+		for (const host of ['fangate.eu', 'app.fangate.eu', 'www.fangate.eu']) {
+			expect(
+				resolveGateProviderUrl(
+					`Free download: http://${host}/tracks/user-2628-we-found-love-trance-edit.`,
+				),
+			).toEqual({
+				url: `https://${host}/tracks/user-2628-we-found-love-trance-edit`,
+				provider: 'fangate',
+			});
+		}
+	});
+
+	test('lookalike hosts are not fangate.eu', () => {
+		for (const url of [
+			'https://notfangate.eu/tracks/song',
+			'https://fangate.eu.example.com/tracks/song',
+			'https://fangate.example/tracks/song',
+		]) {
+			expect(resolveGateProviderUrl(url)?.provider).not.toBe('fangate');
+		}
+	});
+
+	test('a fangate.eu link in the description wins over a Bandcamp purchase_url', () => {
+		expect(
+			extractGateUrl({
+				purchase_url: 'https://artist.bandcamp.com/track/x',
+				description:
+					'Free: https://www.fangate.eu/tracks/user-2628-we-found-love-trance-edit',
+			} as Parameters<typeof extractGateUrl>[0]),
+		).toEqual({
+			url: 'https://www.fangate.eu/tracks/user-2628-we-found-love-trance-edit',
+			provider: 'fangate',
+			type: 'description',
+		});
+	});
+
+	test('a PumpYourSound fangate is still PumpYourSound', () => {
+		expect(
+			extractGateUrl({
+				purchase_url: 'https://pumpyoursound.com/f/pys/aguanile-remix/224680',
+				description: '',
+			} as Parameters<typeof extractGateUrl>[0])?.provider,
+		).toBe('pumpyoursound');
+	});
+});
+
 // Excerpt of soundcloud.com/n/embeds/buy-module/module for a track whose
 // purchase_url is null: SoundCloud wraps the target in gate.sc.
 const BUY_MODULE_HTML =

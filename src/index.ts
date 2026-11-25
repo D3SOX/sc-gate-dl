@@ -5,6 +5,7 @@ import { loadConfig, saveConfig } from './config';
 import { DirectDownloader } from './directDownload';
 import { DownloadgaterDownloader } from './downloadgater';
 import { DroploudDownloader } from './droploud';
+import { FangateDownloader } from './fangate';
 import { GaterushDownloader } from './gaterush';
 import { HypedditDownloader } from './hypeddit';
 import { HypedditHttpDownloader } from './hypedditHttp';
@@ -82,11 +83,11 @@ try {
 		} else {
 			gateUrl = await input({
 				message:
-					'Enter a Hypeddit, Droploud, GateRush, DownloadGater, StillHype, PumpYourSound, MyPressKit, Bandcamp, direct download, or smart-link URL',
+					'Enter a Hypeddit, Droploud, GateRush, DownloadGater, StillHype, PumpYourSound, MyPressKit, fangate.eu, Bandcamp, direct download, or smart-link URL',
 				validate: async (value) => {
 					const resolved = await resolveGateUrlOrFollow(value);
 					if (!resolved || resolved.provider === 'soundcloud') {
-						return 'A valid Hypeddit, Droploud, GateRush, DownloadGater, StillHype, PumpYourSound, MyPressKit, Bandcamp, direct download, or resolvable gate URL is required';
+						return 'A valid Hypeddit, Droploud, GateRush, DownloadGater, StillHype, PumpYourSound, MyPressKit, fangate.eu, Bandcamp, direct download, or resolvable gate URL is required';
 					}
 					return true;
 				},
@@ -108,7 +109,7 @@ try {
 
 	if (!gateUrl || !gate) {
 		throw new Error(
-			'A valid Hypeddit, Droploud, GateRush, DownloadGater, StillHype, PumpYourSound, MyPressKit, Bandcamp, direct download, or SoundCloud URL is required',
+			'A valid Hypeddit, Droploud, GateRush, DownloadGater, StillHype, PumpYourSound, MyPressKit, fangate.eu, Bandcamp, direct download, or SoundCloud URL is required',
 		);
 	}
 
@@ -287,6 +288,22 @@ try {
 			downloadFilename = await mypresskitDownloader.downloadAudio(gateUrl);
 		} finally {
 			await mypresskitDownloader.close();
+		}
+	} else if (gate.provider === 'fangate') {
+		usedBrowser = true;
+		const fangateDownloader = new FangateDownloader(gateConfig);
+		try {
+			await fangateDownloader.initialize();
+			if (initializeLogins) {
+				await fangateDownloader.prepareLogins();
+				if (config) {
+					await saveConfig({ ...config, initializeLogins: false });
+					console.log('✓ Updated config.json: initializeLogins set to false');
+				}
+			}
+			downloadFilename = await fangateDownloader.downloadAudio(gateUrl);
+		} finally {
+			await fangateDownloader.close();
 		}
 	} else {
 		// Hypeddit: always try plain HTTP first (email + social skip gates).

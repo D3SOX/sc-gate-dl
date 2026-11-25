@@ -347,6 +347,15 @@ export const LIVE_CASES: Record<string, LiveCase[]> = {
 				'SoundCloud steps on a secret-link track, instagram, email-capture, spotify-follow/save',
 		},
 	],
+	'fangate.eu': [
+		{
+			name: 'Instagram visit and SoundCloud OAuth',
+			url: 'https://app.fangate.eu/tracks/user-2628-we-found-love-trance-edit',
+			provider: 'fangate',
+			covers:
+				'session API, skippable instagram visit, soundcloud OAuth (follow, like, repost)',
+		},
+	],
 	Bandcamp: [
 		{
 			name: 'name-your-price track',
