@@ -224,3 +224,23 @@ describe('the test fixture hook stays out of normal operation', () => {
 		}
 	}, 30_000);
 });
+
+describe('account access on the server', () => {
+	test('capabilities report the SoundCloud state and Spotify as optional, with no token', async () => {
+		await withServer(undefined, async (base) => {
+			const body = (await (await fetch(`${base}/api/capabilities`)).json()) as {
+				account?: {
+					soundcloud?: string;
+					spotify?: { state?: string; required?: boolean };
+				};
+			};
+			expect(typeof body.account?.soundcloud).toBe('string');
+			expect(body.account?.spotify?.required).toBe(false);
+			const text = JSON.stringify(body);
+			expect(text).not.toContain(process.env.SC_OAUTH_TOKEN ?? 'no-token-set');
+			expect(text).not.toContain(
+				process.env.SC_REFRESH_TOKEN ?? 'no-token-set',
+			);
+		});
+	}, 30_000);
+});

@@ -135,6 +135,7 @@ describe('runCli entry wiring', () => {
 			loadConfig: async () => config,
 			saveConfig: async () => {},
 			createSoundcloudClient: fakeSoundcloudClient,
+			checkSoundcloudAccess: async () => ({ state: 'valid' }),
 			createDroploudDownloader: () => ({
 				initialize: async () => {},
 				prepareLogins: async () => {},
@@ -327,6 +328,27 @@ describe('runCli entry wiring', () => {
 		});
 		expect(received).toEqual(['https://app.fangate.eu/tracks/user-1-song']);
 		expect(gateCalls).toEqual([]);
+		expect(await readdir(destination)).toEqual(['song.m4a']);
+	}, 60_000);
+
+	test('the startup access check runs before the track is fetched and never blocks the run', async () => {
+		const order: string[] = [];
+		await runCli({
+			...deps({
+				SC_GATE_DL_CLI_FORMAT: 'm4a-aac',
+				SC_GATE_DL_CLI_DIR: destination,
+			}),
+			checkSoundcloudAccess: async (log) => {
+				order.push('check');
+				log('please log in again');
+				throw new Error('provider down');
+			},
+			createSoundcloudClient: () => {
+				order.push('client');
+				return fakeSoundcloudClient();
+			},
+		});
+		expect(order).toEqual(['check', 'client']);
 		expect(await readdir(destination)).toEqual(['song.m4a']);
 	}, 60_000);
 });

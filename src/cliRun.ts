@@ -12,7 +12,10 @@ import { HypedditHttpDownloader } from './hypedditHttp';
 import { parseReviewTagsSetting } from './jobOptions';
 import { MypresskitDownloader } from './mypresskit';
 import { PumpyoursoundDownloader } from './pumpyoursound';
-import { SoundcloudClient } from './soundcloud';
+import {
+	checkConfiguredSoundcloudAccess,
+	SoundcloudClient,
+} from './soundcloud';
 import { StillhypeDownloader } from './stillhype';
 import type { HypedditConfig } from './types';
 import {
@@ -31,6 +34,7 @@ export type CliDeps = {
 	loadConfig: () => Promise<AppConfig | null>;
 	saveConfig: (config: AppConfig) => Promise<void>;
 	createSoundcloudClient: () => SoundcloudClient;
+	checkSoundcloudAccess: (log: (line: string) => void) => Promise<unknown>;
 	createDirectDownloader: () => Pick<DirectDownloader, 'downloadAudio'>;
 	createFangateDownloader: (
 		config: HypedditConfig,
@@ -57,6 +61,7 @@ export const defaultCliDeps: CliDeps = {
 	loadConfig,
 	saveConfig,
 	createSoundcloudClient: () => new SoundcloudClient(),
+	checkSoundcloudAccess: (log) => checkConfiguredSoundcloudAccess(log),
 	createDirectDownloader: () => new DirectDownloader(),
 	createDroploudDownloader: (config) => new DroploudDownloader(config),
 	createFangateDownloader: (config) => new FangateDownloader(config),
@@ -101,6 +106,8 @@ export async function runCli(deps: CliDeps): Promise<void> {
 					message: 'Enter the URL of the SoundCloud track',
 					validate: validateSoundcloudUrl,
 				});
+
+	await deps.checkSoundcloudAccess((line) => console.log(line)).catch(() => {});
 
 	const soundcloudClient = deps.createSoundcloudClient();
 	const track = await soundcloudClient.getTrack(soundcloudUrl);

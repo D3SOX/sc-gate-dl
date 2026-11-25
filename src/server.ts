@@ -2,6 +2,7 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import { cp, mkdir, rm } from 'node:fs/promises';
 import { basename, extname, join } from 'node:path';
 import type { SoundcloudTrack } from 'soundcloud.ts';
+import { checkSpotifyCookies } from './accessSetup';
 import { hasZipSignature, resolveDownloadedAudio } from './archiveAudio';
 import { AudioProcessor, parseOutputBitrateKbps } from './audioProcessor';
 import type { BandcampGateOptions } from './bandcampGate';
@@ -941,6 +942,15 @@ function wrapRoutes<Path extends string>(
 	return wrapped as Bun.Serve.Routes<undefined, Path>;
 }
 
+/** Local-only state of the configured SoundCloud login. No network, no token. */
+function localSoundcloudState(): 'configured' | 'missing' {
+	const hasId = Boolean(process.env.SC_CLIENT_ID);
+	const hasLogin = Boolean(
+		process.env.SC_OAUTH_TOKEN || process.env.SC_REFRESH_TOKEN,
+	);
+	return hasId && hasLogin ? 'configured' : 'missing';
+}
+
 const TEST_FIXTURES_ALLOWED_ENV = 'SC_GATE_DL_ALLOW_TEST_FIXTURES';
 const TEST_FIXTURE_JOB_ENV = 'SC_GATE_DL_TEST_FIXTURE_JOB';
 const TEST_FIXTURE_JOB_FORMAT_ENV = 'SC_GATE_DL_TEST_FIXTURE_JOB_FORMAT';
@@ -1020,8 +1030,12 @@ const server = Bun.serve({
 			new Response('sc-gate-dl API is running!', {
 				headers: corsHeaders(),
 			}),
-		'/api/capabilities': () =>
+		'/api/capabilities': async () =>
 			jsonResponse({
+				account: {
+					soundcloud: localSoundcloudState(),
+					spotify: await checkSpotifyCookies(),
+				},
 				browserModes: availableBrowserModes,
 				browserViewUrl: BROWSER_VIEW_URL ?? null,
 				search: true,

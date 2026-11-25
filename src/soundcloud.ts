@@ -1,3 +1,4 @@
+import { readFile } from 'node:fs/promises';
 import { confirm } from '@inquirer/prompts';
 import { lookpath } from 'find-bin';
 import Soundcloud, {
@@ -6,8 +7,13 @@ import Soundcloud, {
 	type SoundcloudTrackSearch,
 	type SoundcloudUser,
 } from 'soundcloud.ts';
+import type { AccessResult } from './accessCheck';
+import { ensureSoundcloudAccess } from './accessSetup';
 import { setEnvValues } from './envFile';
-import { SoundcloudTokenRefresher } from './soundcloudAuth';
+import {
+	SOUNDCLOUD_TOKEN_FILE,
+	SoundcloudTokenRefresher,
+} from './soundcloudAuth';
 import { SoundcloudReadQueue } from './soundcloudReadQueue';
 import {
 	extractAndResolveGateUrl,
@@ -965,4 +971,45 @@ export class SoundcloudClient {
 
 		return collection as T[];
 	}
+}
+
+/**
+ * Classify the configured SoundCloud login with one `GET /me`, renewing it when
+ * it has expired. Returns a state and a user action, never a token.
+ */
+export async function checkConfiguredSoundcloudAccess(
+	log: (line: string) => void,
+	now: () => number = Date.now,
+): Promise<AccessResult> {
+	const clientId = process.env.SC_CLIENT_ID ?? '';
+	const oauthToken = process.env.SC_OAUTH_TOKEN ?? '';
+	const refreshToken = process.env.SC_REFRESH_TOKEN?.trim() ?? '';
+	const refresher = new SoundcloudTokenRefresher({
+		clientId,
+		refreshToken,
+		accessToken: oauthToken,
+	});
+	return ensureSoundcloudAccess({
+		envPath: process.env.SC_GATE_DL_ENV_FILE ?? '.env',
+		clientId,
+		oauthToken,
+		refreshToken,
+		now,
+		interactive: false,
+		log,
+		fetchMe: async (token) => {
+			const response = await fetch('https://api-v2.soundcloud.com/me', {
+				headers: { Authorization: `OAuth ${token}` },
+				signal: AbortSignal.timeout(15_000),
+			});
+			return { ok: response.ok, status: response.status };
+		},
+		refresh: async () => {
+			const accessToken = await refresher.accessToken();
+			const saved = JSON.parse(
+				await readFile(SOUNDCLOUD_TOKEN_FILE, 'utf8'),
+			) as { refreshToken: string };
+			return { accessToken, refreshToken: saved.refreshToken };
+		},
+	});
 }
