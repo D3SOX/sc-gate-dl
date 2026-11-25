@@ -1,7 +1,13 @@
 import { mkdir } from 'node:fs/promises';
 import { basename, join } from 'node:path';
 import { Presets, SingleBar } from 'cli-progress';
-import type { Browser, ElementHandle, HTTPResponse, Page } from 'puppeteer';
+import type {
+	Browser,
+	CookieData,
+	ElementHandle,
+	HTTPResponse,
+	Page,
+} from 'puppeteer';
 import { CancellableBrowserLaunch } from './browserLaunch';
 import { filenameFromContentDisposition } from './contentDisposition';
 import { DirectDownloader } from './directDownload';
@@ -128,8 +134,9 @@ export class StillhypeDownloader {
 		await browserContext.setCookie(...soundCloudCookies);
 	}
 
-	async prepareLogins() {
-		await signInToSoundcloud(this.browser);
+	/** `signInCookies`: a session from `soundcloudSessionFromFirefox`. */
+	async prepareLogins(signInCookies?: CookieData[]) {
+		await signInToSoundcloud(this.browser, { signInCookies });
 	}
 
 	async downloadAudio(url: string): Promise<string | null> {

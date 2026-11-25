@@ -21,6 +21,7 @@ Download and tag SoundCloud tracks unlocked via Hypeddit, Droploud, GateRush, Do
 - [**ffmpeg**](https://ffmpeg.org) - Must be installed and available in your `PATH`
 - [**unzip**](https://infozip.sourceforge.net/UnZip.html) - Required when a gate provides its audio inside a ZIP archive
 - [**yt-dlp**](https://github.com/yt-dlp/yt-dlp) - Required for Bandcamp purchase/download links and for downloading a SoundCloud track directly when no gate is found. Bandcamp support requires the optional `curl_cffi` backend (`python-curl-cffi` on Arch Linux or `yt-dlp[default,curl-cffi]` with pip) for Chrome impersonation.
+- [**Firefox**](https://www.mozilla.org/firefox/) (optional but recommended) - SoundCloud sign-ins happen in it, because SoundCloud's bot protection lets a plain Firefox through more reliably than an automated browser. Set `SC_GATE_DL_FIREFOX` to use another Firefox build, or to `off` to keep sign-ins in CloakBrowser
 - [**curl-impersonate**](https://github.com/lwthiker/curl-impersonate) (optional but recommended) - Chrome-TLS curl binary (`curl_chrome131`, `curl_chrome116`, or `curl-impersonate` on your `PATH`). Used for SoundCloud engagement writes (repost GraphQL / `me/track_reposts`) that DataDome often blocks when done with Bun's normal TLS. Without it the tool falls back to Bun `fetch`, which may get a 403. Pair with a residential proxy via `SC_API_PROXY`, `CLOAKBROWSER_PROXY`, or `PROXY_URL` when your IP is hard-blocked.
 - **SoundCloud account** - It is recommended to create a throwaway account for this. Even though there were no reports of accounts getting banned I can't guarantee it. Also most gate downloads require reposts/likes/follows which you might not want to do with your main account
 - **Spotify account** (optional) - Required when a Hypeddit post has an unskippable Spotify gate. I also recommend creating a throwaway account as most Hypeddit downloads require saving playlists/songs to your library or following artists which you might not want on your main account.
@@ -59,7 +60,7 @@ For `HYPEDDIT_EMAIL` you can enter any valid email address (For example grab one
 
 #### Log in
 
-Run `bun start --login` and sign in to SoundCloud and Spotify in the browser windows that open. You sign in to SoundCloud once, in a throwaway window for the API login. The gate browser then reuses that sign-in to get its own login, because the two must not share one. If SoundCloud shows "You have been blocked", reload the page; if that keeps happening, set `CLOAKBROWSER_PROXY` to use another connection. sc-gate-dl saves `SC_CLIENT_ID`, `SC_REFRESH_TOKEN` and `SC_OAUTH_TOKEN` to `.env`, the SoundCloud cookies to `soundcloud-cookies.json` and the Spotify cookies to `spotify-cookies.json`. Each `bun start` checks the logins first and offers this login when SoundCloud's is missing or rejected. Spotify is only needed for Spotify gates, so a missing Spotify login is just a warning. If an sc-gate-dl server runs in the same folder, restart it after a new login.
+Run `bun start --login` and sign in to SoundCloud and Spotify in the browser windows that open. You sign in to SoundCloud once, for the API login, in a Firefox window with a fresh temporary profile. Without Firefox, sc-gate-dl warns and uses a CloakBrowser window instead. The gate browser then reuses that sign-in to get its own login, because the two must not share one. If SoundCloud shows "You have been blocked", reload the page. If that keeps happening, your network is blocked: try again later or from another connection (the Firefox window follows your system proxy settings, the CloakBrowser window `CLOAKBROWSER_PROXY`). sc-gate-dl saves `SC_CLIENT_ID`, `SC_REFRESH_TOKEN` and `SC_OAUTH_TOKEN` to `.env`, the SoundCloud cookies to `soundcloud-cookies.json` and the Spotify cookies to `spotify-cookies.json`. Each `bun start` checks the logins first and offers this login when SoundCloud's is missing or rejected. Spotify is only needed for Spotify gates, so a missing Spotify login is just a warning. If an sc-gate-dl server runs in the same folder, restart it after a new login.
 
 #### Get SoundCloud API Credentials manually
 
@@ -90,9 +91,12 @@ Install the [EditThisCookie (fork)](https://chromewebstore.google.com/detail/edi
 Used for SoundCloud API/session automation and for **yt-dlp** when downloading a SoundCloud track directly (so downloadable tracks can fetch the original upload, not only the 128k stream).
 
 You can omit `soundcloud-cookies.json` and use `bun start --login` or **Initialize logins** in the Web
-UI instead. It opens SoundCloud's sign-in page in the visible or remote
-browser, even when an older session exists, because gates authorize through
-a sign-in session of their own. Once you are signed in, sc-gate-dl saves the
+UI instead. It opens SoundCloud's sign-in page even when an older session
+exists, because gates authorize through a sign-in session of their own. You
+sign in in a Firefox window (on a server, on its display, which the remote
+browser view shows), and the gate browser takes over that session. A gate that
+runs into SoundCloud's sign-in page in a visible browser does the same. Without
+Firefox, you sign in in the gate browser itself. Once you are signed in, sc-gate-dl saves the
 browser cookies to `soundcloud-cookies.json` with owner-only permissions. A blank file and `[]` are
 also treated as an empty cookie set. The exported cookies are reused by browser
 gate jobs and yt-dlp.

@@ -1,8 +1,9 @@
 import { describe, expect, spyOn, test } from 'bun:test';
-import type { Cookie, Page } from 'puppeteer';
+import type { Browser, Cookie, CookieData, Page } from 'puppeteer';
 import {
 	isSoundcloudLoginDocument,
 	isSoundcloudLoginPage,
+	signInToSoundcloud,
 	soundcloudBlockHint,
 	throwIfSoundcloudBlocked,
 	waitForSoundcloudLogin,
@@ -203,6 +204,148 @@ describe('SoundCloud login persistence', () => {
 		try {
 			await finishLogin([]);
 			expect(save).not.toHaveBeenCalled();
+		} finally {
+			save.mockRestore();
+		}
+	});
+});
+
+describe('Firefox sign-in', () => {
+	const firefoxCookies: CookieData[] = [
+		{ name: 'oauth_refresh_token', value: 'r', domain: 'soundcloud.com' },
+		{ name: 'oauth_token', value: 'a', domain: 'soundcloud.com' },
+		{
+			name: '_soundcloud_session',
+			value: 's',
+			domain: 'api-auth.soundcloud.com',
+		},
+		{ name: 'datadome', value: 'd', domain: '.soundcloud.com' },
+	];
+
+	/** A gate browser that signs itself in once it holds a sign-in session. */
+	function gateBrowser() {
+		const set: string[] = [];
+		let cookies: Cookie[] = [];
+		const context = {
+			cookies: async () => cookies,
+			deleteCookie: async () => {},
+			setCookie: async (...added: CookieData[]) => {
+				set.push(...added.map((cookie) => cookie.name));
+				cookies = [
+					{
+						name: 'oauth_token',
+						value: 'gate',
+						domain: 'soundcloud.com',
+					} as Cookie,
+				];
+			},
+		};
+		const page = {
+			setViewport: async () => {},
+			goto: async () => null,
+			waitForSelector: async () => {
+				throw new Error('no captcha');
+			},
+			evaluate: async () => '',
+			url: () => 'https://soundcloud.com/you/library',
+			frames: () => [],
+			close: async () => {},
+		};
+		const browser = {
+			defaultBrowserContext: () => context,
+			newPage: async () => page,
+		} as unknown as Browser;
+		return { browser, set };
+	}
+
+	test('Initialize logins signs in in Firefox and hands over only the session', async () => {
+		const save = spyOn(utils, 'writeBrowserCookies').mockResolvedValue(
+			undefined,
+		);
+		const { browser, set } = gateBrowser();
+		const logs: string[] = [];
+		try {
+			await signInToSoundcloud(browser, {
+				firefox: () => '/usr/bin/firefox',
+				firefoxSignIn: async () => firefoxCookies,
+				log: (line) => logs.push(line),
+			});
+			expect(set).toEqual(['_soundcloud_session']);
+			expect(logs.join('\n')).toContain('with that session');
+			expect(save).toHaveBeenCalled();
+		} finally {
+			save.mockRestore();
+		}
+	});
+
+	test('a failed Firefox sign-in leaves the browser window to sign in', async () => {
+		const save = spyOn(utils, 'writeBrowserCookies').mockResolvedValue(
+			undefined,
+		);
+		const { browser, set } = gateBrowser();
+		const logs: string[] = [];
+		try {
+			await expect(
+				signInToSoundcloud(browser, {
+					firefox: () => '/usr/bin/firefox',
+					firefoxSignIn: async () => {
+						throw new Error(
+							'Firefox closed before the SoundCloud sign-in finished.',
+						);
+					},
+					log: (line) => logs.push(line),
+					timeoutMs: 0,
+				}),
+			).rejects.toThrow('Timed out waiting for SoundCloud sign-in.');
+			expect(set).toEqual([]);
+			expect(logs.join('\n')).toContain(
+				'Sign in in the browser window instead',
+			);
+		} finally {
+			save.mockRestore();
+		}
+	});
+
+	test('a gate that meets the sign-in page continues with the Firefox session', async () => {
+		const save = spyOn(utils, 'writeBrowserCookies').mockResolvedValue(
+			undefined,
+		);
+		const set: string[] = [];
+		let signedIn = false;
+		let reloaded = false;
+		const page = {
+			isClosed: () => false,
+			url: () => 'https://secure.soundcloud.com/authorize',
+			frames: () => [],
+			bringToFront: async () => {},
+			reload: async () => {
+				reloaded = true;
+				return null;
+			},
+			evaluate: async () => ({
+				text: signedIn ? 'Allow' : 'Sign in or create an account',
+				hasApproval: signedIn,
+			}),
+			browserContext: () => ({
+				cookies: async () => [],
+				setCookie: async (...added: CookieData[]) => {
+					set.push(...added.map((cookie) => cookie.name));
+					signedIn = true;
+				},
+			}),
+		} as unknown as Page;
+		try {
+			expect(
+				await waitForSoundcloudLogin(page, {
+					interactive: true,
+					onWaiting: () => {},
+					firefox: () => '/usr/bin/firefox',
+					firefoxSignIn: async () => firefoxCookies,
+					log: () => {},
+				}),
+			).toBe(true);
+			expect(set).toEqual(['_soundcloud_session']);
+			expect(reloaded).toBe(true);
 		} finally {
 			save.mockRestore();
 		}

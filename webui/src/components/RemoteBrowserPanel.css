@@ -459,7 +459,7 @@
 	cursor: pointer;
 }
 
-.remote-browser-clipboard button:hover:not(:disabled) {
+.remote-browser-clipboard button:hover:not(:disabled, .is-send) {
 	color: var(--type);
 	border-color: var(--type);
 }
@@ -468,6 +468,11 @@
 	color: var(--bg);
 	background: var(--type);
 	border-color: var(--type);
+}
+
+.remote-browser-clipboard button.is-send:hover:not(:disabled) {
+	background: color-mix(in srgb, var(--type) 82%, var(--bg));
+	border-color: color-mix(in srgb, var(--type) 82%, var(--bg));
 }
 
 .remote-browser-clipboard button:disabled {

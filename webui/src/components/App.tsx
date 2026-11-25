@@ -13,6 +13,7 @@ import {
 	parseAvailableBrowserModes,
 	parseBrowserViewUrl,
 	parseReviewTags,
+	parseSignInWarning,
 	readRequestedBrowserMode,
 	readRequestedOutputFormat,
 	readStoredBrowserMode,
@@ -347,7 +348,6 @@ export default function App() {
 	>(['headless', 'headed']);
 	const [browserModeHydrated, setBrowserModeHydrated] = useState(false);
 	const [browserViewUrl, setBrowserViewUrl] = useState<string | null>(null);
-	const [browserViewActive, setBrowserViewActive] = useState(false);
 	const [browserViewOpen, setBrowserViewOpen] = useState(false);
 	const [embedded, setEmbedded] = useState(false);
 	const [outputFormat, setOutputFormat] = useState<OutputFormat>('mp3-320');
@@ -386,6 +386,7 @@ export default function App() {
 					const capabilities = await response.json();
 					modes = parseAvailableBrowserModes(capabilities);
 					reviewTagsRef.current = parseReviewTags(capabilities);
+					signInWarningRef.current = parseSignInWarning(capabilities);
 					viewUrl = parseBrowserViewUrl(capabilities, window.location.hostname);
 				}
 			} catch {
@@ -451,7 +452,6 @@ export default function App() {
 		setBrowserMode(mode);
 		if (mode !== 'headed') {
 			setBrowserViewOpen(false);
-			setBrowserViewActive(false);
 		}
 		try {
 			localStorage.setItem(BROWSER_MODE_STORAGE_KEY, mode);
@@ -488,6 +488,7 @@ export default function App() {
 	const artworkInputRef = useRef<HTMLInputElement>(null);
 	const cleanupToastShownRef = useRef(false);
 	const reviewTagsRef = useRef(true);
+	const signInWarningRef = useRef<string | null>(null);
 	const browserViewAutoClosedRef = useRef(false);
 	const browserViewAutoOpenedRef = useRef(false);
 	const autoStartedFromQueryRef = useRef(false);
@@ -652,7 +653,6 @@ export default function App() {
 						)
 					) {
 						browserViewAutoOpenedRef.current = true;
-						setBrowserViewActive(true);
 						setBrowserViewOpen(true);
 					}
 
@@ -687,7 +687,6 @@ export default function App() {
 
 					if (progress.stage === 'ready') {
 						setBrowserViewOpen(false);
-						setBrowserViewActive(false);
 						eventSource.close();
 						eventSourceRef.current = null;
 						notifyParent('ready');
@@ -731,13 +730,11 @@ export default function App() {
 						}));
 					} else if (progress.stage === 'error') {
 						setBrowserViewOpen(false);
-						setBrowserViewActive(false);
 						eventSource.close();
 						eventSourceRef.current = null;
 						setJob((prev) => ({ ...prev, error: progress.message }));
 					} else if (progress.stage === 'cancelled') {
 						setBrowserViewOpen(false);
-						setBrowserViewActive(false);
 						eventSource.close();
 						eventSourceRef.current = null;
 						setJob((prev) => ({
@@ -832,7 +829,6 @@ export default function App() {
 		}));
 		setStep('url');
 		setBrowserViewOpen(false);
-		setBrowserViewActive(false);
 		notifyParent('cancelled');
 	}, [job.jobId]);
 
@@ -1304,24 +1300,27 @@ export default function App() {
 		}
 		setNameAsArtistTitle(false);
 		setBrowserViewOpen(false);
-		setBrowserViewActive(false);
 		setStep('url');
 	};
 
 	const handleInitializeLogins = async () => {
 		toast('Initialize logins?', {
-			description:
+			description: [
 				'Opens a browser on the server to sign in to SoundCloud and Spotify. Use the remote browser button to watch it or solve a captcha.',
+				signInWarningRef.current,
+			]
+				.filter(Boolean)
+				.join(' '),
 			closeButton: false,
 			duration: Infinity,
 			action: {
 				label: 'Initialize',
 				onClick: async () => {
 					if (browserViewUrl) {
-						setBrowserViewActive(true);
 						setBrowserViewOpen(true);
 					}
 					const toastId = toast.loading('Initializing logins');
+					let stillRunning = false;
 
 					try {
 						const response = await fetch(`${API_BASE}/api/logins/initialize`, {
@@ -1329,6 +1328,15 @@ export default function App() {
 						});
 						const data = await response.json();
 
+						if (response.status === 409) {
+							// Still running from an earlier click: show where to finish it.
+							stillRunning = true;
+							toast.info('Initialize logins is already running', {
+								id: toastId,
+								description: data.error,
+							});
+							return;
+						}
 						if (!response.ok) {
 							throw new Error(
 								data.error || 'The server could not initialize the logins.',
@@ -1345,8 +1353,7 @@ export default function App() {
 								err instanceof Error ? err.message : 'Check the server log.',
 						});
 					} finally {
-						setBrowserViewOpen(false);
-						setBrowserViewActive(false);
+						if (!stillRunning) setBrowserViewOpen(false);
 					}
 				},
 			},
@@ -1360,7 +1367,7 @@ export default function App() {
 	return (
 		<div className={`app${embedded ? ' is-embedded' : ''}`}>
 			<Toaster richColors closeButton theme="dark" />
-			{browserViewUrl && browserViewActive ? (
+			{browserViewUrl ? (
 				<RemoteBrowserPanel
 					open={browserViewOpen}
 					viewUrl={browserViewUrl}

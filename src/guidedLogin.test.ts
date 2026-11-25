@@ -5,6 +5,8 @@ import { join } from 'node:path';
 import type { Browser, Cookie } from 'puppeteer';
 import {
 	type CliLoginOptions,
+	captureSoundcloudApiLogin,
+	captureWithFirefox,
 	checkSpotifyCookies,
 	clientIdFromUrl,
 	type LoginProvider,
@@ -12,13 +14,16 @@ import {
 	loginToSpotify,
 	parseCliArgs,
 	pickSoundcloudSession,
-	pickSoundcloudSignInCookies,
 	pickSpotifyCookies,
 	prepareCliLogins,
 	runGuidedLogin,
 	type SpotifyLoginState,
 } from './guidedLogin';
 import type { SoundcloudLoginState } from './soundcloud';
+import {
+	FIREFOX_MISSING_WARNING,
+	pickSoundcloudSignInCookies,
+} from './soundcloudLogin';
 
 const NOW = 1_800_000_000_000;
 const cookie = (name: string, value: string, domain: string) =>
@@ -126,13 +131,7 @@ describe('login capture', () => {
 			's',
 			'api-auth.soundcloud.com',
 		);
-		const gate = {
-			defaultBrowserContext: () => ({
-				setCookie: async (...cookies: Cookie[]) => {
-					events.push(`set ${cookies.map((c) => c.name).join(',')}`);
-				},
-			}),
-		} as unknown as Browser;
+		const gate = {} as Browser;
 
 		const result = await loginToSoundcloud(
 			async () => {
@@ -143,18 +142,19 @@ describe('login capture', () => {
 				events.push('API sign-in');
 				return { session, signInCookies: [signInCookie] };
 			},
-			async (browser) => {
+			async (browser, { signInCookies }) => {
 				expect(browser).toBe(gate);
-				events.push('gate sign-in');
+				events.push(
+					`gate sign-in with ${signInCookies.map((c) => c.name).join(',')}`,
+				);
 			},
 		);
 
-		expect(result).toBe(session);
+		expect(result).toEqual(session);
 		expect(events).toEqual([
 			'API sign-in',
 			'open gate browser',
-			'set _soundcloud_session',
-			'gate sign-in',
+			'gate sign-in with _soundcloud_session',
 		]);
 	});
 
@@ -197,6 +197,162 @@ describe('login capture', () => {
 			'window closed before the Spotify sign-in',
 		);
 		expect(Date.now() - started).toBeLessThan(5_000);
+	});
+});
+
+describe('API login browser', () => {
+	const captured = {
+		session: { clientId: 'c', refreshToken: 'r', accessToken: null },
+		signInCookies: [],
+	};
+
+	test('uses Firefox when it is installed', async () => {
+		const logs: string[] = [];
+		let used = '';
+		await captureSoundcloudApiLogin({
+			firefox: () => '/usr/bin/firefox',
+			withFirefox: async (path) => {
+				used = path;
+				return captured;
+			},
+			withCloakBrowser: async () => {
+				throw new Error('CloakBrowser should not open');
+			},
+			log: (line) => logs.push(line),
+		});
+		expect(used).toBe('/usr/bin/firefox');
+		expect(logs).toEqual([]);
+	});
+
+	test('warns and falls back to CloakBrowser without Firefox', async () => {
+		// The test preload turns Firefox off, which also silences the warning.
+		const setting = process.env.SC_GATE_DL_FIREFOX;
+		process.env.SC_GATE_DL_FIREFOX = '';
+		try {
+			const logs: string[] = [];
+			const result = await captureSoundcloudApiLogin({
+				firefox: () => null,
+				withFirefox: async () => {
+					throw new Error('Firefox should not open');
+				},
+				withCloakBrowser: async () => captured,
+				log: (line) => logs.push(line),
+			});
+			expect(result).toBe(captured);
+			expect(logs).toEqual([FIREFOX_MISSING_WARNING]);
+		} finally {
+			process.env.SC_GATE_DL_FIREFOX = setting;
+		}
+	});
+
+	test('the Firefox login keeps the tokens for .env and hands on only the session', async () => {
+		const cookies = [
+			{ name: 'oauth_refresh_token', value: '1%3Ar', domain: 'soundcloud.com' },
+			{ name: 'oauth_token', value: 'a', domain: 'soundcloud.com' },
+			{
+				name: '_soundcloud_session',
+				value: 's',
+				domain: 'api-auth.soundcloud.com',
+			},
+			{ name: 'datadome', value: 'd', domain: '.soundcloud.com' },
+		];
+		const result = await captureWithFirefox(
+			'/usr/bin/firefox',
+			async () => cookies,
+			async () => 'web-client',
+		);
+		expect(result.session).toEqual({
+			clientId: 'web-client',
+			refreshToken: '1:r',
+			accessToken: 'a',
+		});
+		expect(result.signInCookies.map((cookie) => cookie.name)).toEqual([
+			'_soundcloud_session',
+		]);
+	});
+});
+
+describe('client id after a Firefox sign-in', () => {
+	const firefoxCookies = [
+		{ name: 'oauth_refresh_token', value: 'r', domain: 'soundcloud.com' },
+		{
+			name: '_soundcloud_session',
+			value: 's',
+			domain: 'api-auth.soundcloud.com',
+		},
+	];
+
+	test('a failed lookup keeps the sign-in', async () => {
+		const logs: string[] = [];
+		const result = await captureWithFirefox(
+			'/usr/bin/firefox',
+			async () => firefoxCookies,
+			async () => {
+				throw new Error('HTTP 403');
+			},
+			(line) => logs.push(line),
+		);
+		expect(result.session).toEqual({
+			clientId: null,
+			refreshToken: 'r',
+			accessToken: null,
+		});
+		expect(logs.join('\n')).toContain("from the gate browser's sign-in");
+	});
+
+	/** A gate browser whose sign-in page requests the SoundCloud API. */
+	function gateBrowser(requestUrl: string) {
+		const handlers = new Map<string, (target: unknown) => void>();
+		const browser = {
+			on: (event: string, handler: (target: unknown) => void) => {
+				handlers.set(event, handler);
+			},
+			off: (event: string) => {
+				handlers.delete(event);
+			},
+		} as unknown as Browser;
+		const signIn = async () => {
+			let onRequest: ((request: { url: () => string }) => void) | undefined;
+			const page = {
+				on: (_event: string, handler: typeof onRequest) => {
+					onRequest = handler;
+				},
+			};
+			handlers.get('targetcreated')?.({ page: async () => page });
+			await Bun.sleep(0);
+			onRequest?.({ url: () => requestUrl });
+		};
+		return { browser, signIn, handlers };
+	}
+
+	test("the gate browser's requests supply a missing client id", async () => {
+		const gate = gateBrowser(
+			'https://api-v2.soundcloud.com/me?client_id=gate-client',
+		);
+		const session = await loginToSoundcloud(
+			async () => gate.browser,
+			async () => ({
+				session: { clientId: null, refreshToken: 'r', accessToken: null },
+				signInCookies: [],
+			}),
+			gate.signIn,
+		);
+		expect(session.clientId).toBe('gate-client');
+		expect(gate.handlers.size).toBe(0);
+	});
+
+	test('without any client id the login fails clearly', async () => {
+		const gate = gateBrowser('https://soundcloud.com/signin');
+		await expect(
+			loginToSoundcloud(
+				async () => gate.browser,
+				async () => ({
+					session: { clientId: null, refreshToken: 'r', accessToken: null },
+					signInCookies: [],
+				}),
+				gate.signIn,
+			),
+		).rejects.toThrow('Could not read the SoundCloud client id');
 	});
 });
 

@@ -17,6 +17,7 @@ import { moveIntoLibrary } from './libraryDestination';
 import { MypresskitDownloader } from './mypresskit';
 import { PumpyoursoundDownloader } from './pumpyoursound';
 import { SoundcloudClient } from './soundcloud';
+import { soundcloudSessionFromFirefox } from './soundcloudLogin';
 import { StillhypeDownloader } from './stillhype';
 import {
 	getDefaultMetadata,
@@ -207,6 +208,12 @@ try {
 		return selected;
 	};
 
+	// Sign in in Firefox before a gate browser opens, so only that window waits
+	// for the user.
+	const signInCookies = initializeLogins
+		? ((await soundcloudSessionFromFirefox()) ?? [])
+		: undefined;
+
 	let downloadFilename: string | null = null;
 	let usedBrowser = false;
 
@@ -227,7 +234,7 @@ try {
 		try {
 			await droploudDownloader.initialize();
 			if (initializeLogins) {
-				await droploudDownloader.prepareLogins();
+				await droploudDownloader.prepareLogins(signInCookies);
 				if (config) {
 					await saveConfig({ ...config, initializeLogins: false });
 					console.log('✓ Updated config.json: initializeLogins set to false');
@@ -243,7 +250,7 @@ try {
 		try {
 			await gaterushDownloader.initialize();
 			if (initializeLogins) {
-				await gaterushDownloader.prepareLogins();
+				await gaterushDownloader.prepareLogins(signInCookies);
 				if (config) {
 					await saveConfig({ ...config, initializeLogins: false });
 					console.log('✓ Updated config.json: initializeLogins set to false');
@@ -259,7 +266,7 @@ try {
 		try {
 			await downloadgaterDownloader.initialize();
 			if (initializeLogins) {
-				await downloadgaterDownloader.prepareLogins();
+				await downloadgaterDownloader.prepareLogins(signInCookies);
 				if (config) {
 					await saveConfig({ ...config, initializeLogins: false });
 					console.log('✓ Updated config.json: initializeLogins set to false');
@@ -275,7 +282,7 @@ try {
 		try {
 			await stillhypeDownloader.initialize();
 			if (initializeLogins) {
-				await stillhypeDownloader.prepareLogins();
+				await stillhypeDownloader.prepareLogins(signInCookies);
 				if (config) {
 					await saveConfig({ ...config, initializeLogins: false });
 					console.log('✓ Updated config.json: initializeLogins set to false');
@@ -291,7 +298,7 @@ try {
 		try {
 			await pumpyoursoundDownloader.initialize();
 			if (initializeLogins) {
-				await pumpyoursoundDownloader.prepareLogins();
+				await pumpyoursoundDownloader.prepareLogins(signInCookies);
 				if (config) {
 					await saveConfig({ ...config, initializeLogins: false });
 					console.log('✓ Updated config.json: initializeLogins set to false');
@@ -310,7 +317,7 @@ try {
 		try {
 			await mypresskitDownloader.initialize();
 			if (initializeLogins) {
-				await mypresskitDownloader.prepareLogins();
+				await mypresskitDownloader.prepareLogins(signInCookies);
 				if (config) {
 					await saveConfig({ ...config, initializeLogins: false });
 					console.log('✓ Updated config.json: initializeLogins set to false');
@@ -326,7 +333,7 @@ try {
 		try {
 			await fangateDownloader.initialize();
 			if (initializeLogins) {
-				await fangateDownloader.prepareLogins();
+				await fangateDownloader.prepareLogins(signInCookies);
 				if (config) {
 					await saveConfig({ ...config, initializeLogins: false });
 					console.log('✓ Updated config.json: initializeLogins set to false');
@@ -349,7 +356,7 @@ try {
 				await hypedditDownloader.initialize();
 
 				if (initializeLogins) {
-					await hypedditDownloader.prepareLogins();
+					await hypedditDownloader.prepareLogins(signInCookies);
 					if (config) {
 						await saveConfig({ ...config, initializeLogins: false });
 						console.log('✓ Updated config.json: initializeLogins set to false');

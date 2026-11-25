@@ -1,4 +1,4 @@
-import type { Browser, Page } from 'puppeteer';
+import type { Browser, CookieData, Page } from 'puppeteer';
 import {
 	BandcampGateDownloader,
 	type BandcampGateOptions,
@@ -233,8 +233,9 @@ export class PumpyoursoundDownloader {
 		this.spotifyCookiesLoaded = await injectSpotifyCookies(this.browser);
 	}
 
-	async prepareLogins() {
-		await signInToSoundcloud(this.browser);
+	/** `signInCookies`: a session from `soundcloudSessionFromFirefox`. */
+	async prepareLogins(signInCookies?: CookieData[]) {
+		await signInToSoundcloud(this.browser, { signInCookies });
 	}
 
 	async downloadAudio(

@@ -1,5 +1,5 @@
 import { Presets, SingleBar } from 'cli-progress';
-import type { Browser, Page } from 'puppeteer';
+import type { Browser, CookieData, Page } from 'puppeteer';
 import {
 	BandcampGateDownloader,
 	type BandcampGateOptions,
@@ -277,9 +277,11 @@ export class HypedditDownloader {
 		}
 	}
 
-	async prepareLogins() {
+	/** `signInCookies`: a session from `soundcloudSessionFromFirefox`. */
+	async prepareLogins(signInCookies?: CookieData[]) {
 		await signInToSoundcloud(this.browser, {
 			solveCaptcha: (page) => this.handlePossibleCaptcha(page),
+			signInCookies,
 		});
 
 		if (this.spotifyCookiesExists) {
