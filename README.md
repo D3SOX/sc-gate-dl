@@ -86,9 +86,10 @@ Install the [EditThisCookie (fork)](https://chromewebstore.google.com/detail/edi
 Used for SoundCloud API/session automation and for **yt-dlp** when downloading a SoundCloud track directly (so downloadable tracks can fetch the original upload, not only the 128k stream).
 
 You can omit `soundcloud-cookies.json` and use **Initialize logins** in the Web
-UI instead. Sign in through the visible or remote browser; after SoundCloud's
-Library page opens, sc-gate-dl saves the browser cookies to
-`soundcloud-cookies.json` with owner-only permissions. A blank file and `[]` are
+UI instead. It opens SoundCloud's sign-in page in the visible or remote
+browser, even when an older session exists, because gates authorize through
+a sign-in session of their own. Once you are signed in, sc-gate-dl saves the
+browser cookies to `soundcloud-cookies.json` with owner-only permissions. A blank file and `[]` are
 also treated as an empty cookie set. The exported cookies are reused by browser
 gate jobs and yt-dlp.
 
@@ -383,7 +384,9 @@ PartOf=sc-gate-dl.target
 
 [Service]
 Type=simple
-ExecStart=/usr/bin/Xvfb :99 -screen 0 1920x1080x24 -nolisten tcp \
+# -noreset keeps the display up when its last client disconnects, so a
+# restarted x11vnc can connect right away.
+ExecStart=/usr/bin/Xvfb :99 -noreset -screen 0 1920x1080x24 -nolisten tcp \
   -auth /home/YOUR_USER/.local/state/sc-gate-dl/xauthority
 Restart=on-failure
 RestartSec=2
@@ -405,6 +408,8 @@ ExecStart=/usr/bin/x11vnc -display :99 \
   -forever -shared -localhost -usepw -rfbport 5900 -noxdamage -repeat
 Restart=on-failure
 RestartSec=2
+# x11vnc exits with 2 when stopped; that is not a failure.
+SuccessExitStatus=2
 ```
 
 `sc-gate-novnc.service`:
@@ -422,6 +427,8 @@ ExecStart=/home/YOUR_USER/.local/share/sc-gate-dl/noVNC/utils/novnc_proxy \
   --listen 6080 --vnc localhost:5900
 Restart=on-failure
 RestartSec=2
+# novnc_proxy exits with 143 (SIGTERM) when stopped; that is not a failure.
+SuccessExitStatus=143
 ```
 
 `sc-gate-app.service`:

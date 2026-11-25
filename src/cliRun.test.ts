@@ -178,36 +178,6 @@ describe('runCli entry wiring', () => {
 		expect(await readdir('downloads')).toEqual([]);
 	}, 60_000);
 
-	test('passes the SoundCloud track URL to the Droploud gate', async () => {
-		const received: Array<{ url: string; options?: { trackUrl?: string } }> =
-			[];
-		await runCli({
-			...deps({
-				SC_GATE_DL_CLI_FORMAT: 'm4a-aac',
-				SC_GATE_DL_CLI_DIR: destination,
-			}),
-			createSoundcloudClient: () => fakeSoundcloudClient('droploud'),
-			createDroploudDownloader: () => ({
-				initialize: async () => {},
-				prepareLogins: async () => {},
-				close: async () => {},
-				downloadAudio: async (url: string, options?: { trackUrl?: string }) => {
-					received.push({ url, options });
-					await copyFile(
-						join('mock-gate', 'song.flac'),
-						join('downloads', 'song.flac'),
-					);
-					return 'song.flac';
-				},
-			}),
-		});
-
-		expect(received.length).toBe(1);
-		expect(received).toEqual([
-			{ url: gateUrl, options: { trackUrl: soundcloudUrl } },
-		]);
-	}, 60_000);
-
 	describe('SC_GATE_DL_REVIEW_TAGS', () => {
 		beforeEach(() => {
 			promptCalls = 0;

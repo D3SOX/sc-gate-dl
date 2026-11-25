@@ -9,11 +9,11 @@
 		"astro": "astro"
 	},
 	"dependencies": {
-		"@astrojs/react": "^7.1.4",
+		"@astrojs/react": "^7.1.9",
 		"@novnc/novnc": "1.7.0",
 		"@types/react": "^19.3.0",
 		"@types/react-dom": "^19.3.0",
-		"astro": "^7.4.7",
+		"astro": "^7.4.13",
 		"react": "^19.3.1",
 		"react-dom": "^19.3.1",
 		"sonner": "^2.0.8"

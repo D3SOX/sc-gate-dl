@@ -653,7 +653,6 @@ async function runDownloadProcess(jobId: string): Promise<void> {
 			downloadFilename = await downloader.downloadAudio(downloadSourceUrl, {
 				matchTitle: job.track?.title,
 				onAlbumMatchFailed: selectBandcampTrack(false),
-				trackUrl: job.soundcloudUrl,
 			});
 			throwIfCancelled();
 		} else if (provider === 'direct') {

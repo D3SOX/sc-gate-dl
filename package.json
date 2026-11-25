@@ -22,22 +22,24 @@
 		"lint": "biome check .",
 		"lint:fix": "biome check --fix .",
 		"typecheck": "tsc --noEmit && tsc --noEmit -p webui",
-		"test": "bun test --path-ignore-patterns='**/*.browser.test.ts'",
-		"test:browser": "bun test browser.test"
+		"test": "bun test --path-ignore-patterns='**/*.browser.test.ts' --path-ignore-patterns='**/*.live.test.ts'",
+		"test:browser": "bun test browser.test",
+		"test:live": "LIVE_TESTS=1 bun test live.test"
 	},
 	"devDependencies": {
-		"@biomejs/biome": "^2.6.6",
+		"@biomejs/biome": "^2.6.8",
 		"@types/bun": "^1.4.4",
 		"@types/cli-progress": "^3.11.6",
 		"typescript": "^7.0.2"
 	},
 	"dependencies": {
-		"@inquirer/prompts": "^8.7.5",
+		"@inquirer/prompts": "^8.8.0",
 		"cli-progress": "^3.12.0",
 		"cloakbrowser": "^0.6.5",
 		"find-bin": "^1.1.1",
-		"mmdb-lib": "^3.0.4",
-		"puppeteer": "^25.16.0",
+		"mmdb-lib": "^3.0.5",
+		"puppeteer": "^25.18.1",
+		"socks-proxy-agent": "^10.1.0",
 		"soundcloud.ts": "^0.7.4"
 	},
 	"patchedDependencies": {

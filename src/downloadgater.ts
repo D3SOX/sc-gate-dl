@@ -1,11 +1,31 @@
 import { Presets, SingleBar } from 'cli-progress';
-import type { Browser, Page } from 'puppeteer';
+import type { Browser, Frame, Page } from 'puppeteer';
 import { CancellableBrowserLaunch } from './browserLaunch';
 import type { ProgressCallback } from './hypeddit';
 import Selectors from './selectors';
-import { waitForSoundcloudLogin } from './soundcloudLogin';
+import { signInToSoundcloud, waitForSoundcloudLogin } from './soundcloudLogin';
+import {
+	completeSpotifyAuthorization,
+	injectSpotifyCookies,
+	missingSpotifyCookiesError,
+} from './spotifyAuth';
 import type { HypedditConfig } from './types';
 import { loadCookies, timeout } from './utils';
+
+const DG_EMAIL_INPUT =
+	'section.gate-flow .email-capture-row input[type="email"]';
+const DG_EMAIL_NEXT = 'section.gate-flow .email-capture-row button';
+const DG_FLOW_ERROR = 'section.gate-flow .download-error';
+
+type Pane =
+	| 'email'
+	| 'instagram'
+	| 'soundcloud'
+	| 'spotify'
+	| 'spotify-oauth'
+	| 'youtube'
+	| 'download'
+	| 'unknown';
 
 export class DownloadgaterDownloader {
 	private browser!: Browser;
@@ -14,6 +34,7 @@ export class DownloadgaterDownloader {
 	private config: HypedditConfig;
 	private progressCallback: ProgressCallback | null = null;
 	private cancelPendingDownloadWait: (() => void) | null = null;
+	private hasSpotifyCookies = false;
 
 	constructor(config: HypedditConfig) {
 		this.config = config;
@@ -38,40 +59,11 @@ export class DownloadgaterDownloader {
 		const browserContext = this.browser.defaultBrowserContext();
 		const soundCloudCookies = await loadCookies('soundcloud-cookies.json');
 		await browserContext.setCookie(...soundCloudCookies);
+		this.hasSpotifyCookies = await injectSpotifyCookies(this.browser);
 	}
 
 	async prepareLogins() {
-		const soundCloudPage = await this.browser.newPage();
-		soundCloudPage.setViewport({ width: 1920, height: 1080 });
-		await soundCloudPage.goto('https://soundcloud.com/messages');
-
-		try {
-			await soundCloudPage.waitForSelector(
-				Selectors.SOUNDCLOUD_CAPTCHA_CONTAINER,
-				{ timeout: 5_000 },
-			);
-			console.log(
-				'DownloadGater: SoundCloud captcha present during login warm-up; solve it in the browser window if needed.',
-			);
-			await soundCloudPage.waitForSelector(
-				Selectors.SOUNDCLOUD_CAPTCHA_CONTAINER,
-				{ hidden: true, timeout: 120_000 },
-			);
-		} catch {
-			// no captcha
-		}
-
-		await soundCloudPage.waitForSelector(Selectors.SOUNDCLOUD_LIBRARY_LINK, {
-			timeout: 30_000,
-		});
-		await Promise.all([
-			soundCloudPage.click(Selectors.SOUNDCLOUD_LIBRARY_LINK),
-			soundCloudPage.waitForNavigation({ waitUntil: 'domcontentloaded' }),
-		]);
-		await soundCloudPage.waitForFunction(() =>
-			window.location.href.includes('/you/library'),
-		);
-		await soundCloudPage.close();
+		await signInToSoundcloud(this.browser);
 	}
 
 	async downloadAudio(url: string): Promise<string | null> {
@@ -105,6 +97,39 @@ export class DownloadgaterDownloader {
 
 				const pane = await this.detectPane(page);
 				console.log('DownloadGater pane:', pane);
+
+				if (pane === 'email') {
+					this.emitProgress(
+						'handling_gates',
+						'Submitting DownloadGater email...',
+						30,
+						{ currentGate: 'email' },
+					);
+					await this.handleEmailStep(page);
+					continue;
+				}
+
+				if (pane === 'spotify-oauth') {
+					this.emitProgress(
+						'handling_gates',
+						'Connecting Spotify on DownloadGater...',
+						45,
+						{ currentGate: 'sp' },
+					);
+					await this.handleSpotifyOauthStep(page);
+					continue;
+				}
+
+				if (pane === 'youtube') {
+					this.emitProgress(
+						'handling_gates',
+						'Handling DownloadGater YouTube step...',
+						50,
+						{ currentGate: 'yt' },
+					);
+					await this.handleYoutubeStep(page);
+					continue;
+				}
 
 				if (pane === 'instagram') {
 					this.emitProgress(
@@ -214,53 +239,68 @@ export class DownloadgaterDownloader {
 		await timeout(800);
 	}
 
-	private async detectPane(
-		page: Page,
-	): Promise<'instagram' | 'soundcloud' | 'spotify' | 'download' | 'unknown'> {
-		return page.evaluate(() => {
+	/**
+	 * Classifies the current unlock step from GatePage's markup: the title's
+	 * `data-gate-platform` wordmark, honor-system buttons' `data-gate-key`, and
+	 * the email capture row. OAuth steps (SoundCloud, Spotify) share the
+	 * "Verified unlock" kicker, so it does not mean the gate is unlocked.
+	 */
+	private async detectPane(page: Page): Promise<Pane> {
+		return page.evaluate((emailInput): Pane => {
 			const buttons = Array.from(document.querySelectorAll('button'));
 			const buttonText = (btn: Element) => (btn.textContent || '').trim();
+			const hasButton = (pattern: RegExp) =>
+				buttons.some((btn) => pattern.test(buttonText(btn)));
 
-			if (
-				buttons.some((btn) =>
-					/^(download file|download zip)$/i.test(buttonText(btn)),
-				)
-			) {
+			if (hasButton(/^(download file|download zip|finish)$/i)) {
 				return 'download';
 			}
+			if (document.querySelector(emailInput)) return 'email';
 
-			// Unlocked / finishing UI still mentions SoundCloud — not a Connect step.
-			const body = document.body?.innerText || '';
-			if (
-				/verified unlock/i.test(body) ||
-				buttons.some((btn) => /^finish$/i.test(buttonText(btn)))
-			) {
-				return 'download';
-			}
-
+			const heading = document.querySelector('#gate-flow-title');
+			const wordmark = heading?.querySelector('[data-gate-platform]');
+			const platform = wordmark?.getAttribute('data-gate-platform') ?? '';
 			const title =
-				document.querySelector('#gate-flow-title')?.textContent?.trim() || '';
+				wordmark?.getAttribute('aria-label') ||
+				heading?.textContent?.trim() ||
+				'';
+			const gateKeys = buttons.map((btn) => btn.dataset.gateKey ?? '');
 
 			if (
-				buttons.some((btn) =>
-					/connect.*soundcloud|connect & (follow|repost)/i.test(
-						buttonText(btn),
-					),
-				) ||
+				hasButton(/connect\b.*\bspotify/i) ||
+				(platform === 'spotify' &&
+					!!document.querySelector('.spotify-action-list'))
+			) {
+				return 'spotify-oauth';
+			}
+			if (
+				platform === 'soundcloud' ||
+				hasButton(/connect.*soundcloud/i) ||
 				(/^complete soundcloud$/i.test(title) &&
 					!!document.querySelector('textarea'))
 			) {
 				return 'soundcloud';
 			}
 			if (
+				platform === 'instagram' ||
+				gateKeys.includes('instagramFollow') ||
 				/instagram/i.test(title) ||
-				buttons.some((btn) => /follow on instagram/i.test(buttonText(btn)))
+				hasButton(/follow on instagram/i)
 			) {
 				return 'instagram';
 			}
-			if (/spotify/i.test(title)) return 'spotify';
+			if (
+				platform === 'spotify' ||
+				gateKeys.some((key) => key.startsWith('spotify')) ||
+				/spotify/i.test(title)
+			) {
+				return 'spotify';
+			}
+			if (platform === 'youtube' || gateKeys.includes('youtubeSubscribe')) {
+				return 'youtube';
+			}
 			return 'unknown';
-		});
+		}, DG_EMAIL_INPUT);
 	}
 
 	private async hasDownloadButton(page: Page): Promise<boolean> {
@@ -278,7 +318,9 @@ export class DownloadgaterDownloader {
 	private async handleHonorSystemPopupStep(
 		page: Page,
 		options: {
-			pane: 'instagram' | 'spotify';
+			pane: 'instagram' | 'spotify' | 'youtube';
+			/** `data-gate-key` values of the step's open button. */
+			gateKeys: string[];
 			actionButtonPattern: string;
 			confirmButtonPattern: string;
 			popupUrlPattern: string;
@@ -292,18 +334,26 @@ export class DownloadgaterDownloader {
 			if (await this.hasDownloadButton(page)) return;
 
 			const pagesBefore = new Set(await this.browser.pages(true));
-			const opened = await page.evaluate((pattern) => {
-				const actionPattern = new RegExp(pattern, 'i');
-				const btn = Array.from(document.querySelectorAll('button')).find(
-					(el) =>
-						actionPattern.test((el.textContent || '').trim()) &&
-						!(el as HTMLButtonElement).disabled,
-				) as HTMLButtonElement | undefined;
-				btn?.click();
-				return !!btn;
-			}, options.actionButtonPattern);
+			const opened = await page.evaluate(
+				(pattern, gateKeys) => {
+					const actionPattern = new RegExp(pattern, 'i');
+					// Multi-account steps label the button "Follow @name — 1 of 3".
+					const btn = Array.from(
+						document.querySelectorAll<HTMLButtonElement>('button'),
+					).find(
+						(el) =>
+							!el.disabled &&
+							(gateKeys.includes(el.dataset.gateKey ?? '') ||
+								actionPattern.test((el.textContent || '').trim())),
+					);
+					btn?.click();
+					return btn ? (btn.textContent || '').trim() : null;
+				},
+				options.actionButtonPattern,
+				options.gateKeys,
+			);
 
-			if (!opened) {
+			if (opened === null) {
 				await timeout(500);
 				continue;
 			}
@@ -327,16 +377,33 @@ export class DownloadgaterDownloader {
 
 			await page
 				.waitForFunction(
-					(pattern) => {
+					(pattern, gateKeys, clicked) => {
 						const confirmPattern = new RegExp(pattern, 'i');
-						return Array.from(document.querySelectorAll('button')).some(
-							(el) =>
-								confirmPattern.test((el.textContent || '').trim()) &&
-								!(el as HTMLButtonElement).disabled,
+						const buttons = Array.from(
+							document.querySelectorAll<HTMLButtonElement>('button'),
+						);
+						if (
+							buttons.some(
+								(el) =>
+									confirmPattern.test((el.textContent || '').trim()) &&
+									!el.disabled,
+							)
+						)
+							return true;
+						// Multi-account steps relabel the open button for the next account.
+						const next = buttons.find((el) =>
+							gateKeys.includes(el.dataset.gateKey ?? ''),
+						);
+						return (
+							!!next &&
+							!next.disabled &&
+							(next.textContent || '').trim() !== clicked
 						);
 					},
 					{ timeout: options.confirmationTimeoutMs },
 					options.confirmButtonPattern,
+					options.gateKeys,
+					opened,
 				)
 				.catch(() => {});
 
@@ -368,10 +435,145 @@ export class DownloadgaterDownloader {
 	private async handleSpotifyStep(page: Page) {
 		await this.handleHonorSystemPopupStep(page, {
 			pane: 'spotify',
+			gateKeys: ['spotifyFollow', 'spotifyPlaylistFollow'],
 			actionButtonPattern: '^(follow|save|open).*spotify$',
 			confirmButtonPattern:
 				"^(i followed|i saved it|i opened it|i['’]?(?:ve)? done it)$",
 			popupUrlPattern: 'open\\.spotify\\.com',
+			maxAttempts: 8,
+			confirmationTimeoutMs: 8_000,
+		});
+	}
+
+	/** "Email capture": one email field and a Next button that enables once valid. */
+	private async handleEmailStep(page: Page) {
+		if (!this.config.email) {
+			throw new Error(
+				'This DownloadGater gate requires an email. Set HYPEDDIT_EMAIL in your .env file.',
+			);
+		}
+		await page.evaluate(
+			(selector, value) => {
+				const el = document.querySelector<HTMLInputElement>(selector);
+				if (!el) return;
+				// React-controlled input: use the native setter so onChange sees it.
+				Object.getOwnPropertyDescriptor(
+					window.HTMLInputElement.prototype,
+					'value',
+				)?.set?.call(el, value);
+				el.dispatchEvent(new Event('input', { bubbles: true }));
+			},
+			DG_EMAIL_INPUT,
+			this.config.email,
+		);
+		await page.waitForFunction(
+			(selector) =>
+				document.querySelector<HTMLButtonElement>(selector)?.disabled === false,
+			{ timeout: 10_000 },
+			DG_EMAIL_NEXT,
+		);
+		await page.$eval(DG_EMAIL_NEXT, (button) =>
+			(button as HTMLButtonElement).click(),
+		);
+		const handle = await page.waitForFunction(
+			(input, error) => {
+				if (!document.querySelector(input)) return 'done';
+				return document.querySelector(error)?.textContent?.trim() || false;
+			},
+			{ timeout: 30_000 },
+			DG_EMAIL_INPUT,
+			DG_FLOW_ERROR,
+		);
+		const outcome = await handle.jsonValue();
+		await handle.dispose();
+		if (outcome !== 'done') {
+			throw new Error(`DownloadGater email capture failed: ${outcome}`);
+		}
+	}
+
+	/**
+	 * Spotify OAuth variant (`spotifyVerification` other than `visit`): the
+	 * button starts Spotify login in this tab, DownloadGater follows the
+	 * profiles and playlists server-side, then redirects back to the gate with
+	 * `spotify_unlock=<token>` or `spotify_error=<code>`.
+	 */
+	private async handleSpotifyOauthStep(page: Page) {
+		if (!this.hasSpotifyCookies) {
+			throw missingSpotifyCookiesError('DownloadGater');
+		}
+
+		let unlocked = false;
+		let spotifyError: string | null = null;
+		const onNavigated = (frame: Frame) => {
+			if (frame !== page.mainFrame()) return;
+			try {
+				const params = new URL(frame.url()).searchParams;
+				unlocked ||= params.has('spotify_unlock');
+				spotifyError = params.get('spotify_error') ?? spotifyError;
+			} catch {
+				// not a URL yet
+			}
+		};
+		page.on('framenavigated', onNavigated);
+		try {
+			const clicked = await page.evaluate(() => {
+				const btn = Array.from(
+					document.querySelectorAll<HTMLButtonElement>('button'),
+				).find((el) => /connect\b.*\bspotify/i.test(el.textContent || ''));
+				if (!btn || btn.disabled) return false;
+				btn.click();
+				return true;
+			});
+			if (!clicked) {
+				throw new Error('DownloadGater Spotify connect button not found.');
+			}
+
+			const authorization = await completeSpotifyAuthorization(this.browser);
+			console.log(`DownloadGater: Spotify authorization ${authorization}`);
+
+			const deadline = Date.now() + 60_000;
+			while (Date.now() < deadline) {
+				if (spotifyError) {
+					throw new Error(
+						`DownloadGater Spotify unlock failed: ${spotifyError}`,
+					);
+				}
+				const onGate =
+					!page.isClosed() &&
+					/^\/g\//.test(new URL(page.url()).pathname) &&
+					new URL(page.url()).hostname.endsWith('downloadgater.com');
+				const pane = onGate
+					? await this.detectPane(page).catch(() => null)
+					: null;
+				// GatePage hydrates lazily after the redirect; wait for a real step.
+				if (pane && pane !== 'spotify-oauth' && pane !== 'unknown') return;
+				if (
+					pane === 'spotify-oauth' &&
+					authorization === 'not_opened' &&
+					!unlocked
+				) {
+					throw new Error(
+						'DownloadGater did not open Spotify authorization. Review the gate in the remote browser.',
+					);
+				}
+				await timeout(500);
+			}
+			throw new Error(
+				'DownloadGater did not unlock after Spotify authorization.',
+			);
+		} finally {
+			page.off('framenavigated', onNavigated);
+		}
+	}
+
+	/** Honor-system YouTube subscribe: open the channel, then confirm. */
+	private async handleYoutubeStep(page: Page) {
+		await this.handleHonorSystemPopupStep(page, {
+			pane: 'youtube',
+			gateKeys: ['youtubeSubscribe'],
+			actionButtonPattern: '^subscribe on youtube$',
+			confirmButtonPattern: '^i subscribed$',
+			popupUrlPattern: 'youtube\\.com|youtu\\.be',
 			maxAttempts: 4,
 			confirmationTimeoutMs: 8_000,
 		});
@@ -404,6 +606,7 @@ export class DownloadgaterDownloader {
 	private async handleInstagramStep(page: Page) {
 		await this.handleHonorSystemPopupStep(page, {
 			pane: 'instagram',
+			gateKeys: ['instagramFollow'],
 			actionButtonPattern: 'follow on instagram',
 			confirmButtonPattern: '^(i followed|i opened it)$',
 			popupUrlPattern: 'instagram\\.com',
@@ -441,11 +644,14 @@ export class DownloadgaterDownloader {
 		const pagesBefore = new Set(await this.browser.pages(true));
 
 		const clicked = await page.evaluate(() => {
-			const btn = Array.from(document.querySelectorAll('button')).find((el) =>
-				/connect.*soundcloud|connect & (follow|repost)/i.test(
-					el.textContent || '',
-				),
-			) as HTMLButtonElement | undefined;
+			// "Connect & Follow on Spotify" is the Spotify step, not this one.
+			const btn = Array.from(document.querySelectorAll('button')).find((el) => {
+				const text = el.textContent || '';
+				return (
+					/connect.*soundcloud/i.test(text) ||
+					(/connect & (follow|repost)/i.test(text) && !/spotify/i.test(text))
+				);
+			}) as HTMLButtonElement | undefined;
 			if (!btn || btn.disabled) return false;
 			btn.click();
 			return true;
@@ -540,7 +746,7 @@ export class DownloadgaterDownloader {
 
 			if (!page.isClosed()) {
 				const pane = await this.detectPane(page);
-				if (pane === 'download' || pane === 'instagram') {
+				if (pane !== 'soundcloud' && pane !== 'unknown') {
 					await timeout(500);
 					return;
 				}

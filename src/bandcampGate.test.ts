@@ -62,6 +62,79 @@ test('a paid Bandcamp destination only uses a stream when original-only is disab
 	}
 });
 
+test('a free Bandcamp track without a person uses the stream unless original-only', async () => {
+	const page = {
+		goto: async () => {},
+		waitForFunction: async () => {},
+		evaluate: async () => ({
+			current: { minimum_price: 0 },
+			freeDownloadPage: null,
+		}),
+	};
+	const stream = spyOn(
+		YtDlpDownloader.prototype,
+		'downloadAudio',
+	).mockResolvedValue('latina.mp3');
+	const downloader = new BandcampGateDownloader(
+		page as unknown as Page,
+		undefined,
+		false,
+	);
+	const url = 'https://linapary.bandcamp.com/track/latina-guaracha';
+	try {
+		await expect(
+			downloader.downloadAudio(url, { originalOnly: true }),
+		).rejects.toThrow('Run the job in a visible headed browser');
+		expect(await downloader.downloadAudio(url)).toEqual({
+			filename: 'latina.mp3',
+			method: 'bandcamp-stream',
+		});
+	} finally {
+		stream.mockRestore();
+	}
+});
+
+test('a free Bandcamp track with a free download page skips the email form', async () => {
+	const visited: string[] = [];
+	const freeDownloadPage =
+		'https://bandcamp.com/download?id=704319385&type=track';
+	const fileUrl = 'https://p4.bcbits.com/download/track/x/mp3-320/704319385';
+	let call = 0;
+	const page = {
+		goto: async (url: string) => {
+			visited.push(url);
+		},
+		waitForFunction: async () => ({ jsonValue: async () => fileUrl }),
+		evaluate: async () => {
+			call++;
+			if (call === 1)
+				return { current: { minimum_price: 0 }, freeDownloadPage };
+			throw new Error('the email form must not be used');
+		},
+		bringToFront: async () => {},
+	};
+	const direct = spyOn(
+		DirectDownloader.prototype,
+		'downloadAudio',
+	).mockResolvedValue('beat.mp3');
+	const downloader = new BandcampGateDownloader(
+		page as unknown as Page,
+		undefined,
+		false,
+	);
+	const url = 'https://alanjperezmexa.bandcamp.com/track/beat-20000';
+	try {
+		expect(await downloader.downloadAudio(url)).toEqual({
+			filename: 'beat.mp3',
+			method: 'gate',
+		});
+		expect(visited).toEqual([url, freeDownloadPage]);
+		expect(direct).toHaveBeenCalledWith(fileUrl);
+	} finally {
+		direct.mockRestore();
+	}
+});
+
 test('free Bandcamp destination selects the matching track and MP3 after manual form completion', async () => {
 	const visited: string[] = [];
 	const clicks: string[] = [];

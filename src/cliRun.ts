@@ -359,9 +359,7 @@ export async function runCli(deps: CliDeps): Promise<void> {
 					console.log('✓ Updated config.json: initializeLogins set to false');
 				}
 			}
-			downloadFilename = await droploudDownloader.downloadAudio(gateUrl, {
-				trackUrl: soundcloudUrl,
-			});
+			downloadFilename = await droploudDownloader.downloadAudio(gateUrl);
 		} finally {
 			await droploudDownloader.close();
 		}

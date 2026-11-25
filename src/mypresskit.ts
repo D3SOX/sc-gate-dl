@@ -10,8 +10,13 @@ import { filenameFromContentDisposition } from './contentDisposition';
 import { reserveDownloadFilename } from './downloadRename';
 import type { ProgressCallback } from './hypeddit';
 import { safeFetch } from './safeOutboundUrl';
-import Selectors from './selectors';
-import { waitForSoundcloudLogin } from './soundcloudLogin';
+import { signInToSoundcloud, waitForSoundcloudLogin } from './soundcloudLogin';
+import {
+	completeSpotifyAuthorization,
+	findSpotifyAuthorizePage,
+	injectSpotifyCookies,
+	missingSpotifyCookiesError,
+} from './spotifyAuth';
 import type { HypedditConfig } from './types';
 import {
 	loadCookies,
@@ -54,6 +59,7 @@ export class MypresskitDownloader {
 	private config: HypedditConfig;
 	private progressCallback: ProgressCallback | null = null;
 	private readonly downloadAbortController = new AbortController();
+	private spotifyCookiesLoaded = false;
 
 	constructor(config: HypedditConfig) {
 		this.config = config;
@@ -83,40 +89,11 @@ export class MypresskitDownloader {
 		const browserContext = this.browser.defaultBrowserContext();
 		const soundCloudCookies = await loadCookies('soundcloud-cookies.json');
 		await browserContext.setCookie(...soundCloudCookies);
+		this.spotifyCookiesLoaded = await injectSpotifyCookies(this.browser);
 	}
 
 	async prepareLogins() {
-		const soundCloudPage = await this.browser.newPage();
-		await soundCloudPage.setViewport({ width: 1920, height: 1080 });
-		await soundCloudPage.goto('https://soundcloud.com/messages');
-
-		try {
-			await soundCloudPage.waitForSelector(
-				Selectors.SOUNDCLOUD_CAPTCHA_CONTAINER,
-				{ timeout: 5_000 },
-			);
-			console.log(
-				'MyPressKit: SoundCloud captcha present during login warm-up; solve it in the browser window if needed.',
-			);
-			await soundCloudPage.waitForSelector(
-				Selectors.SOUNDCLOUD_CAPTCHA_CONTAINER,
-				{ hidden: true, timeout: 120_000 },
-			);
-		} catch {
-			// no captcha
-		}
-
-		await soundCloudPage.waitForSelector(Selectors.SOUNDCLOUD_LIBRARY_LINK, {
-			timeout: 30_000,
-		});
-		await Promise.all([
-			soundCloudPage.click(Selectors.SOUNDCLOUD_LIBRARY_LINK),
-			soundCloudPage.waitForNavigation({ waitUntil: 'domcontentloaded' }),
-		]);
-		await soundCloudPage.waitForFunction(() =>
-			window.location.href.includes('/you/library'),
-		);
-		await soundCloudPage.close();
+		await signInToSoundcloud(this.browser);
 	}
 
 	async downloadAudio(url: string): Promise<string | null> {
@@ -135,6 +112,11 @@ export class MypresskitDownloader {
 
 			await this.dismissCookies(page);
 			const gate = await this.parseGate(page);
+			if (gate.availability && gate.availability !== 'available') {
+				throw new Error(
+					`MyPressKit gate is ${gate.availability} and does not offer the download right now.`,
+				);
+			}
 			if (!gate.id) {
 				throw new Error('MyPressKit: could not determine gate id from page.');
 			}
@@ -184,7 +166,11 @@ export class MypresskitDownloader {
 					`MyPressKit: ${step.type}...`,
 					35 + Math.min(40, round * 5),
 					{
-						currentGate: step.type.startsWith('soundcloud-') ? 'sc' : 'social',
+						currentGate: step.type.startsWith('soundcloud-')
+							? 'sc'
+							: step.type.startsWith('spotify-')
+								? 'sp'
+								: 'social',
 					},
 				);
 
@@ -231,6 +217,7 @@ export class MypresskitDownloader {
 	private async parseGate(page: Page): Promise<{
 		id: string | null;
 		handle: string | null;
+		availability: string | null;
 		steps: GateStep[];
 	}> {
 		await page
@@ -256,6 +243,10 @@ export class MypresskitDownloader {
 			const fromHtml = html.match(/\/api\/download-gates\/(\d+)\//)?.[1];
 			const fromJson = html.match(/"id":(\d+),"handle":"[^"]+","title":/)?.[1];
 			const id = fromAudio || fromHtml || fromJson || null;
+			// `availability.state`: available, paused, expired or full.
+			const availability =
+				html.match(/\\?"availability\\?":\{\\?"state\\?":\\?"([a-z-]+)/)?.[1] ??
+				null;
 
 			let steps: GateStep[] = [];
 			const rawCandidates = [
@@ -282,7 +273,7 @@ export class MypresskitDownloader {
 				}
 			}
 
-			return { id, handle, steps };
+			return { id, handle, availability, steps };
 		});
 	}
 
@@ -309,33 +300,115 @@ export class MypresskitDownloader {
 			return;
 		}
 
-		if (step.type.startsWith('spotify-')) {
-			throw new Error(
-				`MyPressKit Spotify steps are not supported yet (got “${step.type}”).`,
-			);
-		}
-
 		if (step.type.startsWith('soundcloud-')) {
 			await this.runOauthStep(page, gateId, step);
 			return;
 		}
 
-		// Generic social / open-link step
-		await page.evaluate(
-			async (id, stepIndex) => {
-				await fetch(
+		if (step.type.startsWith('spotify-')) {
+			// The gate UI posts track-step for Spotify steps like for any other
+			// social link (it only opens OAuth for SoundCloud). The server also has
+			// a Spotify OAuth flow that really follows / saves; use it when the
+			// honor-system click doesn't count.
+			const tracked = await this.trackStep(page, gateId, step.index);
+			if (tracked.ok && (await this.isStepDone(page, gateId, step.index))) {
+				return;
+			}
+			console.log(
+				`MyPressKit track-step for ${step.type} not accepted (${tracked.status}) — using Spotify OAuth`,
+			);
+			await this.runSpotifyOauthStep(page, gateId, step);
+			return;
+		}
+
+		// Honor-system steps (instagram-follow, facebook-follow, tiktok-follow,
+		// twitter-follow, youtube-subscribe, youtube-like): the gate UI opens the
+		// target link and records the click via track-step.
+		const tracked = await this.trackStep(page, gateId, step.index);
+		if (!tracked.ok) {
+			throw new Error(
+				`MyPressKit rejected ${step.type} step ${step.index} (${tracked.status}).`,
+			);
+		}
+	}
+
+	private async trackStep(
+		page: Page,
+		gateId: string,
+		stepIndex: number,
+	): Promise<{ ok: boolean; status: number }> {
+		return page.evaluate(
+			async (id, index) => {
+				const res = await fetch(
 					`/api/download-gates/${encodeURIComponent(id)}/track-step`,
 					{
 						method: 'POST',
 						headers: { 'Content-Type': 'application/json' },
 						credentials: 'include',
-						body: JSON.stringify({ stepIndex }),
+						body: JSON.stringify({ stepIndex: index }),
 						signal: AbortSignal.timeout(15_000),
 					},
+				);
+				return { ok: res.ok, status: res.status };
+			},
+			gateId,
+			stepIndex,
+		);
+	}
+
+	private async isStepDone(page: Page, gateId: string, stepIndex: number) {
+		const verify = await this.readVerify(page, gateId);
+		return (
+			!!verify.unlockState?.unlocked ||
+			(verify.completedStepIndexes ?? []).map(Number).includes(stepIndex) ||
+			!(verify.unlockState?.remaining ?? []).map(Number).includes(stepIndex)
+		);
+	}
+
+	/**
+	 * Same popup the gate's own OAuth handler opens
+	 * (`/api/download-gates/oauth/spotify/start`, scopes user-follow-modify and
+	 * user-library-modify); its callback completes the step server-side.
+	 */
+	private async runSpotifyOauthStep(
+		page: Page,
+		gateId: string,
+		step: GateStep,
+	) {
+		if (!this.spotifyCookiesLoaded) {
+			throw missingSpotifyCookiesError('MyPressKit');
+		}
+		await page.evaluate(
+			(id, index) => {
+				const params = new URLSearchParams({
+					gate: id,
+					step: String(index),
+					popup: '1',
+				});
+				window.open(
+					`/api/download-gates/oauth/spotify/start?${params}`,
+					'mpk-gate-oauth',
+					'width=520,height=720',
 				);
 			},
 			gateId,
 			step.index,
+		);
+
+		// An already authorized app redirects straight back to the callback, so
+		// the consent page may never show up.
+		const deadline = Date.now() + 20_000;
+		while (Date.now() < deadline) {
+			if (await findSpotifyAuthorizePage(this.browser)) {
+				const result = await completeSpotifyAuthorization(this.browser);
+				console.log(`MyPressKit: Spotify authorization ${result}`);
+				return;
+			}
+			if (await this.isStepDone(page, gateId, step.index)) return;
+			await timeout(500);
+		}
+		throw new Error(
+			`MyPressKit Spotify authorization for ${step.type} never opened.`,
 		);
 	}
 
@@ -375,26 +448,11 @@ export class MypresskitDownloader {
 	}
 
 	private async runOauthStep(page: Page, gateId: string, step: GateStep) {
-		if (step.type === 'soundcloud-comment') {
-			const comment = this.config.comment.trim();
-			if (comment.length < 2) {
-				throw new Error(
-					'This MyPressKit gate requires SC_COMMENT (at least 2 characters).',
-				);
-			}
-			await page.evaluate((text) => {
-				const ta = document.querySelector(
-					'textarea',
-				) as HTMLTextAreaElement | null;
-				if (!ta) return;
-				const setter = Object.getOwnPropertyDescriptor(
-					HTMLTextAreaElement.prototype,
-					'value',
-				)?.set;
-				setter?.call(ta, text);
-				ta.dispatchEvent(new Event('input', { bubbles: true }));
-				ta.dispatchEvent(new Event('change', { bubbles: true }));
-			}, comment);
+		const comment = this.config.comment.trim();
+		if (step.type === 'soundcloud-comment' && comment.length < 2) {
+			throw new Error(
+				'This MyPressKit gate requires SC_COMMENT (at least 2 characters).',
+			);
 		}
 
 		const popupPromise = new Promise<Page | null>((resolve) => {
@@ -412,46 +470,29 @@ export class MypresskitDownloader {
 			this.browser.on('targetcreated', onTarget);
 		});
 
-		const openMethod = await page.evaluate(
-			(stepIndex, stepType, comment, id) => {
-				const labels: Record<string, RegExp> = {
-					'soundcloud-follow': /follow on soundcloud/i,
-					'soundcloud-repost': /repost/i,
-					'soundcloud-like': /like track/i,
-					'soundcloud-comment': /comment on track/i,
-				};
-				const re = labels[stepType];
-				const buttons = Array.from(
-					document.querySelectorAll('button'),
-				) as HTMLButtonElement[];
-				const btn = re
-					? buttons.find(
-							(b) => !b.disabled && re.test((b.textContent || '').trim()),
-						)
-					: null;
-				if (btn) {
-					btn.click();
-					return 'ui';
-				}
+		// Always the per-step start URL the gate's own step buttons open
+		// (`ee()` in the gate bundle). Gates with combineSoundCloudSteps only show
+		// one combined button (`combo=1`), which did not complete the steps live.
+		await page.evaluate(
+			(stepIndex, stepType, text, id) => {
 				const params = new URLSearchParams({
 					gate: id,
 					step: String(stepIndex),
 					popup: '1',
 				});
-				if (stepType === 'soundcloud-comment') params.set('comment', comment);
+				if (stepType === 'soundcloud-comment') params.set('comment', text);
 				window.open(
 					`/api/download-gates/oauth/soundcloud/start?${params}`,
-					'mpk-gate-oauth',
+					`mpk-gate-oauth-${stepIndex}`,
 					'width=520,height=720',
 				);
-				return 'direct';
 			},
 			step.index,
 			step.type,
-			this.config.comment.trim(),
+			comment,
 			gateId,
 		);
-		console.log(`MyPressKit OAuth open (${openMethod}) for step ${step.index}`);
+		console.log(`MyPressKit OAuth open for step ${step.index} (${step.type})`);
 
 		let oauthPage = await popupPromise;
 		if (!oauthPage) oauthPage = await this.findSoundcloudOauthPage();

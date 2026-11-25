@@ -15,6 +15,13 @@ describe('SoundCloud interactive login detection', () => {
 				false,
 			),
 		).toBe(true);
+		expect(
+			isSoundcloudLoginDocument(
+				'https://secure.soundcloud.com/authorize',
+				'Create an account or sign in',
+				false,
+			),
+		).toBe(true);
 	});
 
 	test('detects SoundCloud sign-in when the account prompt is reversed', () => {
