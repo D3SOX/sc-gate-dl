@@ -1,6 +1,7 @@
 import { rename, rm } from 'node:fs/promises';
 import { basename, join } from 'node:path';
 import { filenameFromContentDisposition } from './contentDisposition';
+import { createDownloadBar } from './downloadBar';
 import { reserveDownloadFilename } from './downloadRename';
 import type { ProgressCallback } from './hypeddit';
 import { inspectHypedditPage, NoHypedditDownloadError } from './hypedditLinks';
@@ -271,6 +272,7 @@ export class HypedditHttpDownloader {
 		const destPath = join('./downloads', reservedFilename);
 		const tempPath = `${destPath}.${crypto.randomUUID()}.part`;
 		const writer = Bun.file(tempPath).writer();
+		const bar = createDownloadBar(totalBytes);
 		let receivedBytes = 0;
 		let lastEmit = 0;
 		let succeeded = false;
@@ -285,6 +287,7 @@ export class HypedditHttpDownloader {
 					}
 					writer.write(chunk);
 					receivedBytes += chunk.byteLength;
+					bar.update(receivedBytes);
 
 					// throttle progress events to avoid flooding the SSE stream
 					const now = Date.now();
@@ -300,6 +303,7 @@ export class HypedditHttpDownloader {
 				}
 			}
 			await writer.end();
+			bar.stop();
 			if (this.abortController.signal.aborted) {
 				throw new Error('Download cancelled');
 			}
@@ -307,6 +311,7 @@ export class HypedditHttpDownloader {
 			succeeded = true;
 		} finally {
 			if (!succeeded) {
+				bar.stop();
 				try {
 					await writer.end();
 				} catch {

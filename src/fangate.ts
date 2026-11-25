@@ -6,6 +6,7 @@ import {
 	CancellableBrowserLaunch,
 } from './browserLaunch';
 import { filenameFromContentDisposition } from './contentDisposition';
+import { createDownloadBar } from './downloadBar';
 import { reserveDownloadFilename } from './downloadRename';
 import type { ProgressCallback } from './hypeddit';
 import { safeFetch } from './safeOutboundUrl';
@@ -269,6 +270,9 @@ async function saveFangateFile(link: string, referer: string): Promise<string> {
 	const target = join('./downloads', name);
 	const writer = Bun.file(target).writer();
 	const reader = response.body.getReader();
+	const bar = createDownloadBar(
+		Number(response.headers.get('content-length')) || 0,
+	);
 	let received = 0;
 	let completed = false;
 	try {
@@ -281,10 +285,12 @@ async function saveFangateFile(link: string, referer: string): Promise<string> {
 				throw new Error('fangate.eu download is too large.');
 			}
 			writer.write(value);
+			bar.update(received);
 		}
 		await writer.end();
 		completed = true;
 	} finally {
+		bar.stop();
 		if (!completed) {
 			await Promise.resolve(writer.end()).catch(() => {});
 			await rm(target, { force: true }).catch(() => {});

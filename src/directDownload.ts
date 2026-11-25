@@ -5,6 +5,7 @@ import {
 	normalizeDirectDownloadParsedUrl,
 	urlLooksLikeDirectDownload,
 } from './directLinkRules';
+import { createDownloadBar } from './downloadBar';
 import { reserveDownloadFilename } from './downloadRename';
 import type { ProgressCallback } from './hypeddit';
 import { safeFetch } from './safeOutboundUrl';
@@ -60,6 +61,7 @@ async function writeBodyWithSizeLimit(
 ): Promise<void> {
 	const writer = Bun.file(target).writer();
 	const reader = body.getReader();
+	const bar = createDownloadBar(totalBytes);
 	let total = 0;
 	try {
 		while (true) {
@@ -73,12 +75,15 @@ async function writeBodyWithSizeLimit(
 				);
 			}
 			writer.write(value);
+			bar.update(total);
 			if (totalBytes > 0) {
 				onProgress(total, totalBytes);
 			}
 		}
 		await writer.end();
+		bar.stop();
 	} catch (error) {
+		bar.stop();
 		try {
 			writer.end();
 		} catch {
