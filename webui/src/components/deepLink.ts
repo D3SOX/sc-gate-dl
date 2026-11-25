@@ -74,3 +74,43 @@ export function parseBrowserViewUrl(
 		return null;
 	}
 }
+
+function parseBoolean(value: string | null): boolean | null {
+	if (value === 'true') return true;
+	if (value === 'false') return false;
+	return null;
+}
+
+export function readRequestedReviewTags(search: string): boolean | null {
+	return parseBoolean(new URLSearchParams(search).get('reviewTags'));
+}
+
+export function readStoredReviewTags(
+	storage: Pick<Storage, 'getItem'>,
+	key: string,
+): boolean | null {
+	return parseBoolean(storage.getItem(key));
+}
+
+export function parseReviewTagsDefault(value: unknown): boolean {
+	if (!value || typeof value !== 'object') return false;
+	return (value as { reviewTagsDefault?: unknown }).reviewTagsDefault === true;
+}
+
+/** Deep link beats a stored choice, which beats the server default. */
+export function resolveReviewTags(
+	requested: boolean | null,
+	stored: boolean | null,
+	serverDefault: boolean,
+): boolean {
+	return requested ?? stored ?? serverDefault;
+}
+
+/** A ready job saves without the tag editor when review is off. */
+export function shouldAutoFinalize(
+	reviewTags: boolean,
+	outputFormat: OutputFormat,
+	alreadyFinalized: boolean,
+): boolean {
+	return !reviewTags && outputFormat !== 'original' && !alreadyFinalized;
+}

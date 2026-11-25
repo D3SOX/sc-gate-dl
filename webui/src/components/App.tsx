@@ -12,10 +12,15 @@ import { resolveApiBase } from './apiBase';
 import {
 	parseAvailableBrowserModes,
 	parseBrowserViewUrl,
+	parseReviewTagsDefault,
 	readRequestedBrowserMode,
 	readRequestedOutputFormat,
+	readRequestedReviewTags,
 	readStoredBrowserMode,
 	readStoredOutputFormat,
+	readStoredReviewTags,
+	resolveReviewTags,
+	shouldAutoFinalize,
 	shouldAutoStartDeepLink,
 	shouldUseEmbeddedLayout,
 } from './deepLink';
@@ -116,6 +121,7 @@ const API_BASE = resolveApiBase(
 );
 const BROWSER_MODE_STORAGE_KEY = 'sc-gate-dl-browser-mode';
 const OUTPUT_FORMAT_STORAGE_KEY = 'sc-gate-dl-output-format';
+const REVIEW_TAGS_STORAGE_KEY = 'sc-gate-dl-review-tags';
 const BROWSER_MODE_LABELS: Record<BrowserMode, string> = {
 	headless: 'Headless',
 	xvfb: 'Hidden window (Xvfb)',
@@ -359,6 +365,8 @@ export default function App() {
 	const [browserViewOpen, setBrowserViewOpen] = useState(false);
 	const [embedded, setEmbedded] = useState(false);
 	const [outputFormat, setOutputFormat] = useState<OutputFormat>('mp3');
+	const [reviewTags, setReviewTags] = useState(false);
+	const autoFinalizedJobRef = useRef<string | null>(null);
 	const [job, setJob] = useState<JobState>({
 		jobId: null,
 		track: null,
@@ -388,10 +396,12 @@ export default function App() {
 		const hydrateBrowserModes = async () => {
 			let modes: BrowserMode[] = ['headless', 'headed'];
 			let viewUrl: string | null = null;
+			let serverReviewDefault = false;
 			try {
 				const response = await fetch(`${API_BASE}/api/capabilities`);
 				if (response.ok) {
 					const capabilities = await response.json();
+					serverReviewDefault = parseReviewTagsDefault(capabilities);
 					modes = parseAvailableBrowserModes(capabilities);
 					viewUrl = parseBrowserViewUrl(capabilities, window.location.hostname);
 				}
@@ -405,6 +415,7 @@ export default function App() {
 			const requestedMode = readRequestedBrowserMode(window.location.search);
 			let storedMode: BrowserMode | null = null;
 			let storedFormat: ReturnType<typeof readStoredOutputFormat> = null;
+			let storedReview: boolean | null = null;
 			try {
 				storedMode = readStoredBrowserMode(
 					localStorage,
@@ -413,6 +424,10 @@ export default function App() {
 				storedFormat = readStoredOutputFormat(
 					localStorage,
 					OUTPUT_FORMAT_STORAGE_KEY,
+				);
+				storedReview = readStoredReviewTags(
+					localStorage,
+					REVIEW_TAGS_STORAGE_KEY,
 				);
 			} catch {
 				// Storage may be blocked when the Web UI is embedded cross-origin.
@@ -445,6 +460,13 @@ export default function App() {
 					}
 				}
 			}
+			setReviewTags(
+				resolveReviewTags(
+					readRequestedReviewTags(window.location.search),
+					storedReview,
+					serverReviewDefault,
+				),
+			);
 			setBrowserModeHydrated(true);
 		};
 
@@ -462,6 +484,15 @@ export default function App() {
 		}
 		try {
 			localStorage.setItem(BROWSER_MODE_STORAGE_KEY, mode);
+		} catch {
+			// Keep the in-memory selection when persistent storage is unavailable.
+		}
+	};
+
+	const updateReviewTags = (value: boolean) => {
+		setReviewTags(value);
+		try {
+			localStorage.setItem(REVIEW_TAGS_STORAGE_KEY, String(value));
 		} catch {
 			// Keep the in-memory selection when persistent storage is unavailable.
 		}
@@ -1181,6 +1212,23 @@ export default function App() {
 		}
 	};
 
+	const processMetadataRef = useRef(processMetadata);
+	processMetadataRef.current = processMetadata;
+	useEffect(() => {
+		if (step !== 'metadata' || !job.jobId || job.error) return;
+		if (
+			!shouldAutoFinalize(
+				reviewTags,
+				job.outputFormat,
+				autoFinalizedJobRef.current === job.jobId,
+			)
+		) {
+			return;
+		}
+		autoFinalizedJobRef.current = job.jobId;
+		void processMetadataRef.current();
+	}, [step, job.jobId, job.outputFormat, job.error, reviewTags]);
+
 	const handleMetadataSubmit = (e: React.FormEvent) => {
 		e.preventDefault();
 		void processMetadata();
@@ -1551,6 +1599,21 @@ export default function App() {
 										Enter the gate link myself
 										<span className="checkbox-hint">
 											Skips the automatic search on the SoundCloud page.
+										</span>
+									</span>
+								</label>
+								<label className="checkbox-row" htmlFor="review-tags">
+									<input
+										id="review-tags"
+										type="checkbox"
+										checked={reviewTags}
+										onChange={(e) => updateReviewTags(e.target.checked)}
+										disabled={isLoading}
+									/>
+									<span>
+										Check the tags before saving
+										<span className="checkbox-hint">
+											Off: the file is saved with the SoundCloud tags.
 										</span>
 									</span>
 								</label>

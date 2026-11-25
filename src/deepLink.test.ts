@@ -2,10 +2,15 @@ import { describe, expect, test } from 'bun:test';
 import {
 	parseAvailableBrowserModes,
 	parseBrowserViewUrl,
+	parseReviewTagsDefault,
 	readRequestedBrowserMode,
 	readRequestedOutputFormat,
+	readRequestedReviewTags,
 	readStoredBrowserMode,
 	readStoredOutputFormat,
+	readStoredReviewTags,
+	resolveReviewTags,
+	shouldAutoFinalize,
 	shouldAutoStartDeepLink,
 	shouldUseEmbeddedLayout,
 } from '../webui/src/components/deepLink';
@@ -130,5 +135,50 @@ describe('browser-view capability', () => {
 			parseBrowserViewUrl({ browserViewUrl: 'javascript:alert(1)' }),
 		).toBeNull();
 		expect(parseBrowserViewUrl({ browserViewUrl: 'not a URL' })).toBeNull();
+	});
+});
+
+describe('review-tags preference', () => {
+	test('a deep link wins over a stored choice and the server default', () => {
+		expect(readRequestedReviewTags('?reviewTags=true')).toBe(true);
+		expect(readRequestedReviewTags('?reviewTags=false')).toBe(false);
+		expect(resolveReviewTags(true, false, false)).toBe(true);
+		expect(resolveReviewTags(false, true, true)).toBe(false);
+	});
+
+	test('a stored choice wins over the server default', () => {
+		expect(resolveReviewTags(null, true, false)).toBe(true);
+		expect(resolveReviewTags(null, false, true)).toBe(false);
+	});
+
+	test('the server default applies when nothing else is chosen', () => {
+		expect(resolveReviewTags(null, null, true)).toBe(true);
+		expect(resolveReviewTags(null, null, false)).toBe(false);
+	});
+
+	test('invalid stored or requested values fall back safely', () => {
+		expect(readRequestedReviewTags('?reviewTags=maybe')).toBeNull();
+		expect(readRequestedReviewTags('')).toBeNull();
+		expect(
+			readStoredReviewTags({ getItem: () => 'yes' }, 'sc-gate-dl-review-tags'),
+		).toBeNull();
+		expect(
+			readStoredReviewTags({ getItem: () => 'true' }, 'sc-gate-dl-review-tags'),
+		).toBe(true);
+	});
+
+	test('capabilities without a usable default mean false', () => {
+		expect(parseReviewTagsDefault({ reviewTagsDefault: true })).toBe(true);
+		expect(parseReviewTagsDefault({ reviewTagsDefault: 'x' })).toBe(false);
+		expect(parseReviewTagsDefault(null)).toBe(false);
+	});
+});
+
+describe('automatic finalization', () => {
+	test('runs only for ready jobs that are not reviewed or original', () => {
+		expect(shouldAutoFinalize(false, 'mp3', false)).toBe(true);
+		expect(shouldAutoFinalize(true, 'mp3', false)).toBe(false);
+		expect(shouldAutoFinalize(false, 'original', false)).toBe(false);
+		expect(shouldAutoFinalize(false, 'mp3', true)).toBe(false);
 	});
 });
