@@ -1,6 +1,5 @@
-import { mkdir, rm } from 'node:fs/promises';
+import { mkdir } from 'node:fs/promises';
 import { basename, join } from 'node:path';
-import { Presets, SingleBar } from 'cli-progress';
 import type { Browser, Page } from 'puppeteer';
 import {
 	browserModeToLaunchOptions,
@@ -8,6 +7,11 @@ import {
 } from './browserLaunch';
 import { filenameFromContentDisposition } from './contentDisposition';
 import { reserveDownloadFilename } from './downloadRename';
+import {
+	downloadProgressReporter,
+	saveDownloadStream,
+	withContentTypeExtension,
+} from './downloadStream';
 import type { ProgressCallback } from './hypeddit';
 import { safeFetch } from './safeOutboundUrl';
 import { signInToSoundcloud, waitForSoundcloudLogin } from './soundcloudLogin';
@@ -26,7 +30,6 @@ import {
 } from './utils';
 
 const SC_AUTHORIZE_RE = /secure\.soundcloud\.com\/authorize/i;
-const MAX_DOWNLOAD_BYTES = 512 * 1024 * 1024;
 const USER_AGENT =
 	'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36';
 
@@ -671,106 +674,27 @@ export class MypresskitDownloader {
 		const fromHeader = filenameFromContentDisposition(
 			response.headers.get('content-disposition'),
 		);
-		let suggested =
+		let suggested = withContentTypeExtension(
 			sanitizeFilenamePart(basename(fromHeader || '')) ||
-			sanitizeFilenamePart(
-				safeDecodeURIComponent(basename(new URL(finalUrl).pathname)),
-			) ||
-			`mypresskit-${gateId}`;
-		if (!/\.[a-z0-9]{2,5}$/i.test(suggested)) {
-			suggested = `${suggested}.wav`;
-		}
+				sanitizeFilenamePart(
+					safeDecodeURIComponent(basename(new URL(finalUrl).pathname)),
+				) ||
+				`mypresskit-${gateId}`,
+			response.headers.get('content-type'),
+		);
 		suggested = await reserveDownloadFilename('./downloads', suggested);
 
 		const target = join('./downloads', suggested);
 		const totalBytes = Number(response.headers.get('content-length')) || 0;
-		const writer = Bun.file(target).writer();
-		const reader = response.body.getReader();
-		let received = 0;
-		let completed = false;
-		let lastProgressEmit = 0;
-		const pBar = new SingleBar(
-			{
-				format:
-					'{prefix} {bar} {percentage}% | {current_mb}/{total_mb} MB | ETA: {eta_formatted}',
-				hideCursor: true,
-			},
-			{
-				barCompleteChar: '█',
-				barIncompleteChar: '░',
-				format: Presets.shades_classic.format,
-			},
-		);
-
-		const emitDownloadProgress = (force = false) => {
-			const now = Date.now();
-			if (
-				!force &&
-				now - lastProgressEmit < 250 &&
-				!(totalBytes > 0 && received >= totalBytes)
-			) {
-				return;
-			}
-			lastProgressEmit = now;
-			const currentMb = Number((received / 1024 / 1024).toFixed(2));
-			if (totalBytes > 0) {
-				if (pBar.isActive) {
-					pBar.update(received, {
-						total_mb: Number((totalBytes / 1024 / 1024).toFixed(2)),
-						current_mb: currentMb,
-					});
-				} else {
-					pBar.start(totalBytes, received, { prefix: 'Downloading' });
-				}
-				const percent = Math.min(100, (received / totalBytes) * 100);
-				this.emitProgress(
-					'downloading',
-					`Downloading... ${currentMb.toFixed(1)} / ${(totalBytes / 1024 / 1024).toFixed(1)} MB`,
-					percent,
-					{ downloadBytes: received, totalBytes },
-				);
-				return;
-			}
-			this.emitProgress(
-				'downloading',
-				`Downloading... ${currentMb.toFixed(1)} MB`,
-				0,
-				{ downloadBytes: received },
-			);
-		};
-
-		try {
-			while (true) {
-				const { done, value } = await reader.read();
-				if (done) break;
-				received += value.byteLength;
-				if (received > MAX_DOWNLOAD_BYTES) {
-					await reader.cancel();
-					throw new Error(
-						`MyPressKit download too large (${received} bytes; max ${MAX_DOWNLOAD_BYTES})`,
-					);
-				}
-				writer.write(value);
-				emitDownloadProgress();
-			}
-			await writer.end();
-			completed = true;
-			emitDownloadProgress(true);
-			this.emitProgress('downloading', 'Download complete', 100, {
-				downloadBytes: received,
-				...(totalBytes > 0 ? { totalBytes } : {}),
-			});
-		} finally {
-			pBar.stop();
-			if (!completed) {
-				try {
-					await writer.end();
-				} catch {
-					// ignore
-				}
-				await rm(target, { force: true }).catch(() => {});
-			}
-		}
+		const received = await saveDownloadStream(response.body, target, {
+			totalBytes,
+			signal: this.downloadAbortController.signal,
+			onProgress: downloadProgressReporter(this.progressCallback),
+		});
+		this.emitProgress('downloading', 'Download complete', 100, {
+			downloadBytes: received,
+			...(totalBytes > 0 && { totalBytes }),
+		});
 
 		console.log('MyPressKit saved:', target);
 		return suggested;

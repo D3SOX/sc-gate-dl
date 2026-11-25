@@ -1,4 +1,4 @@
-import { mkdir, rm } from 'node:fs/promises';
+import { mkdir } from 'node:fs/promises';
 import { basename, join } from 'node:path';
 import { Presets, SingleBar } from 'cli-progress';
 import type { Browser, ElementHandle, HTTPResponse, Page } from 'puppeteer';
@@ -6,6 +6,11 @@ import { CancellableBrowserLaunch } from './browserLaunch';
 import { filenameFromContentDisposition } from './contentDisposition';
 import { DirectDownloader } from './directDownload';
 import { reserveDownloadFilename } from './downloadRename';
+import {
+	downloadProgressReporter,
+	saveDownloadStream,
+	withContentTypeExtension,
+} from './downloadStream';
 import type { ProgressCallback } from './hypeddit';
 import { safeFetch } from './safeOutboundUrl';
 import Selectors from './selectors';
@@ -40,7 +45,6 @@ const UNLOCK_BUTTON_RE = /^(Unlock download|Download again)$/i;
 const SKIP_EMAIL_RE = /^Skip for now$/i;
 const USER_AGENT =
 	'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36';
-const MAX_DOWNLOAD_BYTES = 512 * 1024 * 1024;
 
 export type SocialPlatform = 'instagram' | 'tiktok' | 'twitter' | 'youtube';
 /** The fan's own accounts, which enhanced follow steps ask for. */
@@ -1341,78 +1345,21 @@ export class StillhypeDownloader {
 		const fromHeader = filenameFromContentDisposition(
 			response.headers.get('content-disposition'),
 		);
-		let suggested =
+		let suggested = withContentTypeExtension(
 			sanitizeFilenamePart(basename(fromHeader || '')) ||
-			sanitizeFilenamePart(
-				safeDecodeURIComponent(basename(new URL(finalUrl).pathname)),
-			) ||
-			'stillhype-download';
-		if (!/\.[a-z0-9]{2,5}$/i.test(suggested)) {
-			suggested = `${suggested}.wav`;
-		}
+				sanitizeFilenamePart(
+					safeDecodeURIComponent(basename(new URL(finalUrl).pathname)),
+				) ||
+				'stillhype-download',
+			response.headers.get('content-type'),
+		);
 		suggested = await reserveDownloadFilename('./downloads', suggested);
 
-		const target = join('./downloads', suggested);
-		const totalBytes = Number(response.headers.get('content-length')) || 0;
-		const writer = Bun.file(target).writer();
-		const reader = response.body.getReader();
-		let received = 0;
-		let completed = false;
-		const pBar = new SingleBar(
-			{
-				format:
-					'{prefix} {bar} {percentage}% | {current_mb}/{total_mb} MB | ETA: {eta_formatted}',
-				hideCursor: true,
-			},
-			{
-				barCompleteChar: '█',
-				barIncompleteChar: '░',
-				format: Presets.shades_classic.format,
-			},
-		);
-
-		try {
-			while (true) {
-				const { done, value } = await reader.read();
-				if (done) break;
-				received += value.byteLength;
-				if (received > MAX_DOWNLOAD_BYTES) {
-					await reader.cancel();
-					throw new Error(
-						`StillHype download too large (${received} bytes; max ${MAX_DOWNLOAD_BYTES})`,
-					);
-				}
-				writer.write(value);
-				if (totalBytes > 0) {
-					if (pBar.isActive) {
-						pBar.update(received, {
-							total_mb: Number((totalBytes / 1024 / 1024).toFixed(2)),
-							current_mb: Number((received / 1024 / 1024).toFixed(2)),
-						});
-					} else {
-						pBar.start(totalBytes, received, { prefix: 'Downloading' });
-					}
-					this.emitProgress(
-						'downloading',
-						`Downloading... ${(received / 1024 / 1024).toFixed(1)} / ${(totalBytes / 1024 / 1024).toFixed(1)} MB`,
-						0,
-						{ downloadBytes: received, totalBytes },
-					);
-				}
-			}
-			await writer.end();
-			completed = true;
-		} finally {
-			pBar.stop();
-			if (!completed) {
-				try {
-					await writer.end();
-				} catch {
-					// Preserve the download error while cleaning up the partial file.
-				}
-				await rm(target, { force: true }).catch(() => {});
-			}
-		}
+		await saveDownloadStream(response.body, join('./downloads', suggested), {
+			totalBytes: Number(response.headers.get('content-length')) || 0,
+			signal: this.downloadAbortController.signal,
+			onProgress: downloadProgressReporter(this.progressCallback),
+		});
 
 		this.downloadFilename = suggested;
 		console.log('Download completed:', suggested);

@@ -1,4 +1,4 @@
-import { mkdir, unlink } from 'node:fs/promises';
+import { mkdir } from 'node:fs/promises';
 import { basename, join } from 'node:path';
 import { filenameFromContentDisposition } from './contentDisposition';
 import {
@@ -6,6 +6,12 @@ import {
 	urlLooksLikeDirectDownload,
 } from './directLinkRules';
 import { reserveDownloadFilename } from './downloadRename';
+import {
+	downloadProgressReporter,
+	MAX_DOWNLOAD_BYTES,
+	saveDownloadStream,
+	withContentTypeExtension,
+} from './downloadStream';
 import type { ProgressCallback } from './hypeddit';
 import { safeFetch } from './safeOutboundUrl';
 import {
@@ -19,8 +25,6 @@ const USER_AGENT =
 
 const FETCH_TIMEOUT_MS = 60_000;
 const MAX_REDIRECTS = 10;
-/** Cap downloads (audio / zip packages). */
-const MAX_DOWNLOAD_BYTES = 512 * 1024 * 1024;
 
 /**
  * True for http(s) URLs that look like a direct file download (Dropbox, Drive,
@@ -49,44 +53,6 @@ function safeDownloadFilename(raw: string | null): string | null {
 	const base = basename(raw);
 	const cleaned = sanitizeFilenamePart(base);
 	return cleaned || null;
-}
-
-async function writeBodyWithSizeLimit(
-	body: ReadableStream<Uint8Array>,
-	target: string,
-	maxBytes: number,
-	totalBytes: number,
-	onProgress: (receivedBytes: number, totalBytes: number) => void,
-): Promise<void> {
-	const writer = Bun.file(target).writer();
-	const reader = body.getReader();
-	let total = 0;
-	try {
-		while (true) {
-			const { done, value } = await reader.read();
-			if (done) break;
-			total += value.byteLength;
-			if (total > maxBytes) {
-				await reader.cancel();
-				throw new Error(
-					`Direct download too large (${total} bytes; max ${maxBytes})`,
-				);
-			}
-			writer.write(value);
-			if (totalBytes > 0) {
-				onProgress(total, totalBytes);
-			}
-		}
-		await writer.end();
-	} catch (error) {
-		try {
-			writer.end();
-		} catch {
-			// ignore
-		}
-		await unlink(target).catch(() => {});
-		throw error;
-	}
 }
 
 export class DirectDownloader {
@@ -182,11 +148,13 @@ export class DirectDownloader {
 		const urlName = safeDownloadFilename(
 			safeDecodeURIComponent(basename(new URL(finalUrl).pathname)),
 		);
-		const filename =
+		const filename = withContentTypeExtension(
 			fromHeader ||
-			(urlName && urlName !== '/'
-				? urlName
-				: `direct-download-${Date.now()}.bin`);
+				(urlName && urlName !== '/'
+					? urlName
+					: `direct-download-${Date.now()}`),
+			contentType,
+		);
 
 		if (!response.body) {
 			throw new Error(`Direct download returned an empty body for ${finalUrl}`);
@@ -196,23 +164,15 @@ export class DirectDownloader {
 			'./downloads',
 			filename,
 		);
-		const target = join('./downloads', reservedFilename);
-		let lastProgressEmit = 0;
-		await writeBodyWithSizeLimit(
+		await saveDownloadStream(
 			response.body,
-			target,
-			MAX_DOWNLOAD_BYTES,
-			contentLength,
-			(receivedBytes, totalBytes) => {
-				const now = Date.now();
-				if (now - lastProgressEmit < 250 && receivedBytes < totalBytes) return;
-				lastProgressEmit = now;
-				this.progressCallback?.(
-					'downloading',
-					`Downloading... ${(receivedBytes / 1024 / 1024).toFixed(1)} / ${(totalBytes / 1024 / 1024).toFixed(1)} MB`,
-					0,
-					{ downloadBytes: receivedBytes, totalBytes, browserless: true },
-				);
+			join('./downloads', reservedFilename),
+			{
+				totalBytes: contentLength,
+				signal: this.abortController.signal,
+				onProgress: downloadProgressReporter(this.progressCallback, {
+					browserless: true,
+				}),
 			},
 		);
 		this.progressCallback?.('downloading', 'Download complete', 100, {
