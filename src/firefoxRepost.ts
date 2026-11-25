@@ -4,6 +4,7 @@ import { type AccessibleNode, accessibleNodes, atspiAvailable } from './atspi';
 import {
 	createFirefoxProfile,
 	findFirefox,
+	hasExited,
 	stopFirefox,
 	writeFirefoxCookies,
 } from './firefoxLogin';
@@ -213,7 +214,7 @@ export async function repostInFirefox(
 			},
 		);
 		const pid = firefoxProcess.pid;
-		const running = () => firefoxProcess?.exitCode === null;
+		const running = () => firefoxProcess !== null && !hasExited(firefoxProcess);
 		const deadline = Date.now() + timeoutMs;
 
 		// DataDome can also challenge the page load, before the button shows.
