@@ -941,6 +941,7 @@ function wrapRoutes<Path extends string>(
 
 const TEST_FIXTURE_JOB_ENV = 'SC_GATE_DL_TEST_FIXTURE_JOB';
 const TEST_FIXTURE_JOB_FORMAT_ENV = 'SC_GATE_DL_TEST_FIXTURE_JOB_FORMAT';
+const TEST_FIXTURE_JOB_REVIEW_ENV = 'SC_GATE_DL_TEST_FIXTURE_JOB_FINISH';
 
 /** Test hook: seed one job waiting for tags so HTTP tests need no live gate. */
 async function seedFixtureJob(): Promise<string | null> {
@@ -967,6 +968,26 @@ async function seedFixtureJob(): Promise<string | null> {
 			existingArtworkBuffer: existingArtwork?.buffer ?? null,
 			existingArtworkFileName: existingArtwork?.fileName ?? null,
 		});
+	}
+	if (process.env[TEST_FIXTURE_JOB_REVIEW_ENV] !== undefined) {
+		const requested = process.env[TEST_FIXTURE_JOB_REVIEW_ENV];
+		const options = parseUnattendedJobOptions(
+			requested === 'true' || requested === 'false'
+				? { reviewTags: requested === 'true' }
+				: {},
+			'client',
+			availableBrowserModes,
+			REVIEW_TAGS_DEFAULT,
+		);
+		if (typeof options === 'string') throw new Error(options);
+		jobStore.update(job.id, { reviewTags: options.reviewTags });
+		void finishOrReviewUnattendedJob(job).catch((error) => {
+			jobStore.setError(
+				job.id,
+				error instanceof Error ? error.message : 'Unknown error',
+			);
+		});
+		return job.id;
 	}
 	jobStore.updateProgress(job.id, 'waiting_metadata', 'Check the tags', 100);
 	return job.id;

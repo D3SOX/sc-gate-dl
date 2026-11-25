@@ -89,3 +89,101 @@ describe('SC_GATE_DL_REVIEW_TAGS on the server', () => {
 		20_000,
 	);
 });
+
+describe('the review default decides between waiting and finalizing', () => {
+	const FIXTURE = 'review-default.mp3';
+
+	async function stageAfterStart(
+		reviewTags: string | undefined,
+		request = '1',
+	) {
+		const { mkdir, rm } = await import('node:fs/promises');
+		await mkdir('downloads', { recursive: true });
+		const make = Bun.spawn(
+			[
+				'ffmpeg',
+				'-v',
+				'error',
+				'-y',
+				'-f',
+				'lavfi',
+				'-i',
+				'sine=frequency=440:duration=1',
+				'-c:a',
+				'libmp3lame',
+				`downloads/${FIXTURE}`,
+			],
+			{ stdout: 'ignore', stderr: 'ignore' },
+		);
+		await make.exited;
+		const port = await freePort();
+		const env: Record<string, string> = {
+			...(process.env as Record<string, string>),
+			SC_COMMENT: 'test-comment',
+			SC_GATE_DL_PORT: String(port),
+			SC_GATE_DL_TEST_FIXTURE_JOB: FIXTURE,
+			SC_GATE_DL_TEST_FIXTURE_JOB_FINISH: request,
+		};
+		delete env.SC_GATE_DL_REVIEW_TAGS;
+		if (reviewTags !== undefined) env.SC_GATE_DL_REVIEW_TAGS = reviewTags;
+		const proc = spawn(['bun', 'run', './src/server.ts'], {
+			env,
+			stdout: 'pipe',
+			stderr: 'ignore',
+		});
+		try {
+			const reader = (proc.stdout as ReadableStream<Uint8Array>).getReader();
+			const decoder = new TextDecoder();
+			let buffered = '';
+			let jobId = '';
+			const deadline = Date.now() + 15_000;
+			while (!jobId && Date.now() < deadline) {
+				const { value, done } = await reader.read();
+				if (done) break;
+				buffered += decoder.decode(value, { stream: true });
+				jobId = buffered.match(/\[test-fixture\] job (\S+)/)?.[1] ?? '';
+			}
+			const base = `http://127.0.0.1:${port}`;
+			for (let attempt = 0; attempt < 100; attempt += 1) {
+				try {
+					if ((await fetch(base)).ok) break;
+				} catch {
+					// not listening yet
+				}
+				await Bun.sleep(100);
+			}
+			let stage = '';
+			for (let attempt = 0; attempt < 50; attempt += 1) {
+				const job = (await (
+					await fetch(`${base}/api/job/${jobId}`)
+				).json()) as {
+					progress?: { stage?: string };
+				};
+				stage = job.progress?.stage ?? '';
+				if (stage === 'waiting_metadata' || stage === 'error') break;
+				await Bun.sleep(200);
+			}
+			return stage;
+		} finally {
+			proc.kill();
+			await proc.exited;
+			await rm(`downloads/${FIXTURE}`, { force: true });
+		}
+	}
+
+	test('true makes the job wait for tags', async () => {
+		expect(await stageAfterStart('true')).toBe('waiting_metadata');
+	}, 60_000);
+
+	test('unset finalizes without waiting', async () => {
+		expect(await stageAfterStart(undefined)).not.toBe('waiting_metadata');
+	}, 60_000);
+
+	test('an explicit request of false overrides a default of true', async () => {
+		expect(await stageAfterStart('true', 'false')).not.toBe('waiting_metadata');
+	}, 60_000);
+
+	test('an explicit request of true overrides a default of false', async () => {
+		expect(await stageAfterStart('false', 'true')).toBe('waiting_metadata');
+	}, 60_000);
+});
