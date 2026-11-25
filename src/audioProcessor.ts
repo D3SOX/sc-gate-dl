@@ -329,9 +329,14 @@ export class AudioProcessor {
 		}
 		const hasMetadata =
 			metadata.title || metadata.artist || metadata.album || metadata.genre;
-		// A declined retag leaves the file byte-identical. A raw .aac stream is
-		// still moved into an .m4a, as the Web UI preview shows.
-		if (plan === 'retag' && !hasMetadata && isMp3Format(filename)) {
+		// A declined retag leaves the file byte-identical. A raw .aac stream has
+		// no tags or cover to lose and still moves into an .m4a, as the Web UI
+		// preview shows.
+		if (
+			plan === 'retag' &&
+			!hasMetadata &&
+			extname(filename).toLowerCase() !== '.aac'
+		) {
 			return inputPath;
 		}
 

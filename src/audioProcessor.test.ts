@@ -288,6 +288,37 @@ describe('AudioProcessor.processAudio with FFmpeg', () => {
 			expect(await audioPacketHashes(output)).toEqual(before);
 		}));
 
+	test('an untagged AAC .m4a with a cover stays byte-identical', () =>
+		inTempDir(async () => {
+			await ffmpeg(
+				'-i',
+				'downloads/song.wav',
+				'-i',
+				'cover.png',
+				'-map',
+				'0:a',
+				'-map',
+				'1:v',
+				'-c:a',
+				'aac',
+				'-c:v',
+				'copy',
+				'-disposition:v',
+				'attached_pic',
+				'downloads/song.m4a',
+			);
+			await rm('downloads/song.wav');
+			const before = await Bun.file('downloads/song.m4a').arrayBuffer();
+			const output = await processor().processAudio(
+				'song.m4a',
+				{},
+				{ artwork: null, losslessHandling: 'never', sourceUrl },
+			);
+			expect(output).toBe('downloads/song.m4a');
+			expect(await Bun.file(output).arrayBuffer()).toEqual(before);
+			expect((await probe(output)).covers).toBe(1);
+		}));
+
 	test('an untagged raw .aac download still moves into an .m4a', () =>
 		inTempDir(async () => {
 			await ffmpeg(
