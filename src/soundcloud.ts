@@ -1,11 +1,11 @@
 import { confirm } from '@inquirer/prompts';
-import { lookpath } from 'find-bin';
 import Soundcloud, {
 	type SoundcloudPlaylist,
 	type SoundcloudTrack,
 	type SoundcloudTrackSearch,
 	type SoundcloudUser,
 } from 'soundcloud.ts';
+import { chromeCurl } from './chromeCurl';
 import {
 	SoundcloudTokenRefreshError,
 	SoundcloudTokenRefresher,
@@ -442,10 +442,7 @@ export class SoundcloudClient {
 	private async chromeTlsGraphqlRepost(
 		track: SoundcloudTrack,
 	): Promise<{ ok: boolean; status: number; reason: string; body: string }> {
-		const curlBin =
-			(await lookpath('curl_chrome131')) ||
-			(await lookpath('curl_chrome116')) ||
-			(await lookpath('curl-impersonate'));
+		const curlBin = await chromeCurl();
 		if (!curlBin) {
 			return {
 				ok: false,
@@ -571,17 +568,14 @@ export class SoundcloudClient {
 	}
 
 	/**
-	 * Chrome-TLS PUT/DELETE via curl_chrome* / curl-impersonate (same OAuth query
+	 * Chrome-TLS PUT/DELETE via the newest curl_chrome* wrapper (same OAuth query
 	 * params as soundcloud.ts fetchRequest). Optional SC_API_PROXY / CLOAKBROWSER_PROXY / PROXY_URL.
 	 */
 	private async chromeTlsMutate(
 		method: 'PUT' | 'DELETE',
 		endpoint: string,
 	): Promise<{ status: number; body: string }> {
-		const curlBin =
-			(await lookpath('curl_chrome131')) ||
-			(await lookpath('curl_chrome116')) ||
-			(await lookpath('curl-impersonate'));
+		const curlBin = await chromeCurl();
 		if (!curlBin) {
 			// Fall back to Bun with the exact same headers/query as putV2.
 			return this.bunMutate(method, endpoint);
@@ -615,8 +609,6 @@ export class SoundcloudClient {
 			`Origin: ${headers.Origin ?? 'https://soundcloud.com'}`,
 			'-H',
 			`Referer: ${headers.Referer ?? 'https://soundcloud.com/'}`,
-			'-H',
-			`User-Agent: ${headers['User-Agent'] ?? 'Mozilla/5.0'}`,
 			'-H',
 			'Accept: application/json, text/javascript, */*; q=0.01',
 		];
