@@ -8,6 +8,7 @@ import { loadConfig, saveConfig } from './config';
 import { DirectDownloader } from './directDownload';
 import { DownloadgaterDownloader } from './downloadgater';
 import { DroploudDownloader } from './droploud';
+import { FangateDownloader } from './fangate';
 import { GaterushDownloader } from './gaterush';
 import { HypedditDownloader } from './hypeddit';
 import { HypedditHttpDownloader } from './hypedditHttp';
@@ -96,11 +97,11 @@ try {
 		} else {
 			gateUrl = await input({
 				message:
-					'Enter a Hypeddit, Droploud, GateRush, DownloadGater, StillHype, PumpYourSound, MyPressKit, Bandcamp, direct download, or smart-link URL',
+					'Enter a Hypeddit, Droploud, GateRush, DownloadGater, StillHype, PumpYourSound, MyPressKit, fangate.eu, Bandcamp, direct download, or smart-link URL',
 				validate: async (value) => {
 					const resolved = await resolveGateUrlOrFollow(value);
 					if (!resolved || resolved.provider === 'soundcloud') {
-						return 'A valid Hypeddit, Droploud, GateRush, DownloadGater, StillHype, PumpYourSound, MyPressKit, Bandcamp, direct download, or resolvable gate URL is required';
+						return 'A valid Hypeddit, Droploud, GateRush, DownloadGater, StillHype, PumpYourSound, MyPressKit, fangate.eu, Bandcamp, direct download, or resolvable gate URL is required';
 					}
 					return true;
 				},
@@ -122,7 +123,7 @@ try {
 
 	if (!gateUrl || !gate) {
 		throw new Error(
-			'A valid Hypeddit, Droploud, GateRush, DownloadGater, StillHype, PumpYourSound, MyPressKit, Bandcamp, direct download, or SoundCloud URL is required',
+			'A valid Hypeddit, Droploud, GateRush, DownloadGater, StillHype, PumpYourSound, MyPressKit, fangate.eu, Bandcamp, direct download, or SoundCloud URL is required',
 		);
 	}
 
@@ -154,11 +155,19 @@ try {
 		? false
 		: config
 			? config.initializeLogins
-			: await confirm({
+			: !headless &&
+				(await confirm({
 					message:
 						"Do you want to initialize logins? This is required for the first run. You can skip it for subsequent runs. If you don't use the tool for a while it might be required again.",
 					default: false,
-				});
+				}));
+	// Signing in needs a visible browser; headless and Xvfb runs would wait for
+	// a login nobody can see.
+	if (initializeLogins && headless) {
+		throw new Error(
+			'Initializing logins needs a visible browser. Set "headless" to false in config.json for this run.',
+		);
+	}
 
 	const gateConfig = {
 		name: HYPEDDIT_NAME,
@@ -301,6 +310,22 @@ try {
 			downloadFilename = await mypresskitDownloader.downloadAudio(gateUrl);
 		} finally {
 			await mypresskitDownloader.close();
+		}
+	} else if (gate.provider === 'fangate') {
+		usedBrowser = true;
+		const fangateDownloader = new FangateDownloader(gateConfig);
+		try {
+			await fangateDownloader.initialize();
+			if (initializeLogins) {
+				await fangateDownloader.prepareLogins();
+				if (config) {
+					await saveConfig({ ...config, initializeLogins: false });
+					console.log('✓ Updated config.json: initializeLogins set to false');
+				}
+			}
+			downloadFilename = await fangateDownloader.downloadAudio(gateUrl);
+		} finally {
+			await fangateDownloader.close();
 		}
 	} else {
 		// Hypeddit: always try plain HTTP first (email + social skip gates).

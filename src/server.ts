@@ -17,6 +17,7 @@ import {
 	streamWithSuccessfulDownloadCleanup,
 } from './downloadRetention';
 import { DroploudDownloader } from './droploud';
+import { FangateDownloader } from './fangate';
 import { GaterushDownloader } from './gaterush';
 import { HypedditDownloader, type ProgressCallback } from './hypeddit';
 import { HypedditHttpDownloader } from './hypedditHttp';
@@ -312,6 +313,7 @@ const BROWSER_GATES = {
 	stillhype: ['StillHype', StillhypeDownloader],
 	pumpyoursound: ['PumpYourSound', PumpyoursoundDownloader],
 	mypresskit: ['MyPressKit', MypresskitDownloader],
+	fangate: ['fangate.eu', FangateDownloader],
 } satisfies Record<
 	string,
 	[string, new (config: HypedditConfig) => BrowserGateDownloader]

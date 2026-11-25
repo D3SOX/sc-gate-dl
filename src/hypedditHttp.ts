@@ -1,7 +1,7 @@
-import { rename, rm } from 'node:fs/promises';
 import { basename, join } from 'node:path';
 import { filenameFromContentDisposition } from './contentDisposition';
 import { reserveDownloadFilename } from './downloadRename';
+import { downloadProgressReporter, saveDownloadStream } from './downloadStream';
 import type { ProgressCallback } from './hypeddit';
 import { inspectHypedditPage, NoHypedditDownloadError } from './hypedditLinks';
 import type { HypedditConfig } from './types';
@@ -326,7 +326,7 @@ export class HypedditHttpDownloader {
 		const response = await fetch(downloadUrl, {
 			signal: this.abortController.signal,
 		});
-		if (!response.ok) {
+		if (!response.ok || !response.body) {
 			throw new Error(`Download request failed: ${response.status}`);
 		}
 
@@ -346,54 +346,17 @@ export class HypedditHttpDownloader {
 			'./downloads',
 			filename,
 		);
-		const destPath = join('./downloads', reservedFilename);
-		const tempPath = `${destPath}.${crypto.randomUUID()}.part`;
-		const writer = Bun.file(tempPath).writer();
-		let receivedBytes = 0;
-		let lastEmit = 0;
-		let succeeded = false;
-
-		try {
-			if (response.body) {
-				const reader = response.body.getReader();
-				while (true) {
-					const { done, value: chunk } = await reader.read();
-					if (done) {
-						break;
-					}
-					writer.write(chunk);
-					receivedBytes += chunk.byteLength;
-
-					// throttle progress events to avoid flooding the SSE stream
-					const now = Date.now();
-					if (now - lastEmit > 250 && totalBytes > 0) {
-						lastEmit = now;
-						this.progressCallback?.(
-							'downloading',
-							`Downloading... ${(receivedBytes / 1024 / 1024).toFixed(1)} / ${(totalBytes / 1024 / 1024).toFixed(1)} MB`,
-							0,
-							{ downloadBytes: receivedBytes, totalBytes, browserless: true },
-						);
-					}
-				}
-			}
-			await writer.end();
-			if (this.abortController.signal.aborted) {
-				throw new Error('Download cancelled');
-			}
-			await rename(tempPath, destPath);
-			succeeded = true;
-		} finally {
-			if (!succeeded) {
-				try {
-					await writer.end();
-				} catch {
-					// Writer may already be closed or never flushed.
-				}
-				await rm(tempPath, { force: true }).catch(() => {});
-				await rm(destPath, { force: true }).catch(() => {});
-			}
-		}
+		await saveDownloadStream(
+			response.body,
+			join('./downloads', reservedFilename),
+			{
+				totalBytes,
+				signal: this.abortController.signal,
+				onProgress: downloadProgressReporter(this.progressCallback, {
+					browserless: true,
+				}),
+			},
+		);
 
 		console.log(`Browserless: downloaded ${reservedFilename}`);
 		this.progressCallback?.('downloading', 'Download complete', 100);

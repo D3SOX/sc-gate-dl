@@ -6,8 +6,10 @@ import { planAudioOutput } from './outputFormat';
 import {
 	artistTitleFilename,
 	cookiesToNetscape,
+	extractAndResolveGateUrl,
 	extractGateUrl,
 	findBandcampHomepageInHtml,
+	findGateInBuyModuleHtml,
 	findKnownGateInHtml,
 	loadCookies,
 	previewProcessedFilename,
@@ -296,6 +298,137 @@ describe('extractGateUrl', () => {
 			provider: 'direct',
 			type: 'description',
 		});
+	});
+});
+
+describe('fangate.eu URLs', () => {
+	test('match on the bare, app and www hosts, upgraded to https', () => {
+		for (const host of ['fangate.eu', 'app.fangate.eu', 'www.fangate.eu']) {
+			expect(
+				resolveGateProviderUrl(
+					`Free download: http://${host}/tracks/user-2628-we-found-love-trance-edit.`,
+				),
+			).toEqual({
+				url: `https://${host}/tracks/user-2628-we-found-love-trance-edit`,
+				provider: 'fangate',
+			});
+		}
+	});
+
+	test('lookalike hosts are not fangate.eu', () => {
+		for (const url of [
+			'https://notfangate.eu/tracks/song',
+			'https://fangate.eu.example.com/tracks/song',
+			'https://fangate.example/tracks/song',
+		]) {
+			expect(resolveGateProviderUrl(url)?.provider).not.toBe('fangate');
+		}
+	});
+
+	test('a fangate.eu link in the description wins over a Bandcamp purchase_url', () => {
+		expect(
+			extractGateUrl({
+				purchase_url: 'https://artist.bandcamp.com/track/x',
+				description:
+					'Free: https://www.fangate.eu/tracks/user-2628-we-found-love-trance-edit',
+			} as Parameters<typeof extractGateUrl>[0]),
+		).toEqual({
+			url: 'https://www.fangate.eu/tracks/user-2628-we-found-love-trance-edit',
+			provider: 'fangate',
+			type: 'description',
+		});
+	});
+
+	test('a PumpYourSound fangate is still PumpYourSound', () => {
+		expect(
+			extractGateUrl({
+				purchase_url: 'https://pumpyoursound.com/f/pys/aguanile-remix/224680',
+				description: '',
+			} as Parameters<typeof extractGateUrl>[0])?.provider,
+		).toBe('pumpyoursound');
+	});
+});
+
+// Excerpt of soundcloud.com/n/embeds/buy-module/module for a track whose
+// purchase_url is null: SoundCloud wraps the target in gate.sc.
+const BUY_MODULE_HTML =
+	'<h2>Free download</h2><a href="https://gate.sc?url=https%3A%2F%2Fgaterush.me%2F1v7WRL&amp;token=5a4a81-1-1795610251694" target="_blank">Download</a>' +
+	'<a href="https://gate.sc?url=https%3A%2F%2Finstagram.com%2Fx&amp;token=1">ig</a>';
+
+describe('findGateInBuyModuleHtml', () => {
+	test('reads the gate behind the gate.sc download link', () => {
+		expect(findGateInBuyModuleHtml(BUY_MODULE_HTML)).toEqual({
+			url: 'https://gaterush.me/1v7WRL',
+			provider: 'gaterush',
+		});
+	});
+
+	test('ignores social links, unknown pages and pages without a link', () => {
+		expect(
+			findGateInBuyModuleHtml(
+				'<a href="https://gate.sc?url=https%3A%2F%2Finstagram.com%2Fx&amp;token=1">ig</a>' +
+					'<a href="https://gate.sc?url=https%3A%2F%2Fexample.com%2Fpage&amp;token=2">site</a>',
+			),
+		).toBeNull();
+		expect(findGateInBuyModuleHtml('<h2>nothing</h2>')).toBeNull();
+	});
+});
+
+describe('extractAndResolveGateUrl buy module', () => {
+	const track = {
+		permalink_url: 'https://soundcloud.com/a/b',
+		purchase_url: null,
+		description: 'no link here',
+	} as unknown as Parameters<typeof extractAndResolveGateUrl>[0];
+
+	test('uses the buy module when purchase_url and description have no gate', async () => {
+		const requested: string[] = [];
+		const gate = await extractAndResolveGateUrl(track, async (url) => {
+			requested.push(url);
+			return BUY_MODULE_HTML;
+		});
+		expect(gate).toEqual({
+			url: 'https://gaterush.me/1v7WRL',
+			provider: 'gaterush',
+			type: 'buy_module',
+		});
+		const url = new URL(requested[0] ?? '');
+		expect(url.origin + url.pathname).toBe(
+			'https://soundcloud.com/n/embeds/buy-module/module',
+		);
+		expect(url.searchParams.get('permalink_url')).toBe(
+			'https://soundcloud.com/a/b',
+		);
+	});
+
+	test('is not fetched when the track already links a gate or has a purchase_url', async () => {
+		const fetchBuyModule = async () => {
+			throw new Error('buy module must not be fetched');
+		};
+		expect(
+			(
+				await extractAndResolveGateUrl(
+					{
+						...track,
+						description: 'https://gaterush.me/abc',
+					} as typeof track,
+					fetchBuyModule,
+				)
+			)?.type,
+		).toBe('description');
+		expect(
+			await extractAndResolveGateUrl(
+				{ ...track, purchase_url: 'mailto:artist' } as typeof track,
+				fetchBuyModule,
+			),
+		).toBeNull();
+	});
+
+	test('a failing buy-module request leaves the result empty', async () => {
+		const gate = await extractAndResolveGateUrl(track, async () => {
+			throw new Error('network');
+		});
+		expect(gate).toBeNull();
 	});
 });
 

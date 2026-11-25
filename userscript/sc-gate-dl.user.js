@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         sc-gate-dl
 // @namespace    https://github.com/D3SOX/sc-gate-dl
-// @version      1.12.0
+// @version      1.13.0
 // @description  Add sc-gate-dl download controls and remember your position in the SoundCloud feed
 // @author       D3SOX
 // @match        https://soundcloud.com/*
@@ -148,6 +148,9 @@
 		},
 		mypresskit: {
 			icon: 'https://www.mypresskit.info/favicon.ico',
+		},
+		fangate: {
+			icon: 'https://www.fangate.eu/favicon.png',
 		},
 		bandcamp: {
 			icon: 'https://s4.bcbits.com/client-bundle/1/PageLayout_1/favicon-78ff127104384a042453aca8d73be7dc.static/favicon/favicon-32x32.png',
@@ -449,6 +452,12 @@
 				/^\/gate\/[A-Za-z0-9_-]+\/?$/i.test(path)
 			) {
 				return 'mypresskit';
+			}
+			if (
+				(host === 'fangate.eu' || host === 'app.fangate.eu') &&
+				/^\/tracks\/[A-Za-z0-9_-]+\/?$/.test(path)
+			) {
+				return 'fangate';
 			}
 			if (
 				(host === 'bandcamp.com' || host.endsWith('.bandcamp.com')) &&

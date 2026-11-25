@@ -139,6 +139,28 @@ describe('store link branding', () => {
 	});
 });
 
+describe('fangate.eu store links', () => {
+	test('recognizes track pages on the bare, app and www hosts', () => {
+		for (const host of ['fangate.eu', 'app.fangate.eu', 'www.fangate.eu']) {
+			expect(
+				storeServiceForUrl(
+					`https://${host}/tracks/user-2628-we-found-love-trance-edit`,
+				),
+			).toBe('fangate');
+		}
+	});
+
+	test('rejects other pages and lookalike hosts', () => {
+		expect(storeServiceForUrl('https://www.fangate.eu/')).toBeNull();
+		expect(
+			storeServiceForUrl('https://notfangate.eu/tracks/some-track'),
+		).toBeNull();
+		expect(
+			storeServiceForUrl('https://fangate.eu.example.com/tracks/some-track'),
+		).toBeNull();
+	});
+});
+
 describe('Web UI preferences', () => {
 	test('normalizes HTTP(S) server addresses', () => {
 		expect(normalizeWebuiBase(' http://192.168.178.57:4321/ ')).toBe(

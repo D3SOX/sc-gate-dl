@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { DownloadgaterDownloader } from './downloadgater';
 import { DroploudDownloader } from './droploud';
+import { FangateDownloader } from './fangate';
 import { GaterushDownloader } from './gaterush';
 import { HypedditDownloader } from './hypeddit';
 import { MypresskitDownloader } from './mypresskit';
@@ -98,5 +99,31 @@ describe('browser gate cancellation', () => {
 		await downloader.close();
 
 		expect(events).toEqual(['direct', 'close']);
+	});
+
+	test('fangate.eu aborts its API calls and file download before closing', async () => {
+		const downloader = new FangateDownloader(config);
+		const abortController = new AbortController();
+		const events: string[] = [];
+		abortController.signal.addEventListener('abort', () => {
+			events.push('abort');
+		});
+		Object.assign(downloader, {
+			abortController,
+			fileDownloader: {
+				close: async () => {
+					events.push('file');
+				},
+			},
+			browserLaunch: {
+				close: async () => {
+					events.push('close');
+				},
+			},
+		});
+
+		await downloader.close();
+
+		expect(events).toEqual(['abort', 'file', 'close']);
 	});
 });
