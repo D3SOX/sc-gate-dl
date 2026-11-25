@@ -207,6 +207,16 @@ describe('AudioProcessor.processAudio with FFmpeg', () => {
 
 	test('M4A/AAC output encodes a lossless source at the configured bitrate', () =>
 		inTempDir(async () => {
+			// A pure tone needs less than the target bitrate, so use noise.
+			await ffmpeg(
+				'-f',
+				'lavfi',
+				'-i',
+				'anoisesrc=d=1:c=pink',
+				'-ac',
+				'2',
+				'downloads/song.wav',
+			);
 			const output = await new AudioProcessor(
 				'ffmpeg',
 				'ffprobe',
