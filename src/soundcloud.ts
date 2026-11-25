@@ -643,8 +643,11 @@ export class SoundcloudClient {
 			return null;
 		}
 		const providerLabel = GATE_PROVIDER_LABELS[gate.provider];
-		const sourceLabel =
-			gate.type === 'purchase_url' ? 'purchase URL' : 'description';
+		const sourceLabel = {
+			purchase_url: 'purchase URL',
+			description: 'description',
+			buy_module: 'buy module',
+		}[gate.type];
 		console.log(
 			`Found ${providerLabel} URL from SoundCloud track ${sourceLabel}:`,
 			gate.url,

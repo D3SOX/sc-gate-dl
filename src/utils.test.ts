@@ -5,8 +5,10 @@ import { join } from 'node:path';
 import {
 	artistTitleFilename,
 	cookiesToNetscape,
+	extractAndResolveGateUrl,
 	extractGateUrl,
 	findBandcampHomepageInHtml,
+	findGateInBuyModuleHtml,
 	findKnownGateInHtml,
 	isLosslessFormat,
 	loadCookies,
@@ -699,5 +701,58 @@ describe('isLosslessFormat', () => {
 		for (const name of ['a.alac', 'a.m4a', 'a.aac', 'a.ogg', 'a.mp3']) {
 			expect(isLosslessFormat(name)).toBe(false);
 		}
+	});
+});
+
+// Real excerpt of soundcloud.com/n/embeds/buy-module/module for a track whose
+// purchase_url is null: SoundCloud wraps the target in gate.sc.
+const BUY_MODULE_HTML =
+	'<h2>Free download</h2><a href="https://gate.sc?url=https%3A%2F%2Fgaterush.me%2F1v7WRL&amp;token=5a4a81-1-1795610251694" target="_blank">Download</a>' +
+	'<a href="https://gate.sc?url=https%3A%2F%2Finstagram.com%2Fx&amp;token=1">ig</a>';
+
+describe('findGateInBuyModuleHtml', () => {
+	test('reads the gate behind the gate.sc download link', () => {
+		expect(findGateInBuyModuleHtml(BUY_MODULE_HTML)).toEqual({
+			url: 'https://gaterush.me/1v7WRL',
+			provider: 'gaterush',
+		});
+	});
+
+	test('ignores gate.sc links to social sites and pages without a link', () => {
+		expect(
+			findGateInBuyModuleHtml(
+				'<a href="https://gate.sc?url=https%3A%2F%2Finstagram.com%2Fx&amp;token=1">ig</a>',
+			),
+		).toBeNull();
+		expect(findGateInBuyModuleHtml('<h2>nothing</h2>')).toBeNull();
+	});
+});
+
+describe('extractAndResolveGateUrl buy module', () => {
+	const track = {
+		permalink_url: 'https://soundcloud.com/a/b',
+		purchase_url: null,
+		description: 'no link here',
+	} as unknown as Parameters<typeof extractAndResolveGateUrl>[0];
+
+	test('uses the buy module when purchase_url and description have no gate', async () => {
+		const gate = await extractAndResolveGateUrl(track, async (url) => {
+			expect(url).toContain(
+				`permalink_url=${encodeURIComponent('https://soundcloud.com/a/b')}`,
+			);
+			return BUY_MODULE_HTML;
+		});
+		expect(gate).toEqual({
+			url: 'https://gaterush.me/1v7WRL',
+			provider: 'gaterush',
+			type: 'buy_module',
+		});
+	});
+
+	test('a failing buy-module request leaves the result empty', async () => {
+		const gate = await extractAndResolveGateUrl(track, async () => {
+			throw new Error('network');
+		});
+		expect(gate).toBeNull();
 	});
 });

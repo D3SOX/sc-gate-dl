@@ -268,7 +268,7 @@ export type GateProvider =
 export type GateUrlMatch = {
 	url: string;
 	provider: GateProvider;
-	type: 'purchase_url' | 'description';
+	type: 'purchase_url' | 'description' | 'buy_module';
 };
 
 const HYPEDDIT_URL_RE = /https:\/\/hypeddit\.com\/[^\s]+/;
@@ -802,6 +802,7 @@ export function extractGateUrl(track: SoundcloudTrack): GateUrlMatch | null {
  */
 export async function extractAndResolveGateUrl(
 	track: SoundcloudTrack,
+	fetchBuyModule: (url: string) => Promise<string> = fetchBuyModuleHtml,
 ): Promise<GateUrlMatch | null> {
 	const sync = extractGateUrl(track);
 	if (sync) return sync;
@@ -811,6 +812,56 @@ export async function extractAndResolveGateUrl(
 		if (resolved) {
 			return { ...resolved, type: candidate.type };
 		}
+	}
+
+	// Newer tracks keep the "Free download" button in a separate buy module and
+	// leave purchase_url empty, so it is the last place left to look.
+	if (track.permalink_url) {
+		try {
+			const html = await fetchBuyModule(buyModuleUrl(track.permalink_url));
+			const fromModule = findGateInBuyModuleHtml(html);
+			if (fromModule) return { ...fromModule, type: 'buy_module' };
+		} catch (error) {
+			console.log(
+				`SoundCloud buy module could not be read (${error instanceof Error ? error.message : 'unknown error'}).`,
+			);
+		}
+	}
+	return null;
+}
+
+function buyModuleUrl(permalinkUrl: string): string {
+	return `https://soundcloud.com/n/embeds/buy-module/module?permalink_url=${encodeURIComponent(permalinkUrl)}&crossfade=true&embedded=module&theme=dark`;
+}
+
+async function fetchBuyModuleHtml(url: string): Promise<string> {
+	const response = await fetch(url, {
+		headers: { 'user-agent': 'Mozilla/5.0 Chrome/126.0 Safari/537.36' },
+		signal: AbortSignal.timeout(15_000),
+	});
+	if (!response.ok) throw new Error(`HTTP ${response.status}`);
+	return response.text();
+}
+
+/**
+ * The buy module wraps the download target as `gate.sc?url=<encoded target>`.
+ * Only a link that points at a known download gate counts; the social links
+ * the same page carries are ignored.
+ */
+export function findGateInBuyModuleHtml(
+	html: string,
+): { url: string; provider: GateProvider } | null {
+	for (const match of html.matchAll(
+		/https:\/\/gate\.sc\/?\?url=([^"'&\s<]+)/g,
+	)) {
+		let target: string;
+		try {
+			target = decodeURIComponent(match[1] ?? '');
+		} catch {
+			continue;
+		}
+		const gate = matchKnownDownloadGateUrl(target);
+		if (gate) return gate;
 	}
 	return null;
 }
