@@ -9,12 +9,6 @@ updates:
     ignore:
       - dependency-name: "cloakbrowser"
         versions: [">=0.7.0"]
-  - package-ecosystem: "bun"
-    directory: "/webui"
-    schedule:
-      interval: "weekly"
-    cooldown:
-      default-days: 7
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:

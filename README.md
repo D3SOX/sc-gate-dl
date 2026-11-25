@@ -50,12 +50,7 @@ cd sc-gate-dl
 bun install
 ```
 
-For the [Web UI](#-web-ui), also install its dependencies:
-
-```bash
-cd webui
-bun install
-```
+This also installs the [Web UI](#-web-ui) dependencies.
 
 ## 🧰 Setup
 
@@ -347,8 +342,6 @@ Install the dependencies:
 ```bash
 cd ~/sc-gate-dl
 bun install --frozen-lockfile
-cd webui
-bun install --frozen-lockfile
 ```
 
 Create a private Xauthority file. Xvfb, x11vnc and the app must all use this file:
@@ -507,7 +500,6 @@ To update sc-gate-dl, only the app service needs a restart. It rebuilds the Web 
 cd ~/sc-gate-dl
 git pull --ff-only
 bun install --frozen-lockfile
-cd webui && bun install --frozen-lockfile && cd ..
 systemctl --user restart sc-gate-app.service
 ```
 

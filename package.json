@@ -3,6 +3,9 @@
 	"module": "src/index.ts",
 	"type": "module",
 	"private": true,
+	"workspaces": [
+		"webui"
+	],
 	"repository": {
 		"type": "git",
 		"url": "https://github.com/D3SOX/sc-gate-dl"
