@@ -40,7 +40,7 @@ Once the file is downloaded, such a job waits at the `waiting_metadata` stage. `
 
 - `defaultMetadata`: SoundCloud's tags
 - `existingMetadata`: the tags already in an MP3
-- `downloadFilename`, `outputFormat`, `sourceIsLossless`, `hasArtwork` and `hasExistingArtwork`
+- `downloadFilename`, `fileSize` (in bytes), `outputFormat`, `sourceIsLossless`, `hasArtwork` and `hasExistingArtwork`
 
 `GET /api/job/:id/artwork` and `GET /api/job/:id/existing-artwork` return the two covers.
 

@@ -107,6 +107,7 @@ interface JobState {
 	progress: JobProgress | null;
 	downloadFilename: string | null;
 	outputFilename: string | null;
+	fileSize: number | null;
 	sourceIsLossless: boolean | null;
 	warning: string | null;
 	error: string | null;
@@ -133,6 +134,14 @@ const BROWSER_MODE_RETRY_LABELS: Record<BrowserMode, string> = {
 	xvfb: 'Retry in a hidden window',
 	headed: 'Retry in a visible window',
 };
+const BROWSER_MODE_RETRY_HINTS: Record<BrowserMode, string> = {
+	headless: 'Runs the gate again without a window.',
+	xvfb: 'Gates detect a real window less often than headless.',
+	headed: 'Watch the gate and step in when it needs you.',
+};
+/** Retry options, from the one most likely to get past a gate. */
+const RETRY_ORDER: BrowserMode[] = ['headed', 'xvfb', 'headless'];
+const NAME_AS_ARTIST_TITLE_STORAGE_KEY = 'sc-gate-dl-name-as-artist-title';
 
 const OUTPUT_FORMAT_OPTIONS: {
 	value: OutputFormat;
@@ -142,7 +151,7 @@ const OUTPUT_FORMAT_OPTIONS: {
 	{
 		value: 'mp3-320',
 		label: 'MP3',
-		hint: 'Converts to MP3 (320 kbps unless the server sets SC_GATE_DL_BITRATE). MP3 and AAC downloads are only retagged.',
+		hint: 'Converts to MP3. MP3 and AAC downloads are only retagged.',
 	},
 	{
 		value: 'm4a-aac',
@@ -161,13 +170,27 @@ const OUTPUT_FORMAT_OPTIONS: {
 	},
 ];
 
-const STEPS: { id: Step; label: string }[] = [
-	{ id: 'url', label: 'Link' },
-	{ id: 'gate', label: 'Gate' },
-	{ id: 'download', label: 'Download' },
-	{ id: 'metadata', label: 'Tags' },
-	{ id: 'complete', label: 'Done' },
+/** What the user sees as progress: each phase spans one or more steps. */
+const PHASES: { label: string; steps: Step[] }[] = [
+	{ label: 'Find', steps: ['url'] },
+	{ label: 'Unlock', steps: ['gate', 'download'] },
+	{ label: 'Save', steps: ['metadata'] },
 ];
+
+function phaseIndexFor(step: Step): number {
+	if (step === 'complete') return PHASES.length;
+	return PHASES.findIndex(({ steps }) => steps.includes(step));
+}
+
+function formatElapsed(ms: number): string {
+	const seconds = Math.max(0, Math.floor(ms / 1000));
+	return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`;
+}
+
+function formatFileSize(bytes: number): string {
+	if (bytes < 1024 * 1024) return `${Math.max(1, Math.round(bytes / 1024))} KB`;
+	return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+}
 
 const GATE_STEP_LABELS: Record<string, string> = {
 	sc: 'SoundCloud',
@@ -324,7 +347,7 @@ export function cleanMetadataFields(meta: Metadata): Metadata {
 	};
 }
 
-function metadataNeedsCleanup(meta: Metadata): boolean {
+export function metadataNeedsCleanup(meta: Metadata): boolean {
 	const cleaned = cleanMetadataFields(meta);
 	return (
 		(meta.title || '') !== (cleaned.title || '') ||
@@ -362,6 +385,7 @@ export default function App() {
 		progress: null,
 		downloadFilename: null,
 		outputFilename: null,
+		fileSize: null,
 		sourceIsLossless: null,
 		warning: null,
 		error: null,
@@ -480,6 +504,31 @@ export default function App() {
 		return () => URL.revokeObjectURL(url);
 	}, [customArtwork]);
 	const [nameAsArtistTitle, setNameAsArtistTitle] = useState(false);
+	useEffect(() => {
+		try {
+			setNameAsArtistTitle(
+				localStorage.getItem(NAME_AS_ARTIST_TITLE_STORAGE_KEY) === 'true',
+			);
+		} catch {
+			// Storage may be blocked when the Web UI is embedded cross-origin.
+		}
+	}, []);
+	const updateNameAsArtistTitle = (value: boolean) => {
+		setNameAsArtistTitle(value);
+		try {
+			localStorage.setItem(NAME_AS_ARTIST_TITLE_STORAGE_KEY, String(value));
+		} catch {
+			// Keep the in-memory choice when persistent storage is unavailable.
+		}
+	};
+	/** The tags before the promo text was removed, so the removal can be undone. */
+	const [promoCleanup, setPromoCleanup] = useState<Metadata | null>(null);
+	/** Gate actions reported so far, in order; the last one is running. */
+	const [gateLog, setGateLog] = useState<string[]>([]);
+	const [startedAt, setStartedAt] = useState<number | null>(null);
+	const [now, setNow] = useState(() => Date.now());
+	const downloadLinkRef = useRef<HTMLAnchorElement>(null);
+	const serverMenuRef = useRef<HTMLDivElement>(null);
 	const [isLoading, setIsLoading] = useState(false);
 	const [search, setSearch] = useState<SearchState | null>(null);
 	const [searchLoading, setSearchLoading] = useState<'new' | 'more' | null>(
@@ -600,6 +649,8 @@ export default function App() {
 		async (jobId: string, retryBrowserMode?: BrowserMode) => {
 			const effectiveBrowserMode = retryBrowserMode ?? browserMode;
 			setLastAttemptedBrowserMode(effectiveBrowserMode);
+			setGateLog([]);
+			setStartedAt(Date.now());
 			cancelRequestedRef.current = false;
 			browserViewAutoClosedRef.current = false;
 			browserViewAutoOpenedRef.current = false;
@@ -643,6 +694,17 @@ export default function App() {
 				eventSource.onmessage = (event) => {
 					const progress: JobProgress = JSON.parse(event.data);
 					setJob((prev) => ({ ...prev, progress }));
+					if (
+						progress.stage === 'handling_gates' &&
+						progress.message &&
+						!progress.requiresAttention
+					) {
+						setGateLog((prev) =>
+							prev.includes(progress.message)
+								? prev
+								: [...prev, progress.message],
+						);
+					}
 					if (
 						progress.stage !== 'downloading' &&
 						!browserViewAutoOpenedRef.current &&
@@ -697,6 +759,7 @@ export default function App() {
 									...prev,
 									downloadFilename: data.downloadFilename,
 									outputFilename: data.outputFilename,
+									fileSize: data.fileSize ?? null,
 									existingMetadata: data.existingMetadata,
 									hasExistingArtwork: !!data.hasExistingArtwork,
 									outputFormat: data.outputFormat,
@@ -891,7 +954,13 @@ export default function App() {
 				}));
 
 				if (data.defaultMetadata) {
-					setMetadata(data.defaultMetadata);
+					// Promo text like [FREE DL] is almost never wanted; undo is one click.
+					setMetadata(cleanMetadataFields(data.defaultMetadata));
+					setPromoCleanup(
+						metadataNeedsCleanup(data.defaultMetadata)
+							? data.defaultMetadata
+							: null,
+					);
 				}
 
 				if (skipAutomaticHypedditFetch || data.needsHypedditUrl) {
@@ -1165,7 +1234,11 @@ export default function App() {
 				);
 			}
 
-			setJob((prev) => ({ ...prev, outputFilename: data.outputFilename }));
+			setJob((prev) => ({
+				...prev,
+				outputFilename: data.outputFilename,
+				fileSize: data.fileSize ?? null,
+			}));
 			setStep('complete');
 		} catch (err) {
 			setJob((prev) => ({
@@ -1222,7 +1295,27 @@ export default function App() {
 		.filter(({ existingValue }) => existingValue);
 	const hasExistingMetadata =
 		existingTagRows.length > 0 || job.hasExistingArtwork;
-	const stepIndex = STEPS.findIndex(({ id }) => id === step);
+	const phaseIndex = phaseIndexFor(step);
+	const hasFailed = Boolean(job.jobId) && job.progress?.stage === 'error';
+	const showRecovery =
+		(step === 'gate' && !isHandlingGate) || (step === 'download' && hasFailed);
+	const retryModes = hasFailed
+		? RETRY_ORDER.filter(
+				(mode) =>
+					availableBrowserModes.includes(mode) &&
+					mode !== (lastAttemptedBrowserMode ?? browserMode),
+			)
+		: [];
+	const isWorking = isHandlingGate || (step === 'download' && !hasFailed);
+	const canWatchBrowser =
+		isWorking &&
+		Boolean(browserViewUrl) &&
+		(lastAttemptedBrowserMode ?? browserMode) === 'headed' &&
+		!browserViewOpen;
+	const outputExtension =
+		(job.outputFilename || job.downloadFilename)
+			?.match(/\.([^.]+)$/)?.[1]
+			?.toUpperCase() ?? null;
 	const showTrack = Boolean(job.track) && step !== 'url';
 	const trackArtist = job.track
 		? job.track.user.fullName || job.track.user.username
@@ -1246,6 +1339,19 @@ export default function App() {
 	const hasDownloadTotal = typeof job.progress?.totalBytes === 'number';
 	const downloadPercent = formatPercent(job.progress?.percent);
 	const toMegabytes = (bytes: number) => (bytes / 1024 / 1024).toFixed(1);
+
+	// Tick the elapsed time only while a job is running.
+	useEffect(() => {
+		if (!isWorking) return;
+		setNow(Date.now());
+		const timer = window.setInterval(() => setNow(Date.now()), 1000);
+		return () => window.clearInterval(timer);
+	}, [isWorking]);
+
+	// No automatic download, but the button is one key press away.
+	useEffect(() => {
+		if (step === 'complete') downloadLinkRef.current?.focus();
+	}, [step]);
 
 	const copyExistingArtwork = async () => {
 		if (!job.jobId || !job.hasExistingArtwork) return;
@@ -1289,16 +1395,19 @@ export default function App() {
 			progress: null,
 			downloadFilename: null,
 			outputFilename: null,
+			fileSize: null,
 			sourceIsLossless: null,
 			warning: null,
 			error: null,
 		});
 		setMetadata({ title: '', artist: '', album: '', genre: '' });
+		setPromoCleanup(null);
+		setGateLog([]);
+		setStartedAt(null);
 		setCustomArtwork(null);
 		if (artworkInputRef.current) {
 			artworkInputRef.current.value = '';
 		}
-		setNameAsArtistTitle(false);
 		setBrowserViewOpen(false);
 		setStep('url');
 	};
@@ -1364,8 +1473,20 @@ export default function App() {
 		});
 	};
 
+	const browserOptionsSummary = [
+		BROWSER_MODE_LABELS[browserMode],
+		skipAutomaticHypedditFetch ? 'gate link by hand' : null,
+	]
+		.filter(Boolean)
+		.join(', ');
+	const closeServerMenu = () => serverMenuRef.current?.hidePopover();
+	const headerTitle = metadata.title || job.track?.title || '';
+	const headerArtist = metadata.artist || trackArtist;
+
 	return (
-		<div className={`app${embedded ? ' is-embedded' : ''}`}>
+		<div
+			className={`app${embedded ? ' is-embedded' : ''}${step === 'url' ? ' is-start' : ''}`}
+		>
 			<Toaster richColors closeButton theme="dark" />
 			{browserViewUrl ? (
 				<RemoteBrowserPanel
@@ -1394,39 +1515,83 @@ export default function App() {
 			<div className="app-notes">
 				{!embedded && (
 					<header className="masthead">
-						<p className="masthead-name">
-							<img
-								className="masthead-logo"
-								src="/favicon.svg"
-								alt=""
-								width={24}
-								height={24}
-							/>
-							sc-gate-dl
-						</p>
-						<p className="masthead-tagline">
-							Unlocks gated SoundCloud downloads and tags them.
-						</p>
+						<div className="masthead-text">
+							<p className="masthead-name">
+								<img
+									className="masthead-logo"
+									src="/favicon.svg"
+									alt=""
+									width={24}
+									height={24}
+								/>
+								sc-gate-dl
+							</p>
+							<p className="masthead-tagline">
+								Unlocks gated SoundCloud downloads and tags them.
+							</p>
+						</div>
+						<button
+							type="button"
+							className="btn-icon masthead-menu-button"
+							popoverTarget="server-menu"
+							aria-label="Server tools"
+							title="Server tools"
+						>
+							<MoreIcon />
+						</button>
+						<div
+							id="server-menu"
+							ref={serverMenuRef}
+							popover="auto"
+							className="menu"
+						>
+							<button
+								type="button"
+								className="menu-item"
+								onClick={() => {
+									closeServerMenu();
+									void handleInitializeLogins();
+								}}
+							>
+								Initialize logins
+								<span className="menu-hint">
+									Sign in to SoundCloud and Spotify on the server.
+								</span>
+							</button>
+							<button
+								type="button"
+								className="menu-item"
+								onClick={() => {
+									closeServerMenu();
+									showCleanupSoundcloudToast();
+								}}
+							>
+								Clean up SoundCloud
+								<span className="menu-hint">
+									Undo the follows, likes, comments and reposts the gates left.
+								</span>
+							</button>
+						</div>
 					</header>
 				)}
 
 				<div className="title-block">
 					{showTrack && job.track ? (
 						<>
-							<h1 className="title">{job.track.title}</h1>
-							<p className="title-artist">{trackArtist}</p>
+							<h1 className="title">{headerTitle}</h1>
+							<p className="title-artist">{headerArtist}</p>
 						</>
 					) : (
 						<h1 className="title">Get a free download</h1>
 					)}
 				</div>
 
-				<ol className="tracklist" aria-label="Steps">
-					{STEPS.map(({ id, label }, index) => (
+				<ol className="tracklist" aria-label="Progress">
+					{PHASES.map(({ label }, index) => (
 						<li
-							key={id}
-							className={`tracklist-item${index < stepIndex ? ' is-done' : ''}${index === stepIndex ? ' is-current' : ''}`}
-							aria-current={index === stepIndex ? 'step' : undefined}
+							key={label}
+							className={`tracklist-item${index < phaseIndex ? ' is-done' : ''}${index === phaseIndex ? ' is-current' : ''}`}
+							aria-current={index === phaseIndex ? 'step' : undefined}
 						>
 							<span className="tracklist-number">{index + 1}</span>
 							<span className="tracklist-label">{label}</span>
@@ -1447,110 +1612,93 @@ export default function App() {
 					}
 				/>
 				{job.error && (
-					<div className="banner banner-error" role="alert">
-						<span className="banner-icon" aria-hidden="true">
-							!
-						</span>
-						<p className="banner-message">{job.error}</p>
-						<div className="banner-actions">
-							{job.jobId && job.progress?.stage === 'error'
-								? availableBrowserModes
-										.filter(
-											(mode) =>
-												mode !== (lastAttemptedBrowserMode ?? browserMode),
-										)
-										.map((mode) => (
-											<button
-												type="button"
-												key={mode}
-												className="btn-secondary btn-small"
-												onClick={() => {
-													updateBrowserMode(mode);
-													void startDownload(job.jobId as string, mode);
-												}}
-											>
-												{BROWSER_MODE_RETRY_LABELS[mode]}
-											</button>
-										))
-								: null}
-							<button
-								type="button"
-								className="btn-text"
-								onClick={() => setJob((prev) => ({ ...prev, error: null }))}
-							>
-								Dismiss
-							</button>
-						</div>
-					</div>
+					<Banner
+						kind="error"
+						message={job.error}
+						onDismiss={() => setJob((prev) => ({ ...prev, error: null }))}
+					/>
 				)}
-
 				{job.warning && (
-					<div className="banner banner-warning" role="status">
-						<span className="banner-icon" aria-hidden="true">
-							!
-						</span>
-						<p className="banner-message">{job.warning}</p>
-						<div className="banner-actions">
-							<button
-								type="button"
-								className="btn-text"
-								onClick={() => setJob((prev) => ({ ...prev, warning: null }))}
-							>
-								Dismiss
-							</button>
-						</div>
-					</div>
+					<Banner
+						kind="warning"
+						message={job.warning}
+						onDismiss={() => setJob((prev) => ({ ...prev, warning: null }))}
+					/>
 				)}
 
 				<div className="notes">
-					{/* Step 1: SoundCloud link or search */}
+					{/* Find: SoundCloud link or search */}
 					{step === 'url' && (
 						<form onSubmit={handleSoundcloudSubmit} className="step-block">
 							<div className="field">
 								<label htmlFor="soundcloud-url">
-									SoundCloud track link or search
+									SoundCloud link or search
 								</label>
-								<input
-									id="soundcloud-url"
-									type="text"
-									name="soundcloud-track-url"
-									value={soundcloudUrl}
-									onChange={(e) => setSoundcloudUrl(e.target.value)}
-									placeholder="https://soundcloud.com/artist/track or artist - title"
-									autoComplete="off"
-									required
-									disabled={isLoading}
-								/>
-							</div>
-							<fieldset className="field">
-								<legend>Format</legend>
-								<div className="choices">
-									{OUTPUT_FORMAT_OPTIONS.map(({ value, label }) => (
-										<label key={value} className="choice">
-											<input
-												type="radio"
-												name="output-format"
-												value={value}
-												checked={outputFormat === value}
-												onChange={() => updateOutputFormat(value)}
-												disabled={isLoading || isCancelling}
-											/>
-											<span>{label}</span>
-										</label>
-									))}
+								<div className="input-row">
+									<input
+										id="soundcloud-url"
+										type="text"
+										name="soundcloud-track-url"
+										value={soundcloudUrl}
+										onChange={(e) => setSoundcloudUrl(e.target.value)}
+										placeholder="Track link, or artist and title"
+										autoComplete="off"
+										required
+										disabled={isLoading}
+									/>
+									<button
+										type="submit"
+										className="btn-primary"
+										disabled={isLoading || searchLoading !== null}
+									>
+										{isLoading ? (
+											<>
+												<span className="spinner" aria-hidden="true" />
+												Looking up
+											</>
+										) : searchLoading === 'new' ? (
+											<>
+												<span className="spinner" aria-hidden="true" />
+												Searching
+											</>
+										) : inputIsTrackUrl ? (
+											'Get download'
+										) : (
+											'Search'
+										)}
+									</button>
 								</div>
-								<p className="field-hint">{outputFormatHint}</p>
-							</fieldset>
-							<BrowserOptions
-								name="browser-mode"
-								browserMode={browserMode}
-								availableBrowserModes={availableBrowserModes}
-								disabled={isLoading}
-								onChange={updateBrowserMode}
-								summaryExtra={
-									skipAutomaticHypedditFetch ? 'gate link by hand' : undefined
-								}
+							</div>
+							<OptionsDisclosure
+								title="Options"
+								current={`${OUTPUT_FORMAT_OPTIONS.find(({ value }) => value === outputFormat)?.label ?? outputFormat} · ${browserOptionsSummary}`}
 							>
+								<fieldset className="field">
+									<legend>Format</legend>
+									<div className="choices">
+										{OUTPUT_FORMAT_OPTIONS.map(({ value, label }) => (
+											<label key={value} className="choice">
+												<input
+													type="radio"
+													name="output-format"
+													value={value}
+													checked={outputFormat === value}
+													onChange={() => updateOutputFormat(value)}
+													disabled={isLoading || isCancelling}
+												/>
+												<span>{label}</span>
+											</label>
+										))}
+									</div>
+									<p className="field-hint">{outputFormatHint}</p>
+								</fieldset>
+								<BrowserModeField
+									name="browser-mode"
+									browserMode={browserMode}
+									availableBrowserModes={availableBrowserModes}
+									disabled={isLoading}
+									onChange={updateBrowserMode}
+								/>
 								<label className="checkbox-row" htmlFor="skip-hypeddit-fetch">
 									<input
 										id="skip-hypeddit-fetch"
@@ -1568,28 +1716,7 @@ export default function App() {
 										</span>
 									</span>
 								</label>
-							</BrowserOptions>
-							<button
-								type="submit"
-								className="btn-primary"
-								disabled={isLoading || searchLoading !== null}
-							>
-								{isLoading ? (
-									<>
-										<span className="spinner" aria-hidden="true" />
-										Looking up the track
-									</>
-								) : searchLoading === 'new' ? (
-									<>
-										<span className="spinner" aria-hidden="true" />
-										Searching
-									</>
-								) : inputIsTrackUrl ? (
-									'Get download'
-								) : (
-									'Search'
-								)}
-							</button>
+							</OptionsDisclosure>
 						</form>
 					)}
 					{step === 'url' && search && (
@@ -1671,83 +1798,127 @@ export default function App() {
 						</section>
 					)}
 
-					{/* Step 2: gate link, when none was found */}
-					{step === 'gate' && !isHandlingGate && (
+					{/* Unlock: no gate link found, or the gate failed */}
+					{showRecovery && (
 						<div className="step-block">
 							<div>
 								<h2 className="step-heading">
-									{job.progress?.stage === 'error'
-										? 'Try another way'
-										: 'Add the gate link'}
+									{hasFailed ? 'Try another way' : 'Add the gate link'}
 								</h2>
 								<p className="step-text">
-									{job.progress?.stage === 'error'
-										? 'Paste a different gate link, or download the SoundCloud stream with yt-dlp.'
+									{hasFailed
+										? 'These are ordered from the most likely to work.'
 										: skipAutomaticHypedditFetch
-											? 'Automatic lookup is off. Paste the gate link, or download the SoundCloud stream with yt-dlp instead.'
-											: 'Could not find a gate link on this track. Paste one from Hypeddit, Droploud, GateRush, DownloadGater, StillHype, PumpYourSound, MyPressKit, Fangate or Bandcamp, or a direct file link. You can also download the SoundCloud stream with yt-dlp.'}
+											? 'Automatic lookup is off. Paste the gate link, or get the SoundCloud stream instead.'
+											: 'Could not find a gate link on this track. Paste one from Hypeddit, Droploud, GateRush, DownloadGater, StillHype, PumpYourSound, MyPressKit, Fangate or Bandcamp, or a direct file link.'}
 								</p>
 							</div>
-							<form onSubmit={handleHypedditSubmit} className="step-block">
-								<div className="field">
-									<label htmlFor="hypeddit-url">Gate link</label>
-									<input
-										id="hypeddit-url"
-										type="url"
-										name="hypeddit-url"
-										value={hypedditUrlInput}
-										onChange={(e) => setHypedditUrlInput(e.target.value)}
-										placeholder="https://hypeddit.com/…"
-										autoComplete="off"
-										required
-										disabled={isLoading}
-									/>
-								</div>
-								<BrowserOptions
-									name="browser-mode-gate"
-									browserMode={browserMode}
-									availableBrowserModes={availableBrowserModes}
-									disabled={isLoading}
-									onChange={updateBrowserMode}
-								/>
-								<button
-									type="submit"
-									className="btn-primary"
-									disabled={isLoading}
-								>
-									{isLoading ? (
-										<>
-											<span className="spinner" aria-hidden="true" />
-											Starting
-										</>
-									) : (
-										'Start download'
-									)}
-								</button>
-							</form>
-							<p className="or" aria-hidden="true">
-								or
-							</p>
-							<button
-								type="button"
-								className="btn-secondary"
-								disabled={isLoading || !soundcloudUrl.trim()}
-								onClick={handleYtdlpSoundcloudDownload}
-							>
-								{isLoading ? (
-									<>
-										<span className="spinner" aria-hidden="true" />
-										Starting
-									</>
-								) : (
-									'Download the SoundCloud stream with yt-dlp'
-								)}
-							</button>
+							<ol className="recovery">
+								{retryModes.map((mode, index) => (
+									<li key={mode} className="recovery-option">
+										<div className="recovery-text">
+											<p className="recovery-title">
+												{BROWSER_MODE_RETRY_LABELS[mode]}
+											</p>
+											<p className="recovery-hint">
+												{BROWSER_MODE_RETRY_HINTS[mode]}
+											</p>
+										</div>
+										<button
+											type="button"
+											className={index === 0 ? 'btn-primary' : 'btn-secondary'}
+											disabled={isLoading}
+											onClick={() => {
+												updateBrowserMode(mode);
+												void startDownload(job.jobId as string, mode);
+											}}
+										>
+											Retry
+										</button>
+									</li>
+								))}
+								<li className="recovery-option is-wide">
+									<form
+										onSubmit={handleHypedditSubmit}
+										className="recovery-form"
+									>
+										<div className="field">
+											<label htmlFor="hypeddit-url" className="recovery-title">
+												{hasFailed
+													? 'Paste a different gate link'
+													: 'Paste the gate link'}
+											</label>
+											<div className="input-row">
+												<input
+													id="hypeddit-url"
+													type="url"
+													name="hypeddit-url"
+													value={hypedditUrlInput}
+													onChange={(e) => setHypedditUrlInput(e.target.value)}
+													placeholder="https://hypeddit.com/…"
+													autoComplete="off"
+													required
+													disabled={isLoading}
+												/>
+												<button
+													type="submit"
+													className={
+														retryModes.length > 0
+															? 'btn-secondary'
+															: 'btn-primary'
+													}
+													disabled={isLoading}
+												>
+													{isLoading ? (
+														<>
+															<span className="spinner" aria-hidden="true" />
+															Starting
+														</>
+													) : (
+														'Start'
+													)}
+												</button>
+											</div>
+										</div>
+										<OptionsDisclosure
+											title="Browser options"
+											current={BROWSER_MODE_LABELS[browserMode]}
+										>
+											<BrowserModeField
+												name="browser-mode-gate"
+												browserMode={browserMode}
+												availableBrowserModes={availableBrowserModes}
+												disabled={isLoading}
+												onChange={updateBrowserMode}
+											/>
+										</OptionsDisclosure>
+									</form>
+								</li>
+								<li className="recovery-option">
+									<div className="recovery-text">
+										<p className="recovery-title">
+											Get the SoundCloud stream instead
+										</p>
+										<p className="recovery-hint">
+											Skips the gate and saves the audio SoundCloud plays, which
+											is usually lower quality than the gated file.
+										</p>
+									</div>
+									<button
+										type="button"
+										className="btn-secondary"
+										disabled={isLoading || !soundcloudUrl.trim()}
+										onClick={handleYtdlpSoundcloudDownload}
+									>
+										Get the stream
+									</button>
+								</li>
+							</ol>
 						</div>
 					)}
 
-					{/* Steps 2–3: gate handling, then download progress */}
-					{(isHandlingGate || step === 'download') && (
+					{/* Unlock: gate handling, then download progress */}
+					{(isHandlingGate || step === 'download') && !hasFailed && (
 						<div className="step-block">
 							{job.progress?.stage === 'waiting_bandcamp_track' ? (
 								<>
@@ -1795,10 +1966,14 @@ export default function App() {
 											{job.progress?.requiresAttention &&
 											job.progress.attentionId
 												? 'Waiting for you'
-												: job.progress?.message ||
-													(job.progress?.downloadBytes !== undefined
-														? 'Downloading'
-														: 'Starting')}
+												: isHandlingGate &&
+														job.progress?.stage === 'handling_gates' &&
+														gateLog.length > 0
+													? 'Unlocking the download'
+													: job.progress?.message ||
+														(job.progress?.downloadBytes !== undefined
+															? 'Downloading'
+															: 'Starting')}
 										</h2>
 										{job.progress?.currentGate && (
 											<p className="step-text">
@@ -1806,14 +1981,51 @@ export default function App() {
 											</p>
 										)}
 									</div>
+									{isHandlingGate && gateLog.length > 0 && (
+										<ol className="gate-log" aria-label="Gate actions">
+											{gateLog.map((entry, index) => {
+												const isRunning =
+													index === gateLog.length - 1 &&
+													job.progress?.stage === 'handling_gates';
+												return (
+													<li
+														key={entry}
+														className={`gate-log-item${isRunning ? ' is-running' : ' is-done'}`}
+													>
+														<span className="gate-log-mark" aria-hidden="true">
+															{isRunning ? (
+																<span className="spinner" />
+															) : (
+																<CheckIcon />
+															)}
+														</span>
+														<span>{entry}</span>
+														<span className="visually-hidden">
+															{isRunning ? ' (running)' : ' (done)'}
+														</span>
+													</li>
+												);
+											})}
+										</ol>
+									)}
 									{isHandlingGate && (
-										<div
-											className="meter"
-											role="progressbar"
-											aria-label="Gate progress"
-											aria-valuetext={job.progress?.message || 'Handling gate'}
-										>
-											<div className="meter-fill is-indeterminate" />
+										<div className="meter-group">
+											<div
+												className="meter"
+												role="progressbar"
+												aria-label="Gate progress"
+												aria-valuetext={
+													job.progress?.message || 'Handling gate'
+												}
+											>
+												<div className="meter-fill is-indeterminate" />
+											</div>
+											{startedAt !== null ? (
+												<p className="meter-stats">
+													<span />
+													<span>{formatElapsed(now - startedAt)} elapsed</span>
+												</p>
+											) : null}
 										</div>
 									)}
 									{step === 'download' && (
@@ -1847,33 +2059,53 @@ export default function App() {
 											<p className="meter-stats">
 												{hasDownloadTotal ? (
 													<span>{downloadPercent}%</span>
-												) : null}
-												{job.progress?.downloadBytes !== undefined && (
-													<span>
-														{toMegabytes(job.progress.downloadBytes)}
-														{typeof job.progress.totalBytes === 'number'
-															? ` of ${toMegabytes(job.progress.totalBytes)}`
-															: ''}{' '}
-														MB
-													</span>
+												) : (
+													<span />
 												)}
+												<span>
+													{job.progress?.downloadBytes !== undefined
+														? `${toMegabytes(job.progress.downloadBytes)}${
+																typeof job.progress.totalBytes === 'number'
+																	? ` of ${toMegabytes(job.progress.totalBytes)}`
+																	: ''
+															} MB`
+														: null}
+													{job.progress?.downloadBytes !== undefined &&
+													startedAt !== null
+														? ' · '
+														: null}
+													{startedAt !== null
+														? `${formatElapsed(now - startedAt)} elapsed`
+														: null}
+												</span>
 											</p>
 										</div>
 									)}
-									<button
-										type="button"
-										className="btn-secondary"
-										onClick={() => void cancelDownload()}
-										disabled={isCancelling}
-									>
-										Cancel download
-									</button>
+									<div className="actions">
+										{canWatchBrowser ? (
+											<button
+												type="button"
+												className="btn-secondary"
+												onClick={() => setBrowserViewOpen(true)}
+											>
+												Watch the browser
+											</button>
+										) : null}
+										<button
+											type="button"
+											className="btn-secondary"
+											onClick={() => void cancelDownload()}
+											disabled={isCancelling}
+										>
+											Cancel download
+										</button>
+									</div>
 								</>
 							)}
 						</div>
 					)}
 
-					{/* Step 4: tags */}
+					{/* Save: audio processing */}
 					{step === 'metadata' &&
 						job.progress?.stage === 'processing_audio' && (
 							<div className="step-block">
@@ -1890,6 +2122,7 @@ export default function App() {
 								</div>
 							</div>
 						)}
+					{/* Save: tags */}
 					{step === 'metadata' &&
 						job.progress?.stage !== 'processing_audio' && (
 							<form onSubmit={handleMetadataSubmit} className="step-block">
@@ -1901,79 +2134,25 @@ export default function App() {
 										bring back the lost quality.
 									</p>
 								) : null}
-								{hasExistingMetadata ? (
-									<section
-										className="existing"
-										aria-labelledby="existing-tags-heading"
-									>
-										<div>
-											<h3 id="existing-tags-heading">
-												The file already has tags
-											</h3>
-											<p className="step-text">
-												Copy a tag or the cover into the form, or keep the
-												file's own tags and finish.
-											</p>
-										</div>
-										<ul className="existing-list">
-											{existingTagRows.map(({ key, label, existingValue }) => (
-												<li key={key} className="existing-row">
-													<span className="existing-label">{label}</span>
-													<span className="existing-value">
-														{existingValue}
-													</span>
-													<button
-														type="button"
-														className="btn-icon"
-														disabled={isLoading}
-														title={`Copy ${label.toLowerCase()} into the form`}
-														aria-label={`Copy ${label.toLowerCase()} into the form`}
-														onClick={() =>
-															setMetadata((prev) => ({
-																...prev,
-																[key]: existingValue,
-															}))
-														}
-													>
-														<CopyIcon />
-													</button>
-												</li>
-											))}
-											{job.hasExistingArtwork && job.jobId ? (
-												<li className="existing-row">
-													<span className="existing-label">Cover</span>
-													<span className="existing-value">
-														<img
-															src={`${API_BASE}/api/job/${job.jobId}/existing-artwork`}
-															alt="Existing cover art"
-															className="existing-cover"
-														/>
-													</span>
-													<button
-														type="button"
-														className="btn-icon"
-														disabled={isLoading}
-														title="Copy cover art into the form"
-														aria-label="Copy cover art into the form"
-														onClick={() => void copyExistingArtwork()}
-													>
-														<CopyIcon />
-													</button>
-												</li>
-											) : null}
-										</ul>
+								{promoCleanup ? (
+									<div className="cleanup">
+										<p className="step-text">
+											Removed promo text like [FREE DL] and repeated artist
+											names.
+										</p>
 										<button
 											type="button"
-											className="btn-secondary"
+											className="btn-secondary btn-small"
 											disabled={isLoading}
-											onClick={() => void processMetadata(true)}
+											onClick={() => {
+												setMetadata(promoCleanup);
+												setPromoCleanup(null);
+											}}
 										>
-											Keep the file's tags and finish
+											Undo
 										</button>
-									</section>
-								) : null}
-
-								{canCleanupMetadata ? (
+									</div>
+								) : canCleanupMetadata ? (
 									<div className="cleanup">
 										<p className="step-text">
 											The tags contain promo text like [FREE DL] or a repeated
@@ -1983,10 +2162,10 @@ export default function App() {
 											type="button"
 											className="btn-secondary btn-small"
 											disabled={isLoading}
-											title="Remove promo tags like [FREE DL] or [PREMIERE] and duplicate Artist - / - Artist from the title"
-											onClick={() =>
-												setMetadata((prev) => cleanMetadataFields(prev))
-											}
+											onClick={() => {
+												setPromoCleanup(metadata);
+												setMetadata(cleanMetadataFields(metadata));
+											}}
 										>
 											Remove promo text
 										</button>
@@ -2033,6 +2212,20 @@ export default function App() {
 											>
 												Reset artwork
 											</button>
+										) : job.hasExistingArtwork && job.jobId ? (
+											<button
+												type="button"
+												className="btn-text existing-cover-button"
+												disabled={isLoading}
+												onClick={() => void copyExistingArtwork()}
+											>
+												<img
+													src={`${API_BASE}/api/job/${job.jobId}/existing-artwork`}
+													alt=""
+													className="existing-cover"
+												/>
+												Use the file's cover
+											</button>
 										) : null}
 									</div>
 								</div>
@@ -2061,6 +2254,9 @@ export default function App() {
 										const currentValue = metadata[key] || '';
 										const defaultValue = defaultMetadataValues[key] || '';
 										const isDirty = currentValue !== defaultValue;
+										const existingValue =
+											existingTagRows.find((row) => row.key === key)
+												?.existingValue ?? '';
 										return (
 											<div className={`field field-${key}`} key={key}>
 												<label htmlFor={`meta-${key}`}>{label}</label>
@@ -2085,8 +2281,8 @@ export default function App() {
 															type="button"
 															className="btn-reset-field"
 															disabled={isLoading}
-															title={`Reset ${label.toLowerCase()} to the original`}
-															aria-label={`Reset ${label.toLowerCase()} to the original`}
+															title={`Reset ${label.toLowerCase()} to SoundCloud's`}
+															aria-label={`Reset ${label.toLowerCase()} to SoundCloud's`}
 															onClick={() =>
 																setMetadata((prev) => ({
 																	...prev,
@@ -2094,29 +2290,43 @@ export default function App() {
 																}))
 															}
 														>
-															<svg
-																viewBox="0 0 24 24"
-																width="16"
-																height="16"
-																aria-hidden="true"
-																fill="none"
-																stroke="currentColor"
-																strokeWidth="2"
-																strokeLinecap="round"
-																strokeLinejoin="round"
-															>
-																<path d="M3 12a9 9 0 1 0 3-6.7" />
-																<path d="M3 4v5h5" />
-															</svg>
+															<ResetIcon />
 														</button>
 													) : null}
 												</div>
+												{existingValue && existingValue !== currentValue ? (
+													<p className="field-existing">
+														<span className="field-existing-value">
+															In the file: {existingValue}
+														</span>
+														<button
+															type="button"
+															className="btn-text"
+															disabled={isLoading}
+															aria-label={`Use the file's ${label.toLowerCase()}`}
+															onClick={() =>
+																setMetadata((prev) => ({
+																	...prev,
+																	[key]: existingValue,
+																}))
+															}
+														>
+															Use
+														</button>
+													</p>
+												) : null}
 											</div>
 										);
 									})}
 								</div>
 
 								<div className="filename-block">
+									<p className="filename-preview">
+										<span className="filename-preview-label">Saves as</span>{' '}
+										<span className="filename-preview-name">
+											{outputFilenamePreview}
+										</span>
+									</p>
 									<label
 										className="checkbox-row"
 										htmlFor="name-as-artist-title"
@@ -2126,40 +2336,45 @@ export default function App() {
 											type="checkbox"
 											checked={nameAsArtistTitle}
 											disabled={isLoading}
-											onChange={(e) => setNameAsArtistTitle(e.target.checked)}
+											onChange={(e) =>
+												updateNameAsArtistTitle(e.target.checked)
+											}
 										/>
 										<span>Name the file "Artist - Title"</span>
 									</label>
-									<div className="field">
-										<label htmlFor="output-filename-preview">Filename</label>
-										<input
-											id="output-filename-preview"
-											type="text"
-											className="filename-preview"
-											value={outputFilenamePreview}
-											readOnly
-										/>
-									</div>
 								</div>
 
-								<button
-									type="submit"
-									className="btn-primary"
-									disabled={isLoading}
-								>
-									{isLoading ? (
-										<>
-											<span className="spinner" aria-hidden="true" />
-											Writing tags
-										</>
-									) : (
-										'Write tags'
-									)}
-								</button>
+								<div className="form-actions">
+									<button
+										type="submit"
+										className="btn-primary"
+										disabled={isLoading}
+									>
+										{isLoading ? (
+											<>
+												<span className="spinner" aria-hidden="true" />
+												Writing tags
+											</>
+										) : (
+											'Write tags'
+										)}
+									</button>
+									{hasExistingMetadata ? (
+										<button
+											type="button"
+											className="btn-secondary"
+											disabled={isLoading}
+											title="Save the file with the tags it came with"
+											onClick={() => void processMetadata(true)}
+										>
+											Keep the file's tags
+										</button>
+									) : null}
+								</div>
 							</form>
 						)}
 
-					{/* Step 5: done */}
+					{/* Done */}
 					{step === 'complete' && (
 						<div className="step-block">
 							<div>
@@ -2167,19 +2382,30 @@ export default function App() {
 								<p className="filename">
 									{job.outputFilename || job.downloadFilename}
 								</p>
+								{outputExtension || job.fileSize !== null ? (
+									<p className="file-facts">
+										{[
+											outputExtension,
+											job.fileSize !== null
+												? formatFileSize(job.fileSize)
+												: null,
+										]
+											.filter(Boolean)
+											.join(' · ')}
+									</p>
+								) : null}
 							</div>
 							<div className="actions">
 								{/* Navigate independently of the panel; the API serves an attachment. */}
 								<a
+									ref={downloadLinkRef}
 									href={`${API_BASE}/api/job/${job.jobId}/file`}
 									target="_blank"
 									rel="noopener noreferrer"
 									className="btn-primary"
 									onClick={() => notifyParent('file-download')}
 								>
-									{job.outputFormat === 'original'
-										? 'Download original'
-										: `Download ${job.outputFilename?.match(/\.([^.]+)$/)?.[1]?.toUpperCase() ?? 'file'}`}
+									Download
 								</a>
 								<button
 									type="button"
@@ -2195,27 +2421,6 @@ export default function App() {
 
 				{!embedded && (
 					<footer className="credits">
-						<div className="credits-actions">
-							<button
-								type="button"
-								className="btn-secondary btn-small"
-								onClick={handleInitializeLogins}
-							>
-								Initialize logins
-							</button>
-							<button
-								type="button"
-								className="btn-secondary btn-small"
-								onClick={showCleanupSoundcloudToast}
-							>
-								Clean up SoundCloud
-							</button>
-						</div>
-						<p>
-							Works with Hypeddit, Droploud, GateRush, DownloadGater, StillHype,
-							PumpYourSound, MyPressKit, Fangate, Bandcamp and direct file
-							links.
-						</p>
 						<p>
 							Built for personal use.{' '}
 							<a
@@ -2233,7 +2438,77 @@ export default function App() {
 	);
 }
 
-function CopyIcon() {
+function Banner({
+	kind,
+	message,
+	onDismiss,
+}: {
+	kind: 'error' | 'warning';
+	message: string;
+	onDismiss: () => void;
+}) {
+	return (
+		<div
+			className={`banner banner-${kind}`}
+			role={kind === 'error' ? 'alert' : 'status'}
+		>
+			<span className="banner-icon" aria-hidden="true">
+				!
+			</span>
+			<p className="banner-message">{message}</p>
+			<button
+				type="button"
+				className="btn-icon banner-dismiss"
+				aria-label="Dismiss"
+				title="Dismiss"
+				onClick={onDismiss}
+			>
+				<svg
+					viewBox="0 0 24 24"
+					width="16"
+					height="16"
+					aria-hidden="true"
+					fill="none"
+					stroke="currentColor"
+					strokeWidth="2"
+					strokeLinecap="round"
+				>
+					<path d="M6 6l12 12M18 6L6 18" />
+				</svg>
+			</button>
+		</div>
+	);
+}
+
+function MoreIcon() {
+	return (
+		<svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
+			<circle cx="5" cy="12" r="2" fill="currentColor" />
+			<circle cx="12" cy="12" r="2" fill="currentColor" />
+			<circle cx="19" cy="12" r="2" fill="currentColor" />
+		</svg>
+	);
+}
+
+function CheckIcon() {
+	return (
+		<svg
+			viewBox="0 0 24 24"
+			width="16"
+			height="16"
+			aria-hidden="true"
+			fill="none"
+			stroke="currentColor"
+			strokeWidth="2.5"
+			strokeLinecap="round"
+			strokeLinejoin="round"
+		>
+			<path d="M5 12.5l4.5 4.5L19 7.5" />
+		</svg>
+	);
+}
+
+function ResetIcon() {
 	return (
 		<svg
 			viewBox="0 0 24 24"
@@ -2246,65 +2521,69 @@ function CopyIcon() {
 			strokeLinecap="round"
 			strokeLinejoin="round"
 		>
-			<rect x="9" y="9" width="13" height="13" rx="2" />
-			<path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+			<path d="M3 12a9 9 0 1 0 3-6.7" />
+			<path d="M3 4v5h5" />
 		</svg>
 	);
 }
 
-type BrowserOptionsProps = {
+/** Settings tucked behind a disclosure whose summary shows the current choice. */
+function OptionsDisclosure({
+	title,
+	current,
+	children,
+}: {
+	title: string;
+	current: string;
+	children: React.ReactNode;
+}) {
+	return (
+		<details className="options">
+			<summary>
+				<span className="options-title">{title}</span>
+				<span className="options-current">{current}</span>
+			</summary>
+			<div className="options-body">{children}</div>
+		</details>
+	);
+}
+
+type BrowserModeFieldProps = {
 	name: string;
 	browserMode: BrowserMode;
 	availableBrowserModes: BrowserMode[];
 	disabled: boolean;
 	onChange: (mode: BrowserMode) => void;
-	summaryExtra?: string;
-	children?: React.ReactNode;
 };
 
-/** Browser mode (and extra settings) tucked behind a disclosure that shows the current choice. */
-function BrowserOptions({
+function BrowserModeField({
 	name,
 	browserMode,
 	availableBrowserModes,
 	disabled,
 	onChange,
-	summaryExtra,
-	children,
-}: BrowserOptionsProps) {
+}: BrowserModeFieldProps) {
 	return (
-		<details className="options">
-			<summary>
-				<span className="options-title">Browser options</span>
-				<span className="options-current">
-					{BROWSER_MODE_LABELS[browserMode]}
-					{summaryExtra ? `, ${summaryExtra}` : ''}
-				</span>
-			</summary>
-			<div className="options-body">
-				<fieldset className="field">
-					<legend>Browser</legend>
-					<div className="modes">
-						{availableBrowserModes.map((mode) => (
-							<label key={mode} className="mode">
-								<input
-									type="radio"
-									name={name}
-									value={mode}
-									checked={browserMode === mode}
-									onChange={() => onChange(mode)}
-									disabled={disabled}
-								/>
-								<span>
-									{BROWSER_MODE_LABELS[mode]}
-									<span className="mode-hint">{BROWSER_MODE_HINTS[mode]}</span>
-								</span>
-							</label>
-						))}
-					</div>
-				</fieldset>
-				{children}
+		<fieldset className="field">
+			<legend>Browser</legend>
+			<div className="modes">
+				{availableBrowserModes.map((mode) => (
+					<label key={mode} className="mode">
+						<input
+							type="radio"
+							name={name}
+							value={mode}
+							checked={browserMode === mode}
+							onChange={() => onChange(mode)}
+							disabled={disabled}
+						/>
+						<span>
+							{BROWSER_MODE_LABELS[mode]}
+							<span className="mode-hint">{BROWSER_MODE_HINTS[mode]}</span>
+						</span>
+					</label>
+				))}
 			</div>
-		</details>
+		</fieldset>
 	);
 }

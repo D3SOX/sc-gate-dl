@@ -26,7 +26,7 @@ Start the Web UI with:
 bun webui
 ```
 
-Once Astro is up, it prints its address, usually [`http://localhost:4321`](http://localhost:4321). On the first run, click **Initialize logins** in the footer. `bun webui` runs Astro's dev server. For a production build, which you want on a server, use `bun run serve` as described in [Running on a server](server.md).
+Once Astro is up, it prints its address, usually [`http://localhost:4321`](http://localhost:4321). On the first run, choose **Initialize logins** from the menu next to the title. `bun webui` runs Astro's dev server. For a production build, which you want on a server, use `bun run serve` as described in [Running on a server](server.md).
 
 You can paste a SoundCloud URL or type search terms to search SoundCloud with your account. In the results, a **Free download** badge marks a track the creator made downloadable on SoundCloud, and a **Gate** badge marks a track whose listing links a supported gate. Tracks without a badge can still hide a gate behind a short link, which sc-gate-dl checks when the job starts. When it finds no gate, you can paste a gate or direct file link, or download the SoundCloud stream with yt-dlp.
 

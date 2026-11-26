@@ -1,5 +1,5 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
-import { cp, mkdir, rm } from 'node:fs/promises';
+import { cp, mkdir, rm, stat } from 'node:fs/promises';
 import { basename, extname, join } from 'node:path';
 import type { SoundcloudTrack } from 'soundcloud.ts';
 import { apiPortFromEnv } from './apiPort';
@@ -336,6 +336,18 @@ const jobProfileDirs = new Map<string, string>();
 const closingJobs = new Map<string, Promise<void>>();
 /** Share cleanup between a timed-out endpoint and eventual task completion. */
 const cancelledDownloadCleanups = new Map<string, Promise<void>>();
+
+/** Size in bytes of a file in `./downloads`, or null when it is gone. */
+async function downloadedFileSize(
+	filename: string | null,
+): Promise<number | null> {
+	if (!filename) return null;
+	try {
+		return (await stat(join('./downloads', filename))).size;
+	} catch {
+		return null;
+	}
+}
 
 const jobQueue = new JobQueue({
 	onQueued: (jobId, position) => {
@@ -1596,7 +1608,7 @@ const server = Bun.serve({
 		},
 
 		'/api/job/:id': {
-			GET: (req) => {
+			GET: async (req) => {
 				const jobId = req.params.id;
 				const job = jobStore.get(jobId);
 
@@ -1619,6 +1631,9 @@ const server = Bun.serve({
 					progress: job.progress,
 					downloadFilename: job.downloadFilename,
 					outputFilename: job.outputFilename,
+					fileSize: await downloadedFileSize(
+						job.outputFilename || job.downloadFilename,
+					),
 					sourceIsLossless: job.sourceIsLossless,
 					hasArtwork: !!job.artworkBuffer,
 					hasExistingArtwork: !!job.existingArtworkBuffer,
@@ -1842,6 +1857,7 @@ const server = Bun.serve({
 					return jsonResponse({
 						success: true,
 						outputFilename,
+						fileSize: await downloadedFileSize(outputFilename),
 					});
 				} catch (error) {
 					return jsonResponse(
