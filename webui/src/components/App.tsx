@@ -31,6 +31,7 @@ import type {
 } from '../../../src/types';
 import './App.css';
 import { resolveApiBase } from './apiBase';
+import { ConfirmDialog } from './ConfirmDialog';
 import {
 	parseAvailableBrowserModes,
 	parseBrowserViewUrl,
@@ -140,6 +141,8 @@ const API_BASE = resolveApiBase(
 	typeof window === 'undefined' ? undefined : window.location,
 	import.meta.env.PUBLIC_API_BASE_URL,
 );
+const CLEANUP_SOUNDCLOUD_DESCRIPTION =
+	'This unfollows, unlikes, and deletes comments and reposts on the account the gates use.';
 const BROWSER_MODE_STORAGE_KEY = 'sc-gate-dl-browser-mode';
 const OUTPUT_FORMAT_STORAGE_KEY = 'sc-gate-dl-output-format';
 const BROWSER_MODE_LABELS: Record<BrowserMode, string> = {
@@ -431,13 +434,14 @@ export default function App() {
 		const hydrateBrowserModes = async () => {
 			let modes: BrowserMode[] = ['headless', 'headed'];
 			let viewUrl: string | null = null;
+			let signInWarning: string | null = null;
 			try {
 				const response = await fetch(`${API_BASE}/api/capabilities`);
 				if (response.ok) {
 					const capabilities = await response.json();
 					modes = parseAvailableBrowserModes(capabilities);
 					reviewTagsRef.current = parseReviewTags(capabilities);
-					signInWarningRef.current = parseSignInWarning(capabilities);
+					signInWarning = parseSignInWarning(capabilities);
 					viewUrl = parseBrowserViewUrl(capabilities, window.location.hostname);
 				}
 			} catch {
@@ -447,6 +451,7 @@ export default function App() {
 			if (cancelled) return;
 			setAvailableBrowserModes(modes);
 			setBrowserViewUrl(viewUrl);
+			setSignInWarning(signInWarning);
 			const requestedMode = readRequestedBrowserMode(window.location.search);
 			let storedMode: BrowserMode | null = null;
 			let storedFormat: ReturnType<typeof readStoredOutputFormat> = null;
@@ -559,6 +564,9 @@ export default function App() {
 	const [now, setNow] = useState(() => Date.now());
 	const downloadLinkRef = useRef<HTMLAnchorElement>(null);
 	const serverMenuRef = useRef<HTMLDivElement>(null);
+	const [signInWarning, setSignInWarning] = useState<string | null>(null);
+	const initializeLoginsDialogRef = useRef<HTMLDialogElement>(null);
+	const cleanupSoundcloudDialogRef = useRef<HTMLDialogElement>(null);
 	const [isLoading, setIsLoading] = useState(false);
 	const [search, setSearch] = useState<SearchState | null>(null);
 	const [searchLoading, setSearchLoading] = useState<'new' | 'more' | null>(
@@ -568,7 +576,6 @@ export default function App() {
 	const soundcloudInputRef = useRef<HTMLInputElement>(null);
 	const cleanupToastShownRef = useRef(false);
 	const reviewTagsRef = useRef(true);
-	const signInWarningRef = useRef<string | null>(null);
 	const browserViewAutoClosedRef = useRef(false);
 	const browserViewAutoOpenedRef = useRef(false);
 	const autoStartedFromQueryRef = useRef(false);
@@ -626,75 +633,73 @@ export default function App() {
 		};
 	}, []);
 
+	const cleanupSoundcloud = useCallback(async () => {
+		const toastId = toast.loading('Cleaning up SoundCloud');
+
+		try {
+			const response = await fetch(`${API_BASE}/api/soundcloud/cleanup`, {
+				method: 'POST',
+			});
+			const data = await response.json();
+
+			if (!response.ok) {
+				throw new Error(
+					data.error || 'The server could not clean up the account.',
+				);
+			}
+
+			const parts: string[] = [];
+			if (data.unfollowed > 0) {
+				parts.push(
+					`${data.unfollowed} unfollow${data.unfollowed === 1 ? '' : 's'}`,
+				);
+			}
+			if (data.unliked > 0) {
+				parts.push(`${data.unliked} unlike${data.unliked === 1 ? '' : 's'}`);
+			}
+			if (data.deletedComments > 0) {
+				parts.push(
+					`${data.deletedComments} comment${data.deletedComments === 1 ? '' : 's'} deleted`,
+				);
+			}
+			if (data.deletedReposts > 0) {
+				parts.push(
+					`${data.deletedReposts} repost${data.deletedReposts === 1 ? '' : 's'} deleted`,
+				);
+			}
+
+			const description =
+				parts.length > 0 ? parts.join(', ') : 'Nothing needed cleaning up.';
+
+			toast.success('SoundCloud cleaned up', {
+				id: toastId,
+				description,
+			});
+		} catch (err) {
+			toast.error('Cleanup failed', {
+				id: toastId,
+				description:
+					err instanceof Error ? err.message : 'Check the server log.',
+			});
+		}
+	}, []);
+
+	// Suggested after a gated download; the menu asks with a modal instead.
 	const showCleanupSoundcloudToast = useCallback(() => {
 		toast('Clean up your SoundCloud account?', {
-			description:
-				'This unfollows, unlikes, and deletes comments and reposts on the account the gates use.',
+			description: CLEANUP_SOUNDCLOUD_DESCRIPTION,
 			closeButton: false,
 			duration: Infinity,
 			action: {
 				label: 'Clean up',
-				onClick: async () => {
-					const toastId = toast.loading('Cleaning up SoundCloud');
-
-					try {
-						const response = await fetch(`${API_BASE}/api/soundcloud/cleanup`, {
-							method: 'POST',
-						});
-						const data = await response.json();
-
-						if (!response.ok) {
-							throw new Error(
-								data.error || 'The server could not clean up the account.',
-							);
-						}
-
-						const parts: string[] = [];
-						if (data.unfollowed > 0) {
-							parts.push(
-								`${data.unfollowed} unfollow${data.unfollowed === 1 ? '' : 's'}`,
-							);
-						}
-						if (data.unliked > 0) {
-							parts.push(
-								`${data.unliked} unlike${data.unliked === 1 ? '' : 's'}`,
-							);
-						}
-						if (data.deletedComments > 0) {
-							parts.push(
-								`${data.deletedComments} comment${data.deletedComments === 1 ? '' : 's'} deleted`,
-							);
-						}
-						if (data.deletedReposts > 0) {
-							parts.push(
-								`${data.deletedReposts} repost${data.deletedReposts === 1 ? '' : 's'} deleted`,
-							);
-						}
-
-						const description =
-							parts.length > 0
-								? parts.join(', ')
-								: 'Nothing needed cleaning up.';
-
-						toast.success('SoundCloud cleaned up', {
-							id: toastId,
-							description,
-						});
-					} catch (err) {
-						toast.error('Cleanup failed', {
-							id: toastId,
-							description:
-								err instanceof Error ? err.message : 'Check the server log.',
-						});
-					}
-				},
+				onClick: () => void cleanupSoundcloud(),
 			},
 			cancel: {
 				label: 'Cancel',
 				onClick: () => {},
 			},
 		});
-	}, []);
+	}, [cleanupSoundcloud]);
 
 	// Start download process
 	const startDownload = useCallback(
@@ -1479,65 +1484,46 @@ export default function App() {
 		setStep('url');
 	};
 
-	const handleInitializeLogins = async () => {
-		toast('Initialize logins?', {
-			description: [
-				'Opens a browser on the server to sign in to SoundCloud and Spotify. Use the remote browser button to watch it or solve a captcha.',
-				signInWarningRef.current,
-			]
-				.filter(Boolean)
-				.join(' '),
-			closeButton: false,
-			duration: Infinity,
-			action: {
-				label: 'Initialize',
-				onClick: async () => {
-					if (browserViewUrl) {
-						setBrowserViewOpen(true);
-					}
-					const toastId = toast.loading('Initializing logins');
-					let stillRunning = false;
+	const initializeLogins = async () => {
+		if (browserViewUrl) {
+			setBrowserViewOpen(true);
+		}
+		const toastId = toast.loading('Initializing logins');
+		let stillRunning = false;
 
-					try {
-						const response = await fetch(`${API_BASE}/api/logins/initialize`, {
-							method: 'POST',
-						});
-						const data = await response.json();
+		try {
+			const response = await fetch(`${API_BASE}/api/logins/initialize`, {
+				method: 'POST',
+			});
+			const data = await response.json();
 
-						if (response.status === 409) {
-							// Still running from an earlier click: show where to finish it.
-							stillRunning = true;
-							toast.info('Initialize logins is already running', {
-								id: toastId,
-								description: data.error,
-							});
-							return;
-						}
-						if (!response.ok) {
-							throw new Error(
-								data.error || 'The server could not initialize the logins.',
-							);
-						}
+			if (response.status === 409) {
+				// Still running from an earlier click: show where to finish it.
+				stillRunning = true;
+				toast.info('Initialize logins is already running', {
+					id: toastId,
+					description: data.error,
+				});
+				return;
+			}
+			if (!response.ok) {
+				throw new Error(
+					data.error || 'The server could not initialize the logins.',
+				);
+			}
 
-						toast.success('Logins initialized', {
-							id: toastId,
-						});
-					} catch (err) {
-						toast.error('Login initialization failed', {
-							id: toastId,
-							description:
-								err instanceof Error ? err.message : 'Check the server log.',
-						});
-					} finally {
-						if (!stillRunning) setBrowserViewOpen(false);
-					}
-				},
-			},
-			cancel: {
-				label: 'Cancel',
-				onClick: () => {},
-			},
-		});
+			toast.success('Logins initialized', {
+				id: toastId,
+			});
+		} catch (err) {
+			toast.error('Login initialization failed', {
+				id: toastId,
+				description:
+					err instanceof Error ? err.message : 'Check the server log.',
+			});
+		} finally {
+			if (!stillRunning) setBrowserViewOpen(false);
+		}
 	};
 
 	const browserOptionsSummary = [
@@ -1555,6 +1541,36 @@ export default function App() {
 			className={`app${embedded ? ' is-embedded' : ''}${step === 'url' ? ' is-start' : ''}`}
 		>
 			<Toaster richColors closeButton theme="dark" />
+			<ConfirmDialog
+				ref={initializeLoginsDialogRef}
+				title="Initialize logins?"
+				confirmLabel={
+					<>
+						<LogIn />
+						Initialize
+					</>
+				}
+				onConfirm={() => void initializeLogins()}
+			>
+				<p>
+					Opens a browser on the server to sign in to SoundCloud and Spotify.
+					Use the remote browser button to watch it or solve a captcha.
+				</p>
+				{signInWarning && <p>{signInWarning}</p>}
+			</ConfirmDialog>
+			<ConfirmDialog
+				ref={cleanupSoundcloudDialogRef}
+				title="Clean up your SoundCloud account?"
+				confirmLabel={
+					<>
+						<BrushCleaning />
+						Clean up
+					</>
+				}
+				onConfirm={() => void cleanupSoundcloud()}
+			>
+				<p>{CLEANUP_SOUNDCLOUD_DESCRIPTION}</p>
+			</ConfirmDialog>
 			{browserViewUrl ? (
 				<RemoteBrowserPanel
 					open={browserViewOpen}
@@ -1617,7 +1633,7 @@ export default function App() {
 								className="menu-item"
 								onClick={() => {
 									closeServerMenu();
-									void handleInitializeLogins();
+									initializeLoginsDialogRef.current?.showModal();
 								}}
 							>
 								<LogIn />
@@ -1631,7 +1647,7 @@ export default function App() {
 								className="menu-item"
 								onClick={() => {
 									closeServerMenu();
-									showCleanupSoundcloudToast();
+									cleanupSoundcloudDialogRef.current?.showModal();
 								}}
 							>
 								<BrushCleaning />

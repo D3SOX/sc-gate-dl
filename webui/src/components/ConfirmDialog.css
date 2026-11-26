@@ -1,0 +1,40 @@
+.confirm-dialog {
+	width: min(28rem, calc(100vw - 2 * var(--space-md)));
+	/* The global reset zeroes the margin that centres modal dialogs. */
+	margin: auto;
+	padding: var(--space-lg);
+	color: var(--type);
+	background: var(--surface-raised);
+	border: 1px solid var(--rule);
+	border-radius: var(--radius);
+	box-shadow: 0 12px 32px rgb(0 0 0 / 45%);
+}
+
+.confirm-dialog::backdrop {
+	background: rgb(0 0 0 / 60%);
+}
+
+.confirm-dialog-title {
+	margin: 0 0 var(--space-sm);
+	font-size: 1.125rem;
+	font-weight: 700;
+}
+
+.confirm-dialog-body {
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-sm);
+	color: var(--type-soft);
+}
+
+.confirm-dialog-body p {
+	margin: 0;
+}
+
+.confirm-dialog-actions {
+	display: flex;
+	flex-wrap: wrap;
+	justify-content: flex-end;
+	gap: var(--space-sm);
+	margin-top: var(--space-lg);
+}
