@@ -1,4 +1,5 @@
 import type RFB from '@novnc/novnc';
+import { Plug, Send, X } from 'lucide-react';
 import {
 	type CSSProperties,
 	type PointerEvent as ReactPointerEvent,
@@ -1229,6 +1230,7 @@ export function RemoteBrowserPanel({
 								className="is-send"
 								disabled={!clipboardText}
 							>
+								<Send />
 								Send
 							</button>
 							<button
@@ -1236,6 +1238,7 @@ export function RemoteBrowserPanel({
 								className="is-cancel"
 								onClick={() => setClipboardOpen(false)}
 							>
+								<X />
 								Cancel
 							</button>
 						</div>
@@ -1319,6 +1322,11 @@ export function RemoteBrowserPanel({
 							className="btn-primary"
 							disabled={!password || status === 'connecting'}
 						>
+							{status === 'connecting' ? (
+								<span className="spinner" aria-hidden="true" />
+							) : (
+								<Plug />
+							)}
 							{status === 'connecting' ? 'Connecting…' : 'Connect'}
 						</button>
 					</form>

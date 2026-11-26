@@ -90,8 +90,10 @@
 }
 
 .menu-item {
-	display: flex;
-	flex-direction: column;
+	display: grid;
+	grid-template-columns: auto minmax(0, 1fr);
+	column-gap: var(--space-sm);
+	align-items: center;
 	width: 100%;
 	min-height: 44px;
 	padding: var(--space-sm) var(--space-md);
@@ -112,6 +114,12 @@
 
 .menu-item:focus-visible {
 	outline-offset: -2px;
+}
+
+.menu-item > .lucide {
+	grid-row: span 2;
+	align-self: start;
+	margin-top: 0.15em;
 }
 
 .menu-hint {
@@ -277,12 +285,10 @@
 .filename {
 	font-size: 1.0625rem;
 	font-weight: 500;
-	color: var(--type-soft);
 	overflow-wrap: anywhere;
 }
 
-.step-heading + .step-text,
-.step-heading + .filename {
+.step-heading + .step-text {
 	margin-top: var(--space-sm);
 }
 
@@ -347,10 +353,12 @@
 }
 
 /* An input with its button on the same line */
+/* Button below the input, so the input keeps its width when the label changes. */
 .input-row {
-	display: grid;
-	grid-template-columns: minmax(0, 1fr) auto;
-	gap: var(--space-sm);
+	display: flex;
+	flex-direction: column;
+	align-items: flex-start;
+	gap: var(--space-md);
 }
 
 /* Format choice */
@@ -601,6 +609,9 @@
 }
 
 .btn-text {
+	display: inline-flex;
+	align-items: center;
+	gap: var(--space-xs);
 	min-height: 44px;
 	padding: 0 var(--space-xs);
 	font-weight: 500;
@@ -643,6 +654,13 @@
 .btn-icon:disabled {
 	opacity: 0.6;
 	cursor: not-allowed;
+}
+
+/* Icons in labelled buttons follow the label's size. */
+:is(.btn-primary, .btn-secondary, .btn-text, .menu-item) > .lucide {
+	flex: none;
+	width: 1.125em;
+	height: 1.125em;
 }
 
 .spinner {
@@ -1231,7 +1249,7 @@
 	}
 
 	.input-row {
-		grid-template-columns: minmax(0, 1fr);
+		align-items: stretch;
 	}
 
 	.actions > *,

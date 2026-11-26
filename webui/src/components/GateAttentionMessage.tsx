@@ -1,3 +1,4 @@
+import { Monitor } from 'lucide-react';
 import './GateAttentionMessage.css';
 
 type GateAttentionProps = {
@@ -16,6 +17,7 @@ export function GateAttentionMessage({
 			<span>{attention.message}</span>
 			{onShowBrowser && (
 				<button type="button" onClick={onShowBrowser}>
+					<Monitor />
 					Open the browser
 				</button>
 			)}

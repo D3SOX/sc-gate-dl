@@ -448,6 +448,10 @@
 }
 
 .remote-browser-clipboard button {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	gap: var(--space-xs);
 	min-width: 72px;
 	padding: var(--space-xs) var(--space-md);
 	font: inherit;
@@ -457,6 +461,12 @@
 	border: 1px solid var(--rule);
 	border-radius: 6px;
 	cursor: pointer;
+}
+
+.remote-browser-clipboard button > .lucide {
+	flex: none;
+	width: 1em;
+	height: 1em;
 }
 
 .remote-browser-clipboard button:hover:not(:disabled, .is-send) {

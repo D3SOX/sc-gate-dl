@@ -1,3 +1,25 @@
+import {
+	ArrowUp,
+	AudioLines,
+	BrushCleaning,
+	Check,
+	ChevronDown,
+	Download,
+	Ellipsis,
+	Eraser,
+	FileCheck,
+	ImageUp,
+	LockOpen,
+	LogIn,
+	Monitor,
+	Plus,
+	RefreshCw,
+	RotateCcw,
+	Save,
+	Search,
+	Undo2,
+	X,
+} from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Toaster, toast } from 'sonner';
 import { previewProcessedFilename } from '../../../src/outputFormat';
@@ -1551,7 +1573,7 @@ export default function App() {
 							aria-label="Server tools"
 							title="Server tools"
 						>
-							<MoreIcon />
+							<Ellipsis size={20} />
 						</button>
 						<div
 							id="server-menu"
@@ -1567,6 +1589,7 @@ export default function App() {
 									void handleInitializeLogins();
 								}}
 							>
+								<LogIn />
 								Initialize logins
 								<span className="menu-hint">
 									Sign in to SoundCloud and Spotify on the server.
@@ -1580,6 +1603,7 @@ export default function App() {
 									showCleanupSoundcloudToast();
 								}}
 							>
+								<BrushCleaning />
 								Clean up SoundCloud
 								<span className="menu-hint">
 									Undo the follows, likes, comments and reposts the gates left.
@@ -1589,16 +1613,12 @@ export default function App() {
 					</header>
 				)}
 
-				<div className="title-block">
-					{showTrack && job.track ? (
-						<>
-							<h1 className="title">{headerTitle}</h1>
-							<p className="title-artist">{headerArtist}</p>
-						</>
-					) : (
-						<h1 className="title">Get a free download</h1>
-					)}
-				</div>
+				{showTrack && job.track && (
+					<div className="title-block">
+						<h1 className="title">{headerTitle}</h1>
+						<p className="title-artist">{headerArtist}</p>
+					</div>
+				)}
 
 				<ol className="tracklist" aria-label="Progress">
 					{PHASES.map(({ label }, index) => (
@@ -1683,9 +1703,15 @@ export default function App() {
 												Searching
 											</>
 										) : inputIsTrackUrl ? (
-											'Get download'
+											<>
+												<Download />
+												Get download
+											</>
 										) : (
-											'Search'
+											<>
+												<Search />
+												Search
+											</>
 										)}
 									</button>
 								</div>
@@ -1754,6 +1780,7 @@ export default function App() {
 									disabled={isLoading}
 									onClick={clearSearch}
 								>
+									<X />
 									Clear
 								</button>
 							</div>
@@ -1822,7 +1849,10 @@ export default function App() {
 											Loading
 										</>
 									) : (
-										'Load more results'
+										<>
+											<ChevronDown />
+											Load more results
+										</>
 									)}
 								</button>
 							) : null}
@@ -1864,6 +1894,7 @@ export default function App() {
 												void startDownload(job.jobId as string, mode);
 											}}
 										>
+											<RefreshCw />
 											Retry
 										</button>
 									</li>
@@ -1906,7 +1937,10 @@ export default function App() {
 															Starting
 														</>
 													) : (
-														'Start'
+														<>
+															<LockOpen />
+															Start
+														</>
 													)}
 												</button>
 											</div>
@@ -1941,6 +1975,7 @@ export default function App() {
 										disabled={isLoading || !soundcloudUrl.trim()}
 										onClick={handleYtdlpSoundcloudDownload}
 									>
+										<AudioLines />
 										Get the stream
 									</button>
 								</li>
@@ -1953,13 +1988,10 @@ export default function App() {
 						<div className="step-block">
 							{job.progress?.stage === 'waiting_bandcamp_track' ? (
 								<>
-									<div>
-										<h2 className="step-heading">Pick the track</h2>
-										<p className="step-text">
-											{job.progress.message ||
-												'No track on this Bandcamp album matched. Pick the one to download.'}
-										</p>
-									</div>
+									<p className="step-text">
+										{job.progress.message ||
+											'No track on this Bandcamp album matched. Pick the one to download.'}
+									</p>
 									<ol className="picklist">
 										{(job.progress.bandcampAlbumTracks ?? []).map((track) => (
 											<li key={track.url}>
@@ -1987,6 +2019,7 @@ export default function App() {
 										onClick={() => void cancelDownload()}
 										disabled={isLoading || isCancelling}
 									>
+										<X />
 										Cancel download
 									</button>
 								</>
@@ -2027,7 +2060,7 @@ export default function App() {
 															{isRunning ? (
 																<span className="spinner" />
 															) : (
-																<CheckIcon />
+																<Check size={16} strokeWidth={2.5} />
 															)}
 														</span>
 														<span>{entry}</span>
@@ -2119,6 +2152,7 @@ export default function App() {
 												className="btn-secondary"
 												onClick={() => setBrowserViewOpen(true)}
 											>
+												<Monitor />
 												Watch the browser
 											</button>
 										) : null}
@@ -2128,6 +2162,7 @@ export default function App() {
 											onClick={() => void cancelDownload()}
 											disabled={isCancelling}
 										>
+											<X />
 											Cancel download
 										</button>
 									</div>
@@ -2159,7 +2194,6 @@ export default function App() {
 						!hasFailed &&
 						job.progress?.stage !== 'processing_audio' && (
 							<form onSubmit={handleMetadataSubmit} className="step-block">
-								<h2 className="step-heading">Check the tags</h2>
 								{job.outputFormat === 'flac' &&
 								job.sourceIsLossless === false ? (
 									<p className="note">
@@ -2182,6 +2216,7 @@ export default function App() {
 												setPromoCleanup(null);
 											}}
 										>
+											<Undo2 />
 											Undo
 										</button>
 									</div>
@@ -2200,6 +2235,7 @@ export default function App() {
 												setMetadata(cleanMetadataFields(metadata));
 											}}
 										>
+											<Eraser />
 											Remove promo text
 										</button>
 									</div>
@@ -2229,6 +2265,7 @@ export default function App() {
 													setCustomArtwork(e.target.files?.[0] || null)
 												}
 											/>
+											<ImageUp />
 											<span>Change artwork</span>
 										</label>
 										{customArtwork ? (
@@ -2243,6 +2280,7 @@ export default function App() {
 													}
 												}}
 											>
+												<RotateCcw />
 												Reset artwork
 											</button>
 										) : job.hasExistingArtwork && job.jobId ? (
@@ -2323,7 +2361,7 @@ export default function App() {
 																}))
 															}
 														>
-															<ResetIcon />
+															<RotateCcw size={16} />
 														</button>
 													) : null}
 												</div>
@@ -2344,6 +2382,7 @@ export default function App() {
 																}))
 															}
 														>
+															<ArrowUp />
 															Use
 														</button>
 													</p>
@@ -2389,7 +2428,10 @@ export default function App() {
 												Writing tags
 											</>
 										) : (
-											'Write tags'
+											<>
+												<Save />
+												Write tags
+											</>
 										)}
 									</button>
 									{hasExistingMetadata ? (
@@ -2400,6 +2442,7 @@ export default function App() {
 											title="Save the file with the tags it came with"
 											onClick={() => void processMetadata(true)}
 										>
+											<FileCheck />
 											Keep the file's tags
 										</button>
 									) : null}
@@ -2411,7 +2454,6 @@ export default function App() {
 					{step === 'complete' && (
 						<div className="step-block">
 							<div>
-								<h2 className="step-heading">Your file is ready</h2>
 								<p className="filename">
 									{job.outputFilename || job.downloadFilename}
 								</p>
@@ -2438,6 +2480,7 @@ export default function App() {
 									className="btn-primary"
 									onClick={() => notifyParent('file-download')}
 								>
+									<Download />
 									Download
 								</a>
 								<button
@@ -2445,6 +2488,7 @@ export default function App() {
 									onClick={handleReset}
 									className="btn-secondary"
 								>
+									<Plus />
 									Get another track
 								</button>
 							</div>
@@ -2496,67 +2540,9 @@ function Banner({
 				title="Dismiss"
 				onClick={onDismiss}
 			>
-				<svg
-					viewBox="0 0 24 24"
-					width="16"
-					height="16"
-					aria-hidden="true"
-					fill="none"
-					stroke="currentColor"
-					strokeWidth="2"
-					strokeLinecap="round"
-				>
-					<path d="M6 6l12 12M18 6L6 18" />
-				</svg>
+				<X size={16} />
 			</button>
 		</div>
-	);
-}
-
-function MoreIcon() {
-	return (
-		<svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
-			<circle cx="5" cy="12" r="2" fill="currentColor" />
-			<circle cx="12" cy="12" r="2" fill="currentColor" />
-			<circle cx="19" cy="12" r="2" fill="currentColor" />
-		</svg>
-	);
-}
-
-function CheckIcon() {
-	return (
-		<svg
-			viewBox="0 0 24 24"
-			width="16"
-			height="16"
-			aria-hidden="true"
-			fill="none"
-			stroke="currentColor"
-			strokeWidth="2.5"
-			strokeLinecap="round"
-			strokeLinejoin="round"
-		>
-			<path d="M5 12.5l4.5 4.5L19 7.5" />
-		</svg>
-	);
-}
-
-function ResetIcon() {
-	return (
-		<svg
-			viewBox="0 0 24 24"
-			width="16"
-			height="16"
-			aria-hidden="true"
-			fill="none"
-			stroke="currentColor"
-			strokeWidth="2"
-			strokeLinecap="round"
-			strokeLinejoin="round"
-		>
-			<path d="M3 12a9 9 0 1 0 3-6.7" />
-			<path d="M3 4v5h5" />
-		</svg>
 	);
 }
 

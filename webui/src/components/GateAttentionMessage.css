@@ -19,6 +19,9 @@
 }
 
 .gate-attention-message button {
+	display: inline-flex;
+	align-items: center;
+	gap: var(--space-sm);
 	min-height: 44px;
 	margin-top: var(--space-sm);
 	padding: var(--space-sm) var(--space-md);
@@ -28,6 +31,12 @@
 	border: 0;
 	border-radius: 999px;
 	cursor: pointer;
+}
+
+.gate-attention-message button > .lucide {
+	flex: none;
+	width: 1.125em;
+	height: 1.125em;
 }
 
 .gate-attention-message button:hover {
