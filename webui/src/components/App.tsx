@@ -168,6 +168,48 @@ const BROWSER_MODE_RETRY_HINTS: Record<BrowserMode, string> = {
 /** Retry options, from the one most likely to get past a gate. */
 const RETRY_ORDER: BrowserMode[] = ['headed', 'xvfb', 'headless'];
 const NAME_AS_ARTIST_TITLE_STORAGE_KEY = 'sc-gate-dl-name-as-artist-title';
+/** The modes the server offered last time, so the first render already lists them. */
+const BROWSER_MODES_STORAGE_KEY = 'sc-gate-dl-browser-modes';
+
+/** Storage may be blocked when the Web UI is embedded cross-origin. */
+function readStorage(key: string): string | null {
+	try {
+		return localStorage.getItem(key);
+	} catch {
+		return null;
+	}
+}
+
+function writeStorage(key: string, value: string) {
+	try {
+		localStorage.setItem(key, value);
+	} catch {
+		// Keep the in-memory choice when persistent storage is unavailable.
+	}
+}
+
+function readCachedBrowserModes(): BrowserMode[] {
+	try {
+		return parseAvailableBrowserModes({
+			browserModes: JSON.parse(
+				readStorage(BROWSER_MODES_STORAGE_KEY) ?? 'null',
+			),
+		});
+	} catch {
+		return parseAvailableBrowserModes(null);
+	}
+}
+
+/** The mode from the URL or the last choice, if the server offers it. */
+function readPreferredBrowserMode(modes: BrowserMode[]): BrowserMode | null {
+	const requestedMode = readRequestedBrowserMode(window.location.search);
+	if (requestedMode && modes.includes(requestedMode)) return requestedMode;
+	const storedMode = readStoredBrowserMode(
+		{ getItem: readStorage },
+		BROWSER_MODE_STORAGE_KEY,
+	);
+	return storedMode && modes.includes(storedMode) ? storedMode : null;
+}
 
 const OUTPUT_FORMAT_OPTIONS: {
 	value: OutputFormat;
@@ -396,17 +438,29 @@ export default function App() {
 	const [hypedditUrlInput, setHypedditUrlInput] = useState('');
 	const [skipAutomaticHypedditFetch, setSkipAutomaticHypedditFetch] =
 		useState(false);
-	const [browserMode, setBrowserMode] = useState<BrowserMode>('headless');
+	const [browserMode, setBrowserMode] = useState<BrowserMode>(
+		() => readPreferredBrowserMode(readCachedBrowserModes()) ?? 'headless',
+	);
 	const [lastAttemptedBrowserMode, setLastAttemptedBrowserMode] =
 		useState<BrowserMode | null>(null);
-	const [availableBrowserModes, setAvailableBrowserModes] = useState<
-		BrowserMode[]
-	>(['headless', 'headed']);
+	const [availableBrowserModes, setAvailableBrowserModes] = useState(
+		readCachedBrowserModes,
+	);
 	const [browserModeHydrated, setBrowserModeHydrated] = useState(false);
 	const [browserViewUrl, setBrowserViewUrl] = useState<string | null>(null);
 	const [browserViewOpen, setBrowserViewOpen] = useState(false);
-	const [embedded, setEmbedded] = useState(false);
-	const [outputFormat, setOutputFormat] = useState<OutputFormat>('mp3-320');
+	const [embedded] = useState(() =>
+		shouldUseEmbeddedLayout(window.location.search),
+	);
+	const [outputFormat, setOutputFormat] = useState<OutputFormat>(
+		() =>
+			readRequestedOutputFormat(window.location.search) ??
+			readStoredOutputFormat(
+				{ getItem: readStorage },
+				OUTPUT_FORMAT_STORAGE_KEY,
+			) ??
+			'mp3-320',
+	);
 	const [job, setJob] = useState<JobState>({
 		jobId: null,
 		track: null,
@@ -432,7 +486,6 @@ export default function App() {
 
 	useEffect(() => {
 		let cancelled = false;
-		setEmbedded(shouldUseEmbeddedLayout(window.location.search));
 
 		const hydrateBrowserModes = async () => {
 			let modes: BrowserMode[] = ['headless', 'headed'];
@@ -443,6 +496,7 @@ export default function App() {
 				if (response.ok) {
 					const capabilities = await response.json();
 					modes = parseAvailableBrowserModes(capabilities);
+					writeStorage(BROWSER_MODES_STORAGE_KEY, JSON.stringify(modes));
 					reviewTagsRef.current = parseReviewTags(capabilities);
 					signInWarning = parseSignInWarning(capabilities);
 					viewUrl = parseBrowserViewUrl(capabilities, window.location.hostname);
@@ -455,48 +509,18 @@ export default function App() {
 			setAvailableBrowserModes(modes);
 			setBrowserViewUrl(viewUrl);
 			setSignInWarning(signInWarning);
-			const requestedMode = readRequestedBrowserMode(window.location.search);
-			let storedMode: BrowserMode | null = null;
-			let storedFormat: ReturnType<typeof readStoredOutputFormat> = null;
-			try {
-				storedMode = readStoredBrowserMode(
-					localStorage,
-					BROWSER_MODE_STORAGE_KEY,
-				);
-				storedFormat = readStoredOutputFormat(
-					localStorage,
-					OUTPUT_FORMAT_STORAGE_KEY,
-				);
-			} catch {
-				// Storage may be blocked when the Web UI is embedded cross-origin.
-			}
-			const preferredMode =
-				requestedMode && modes.includes(requestedMode)
-					? requestedMode
-					: storedMode && modes.includes(storedMode)
-						? storedMode
-						: null;
+			const preferredMode = readPreferredBrowserMode(modes);
 			if (preferredMode) {
 				setBrowserMode(preferredMode);
-				if (requestedMode === preferredMode) {
-					try {
-						localStorage.setItem(BROWSER_MODE_STORAGE_KEY, preferredMode);
-					} catch {
-						// The requested mode still applies for this session.
-					}
+				if (
+					preferredMode === readRequestedBrowserMode(window.location.search)
+				) {
+					writeStorage(BROWSER_MODE_STORAGE_KEY, preferredMode);
 				}
 			}
 			const requestedFormat = readRequestedOutputFormat(window.location.search);
-			const preferredFormat = requestedFormat ?? storedFormat;
-			if (preferredFormat) {
-				setOutputFormat(preferredFormat);
-				if (requestedFormat === preferredFormat) {
-					try {
-						localStorage.setItem(OUTPUT_FORMAT_STORAGE_KEY, preferredFormat);
-					} catch {
-						// The requested format still applies for this session.
-					}
-				}
+			if (requestedFormat) {
+				writeStorage(OUTPUT_FORMAT_STORAGE_KEY, requestedFormat);
 			}
 			setBrowserModeHydrated(true);
 		};
@@ -512,20 +536,12 @@ export default function App() {
 		if (mode !== 'headed') {
 			setBrowserViewOpen(false);
 		}
-		try {
-			localStorage.setItem(BROWSER_MODE_STORAGE_KEY, mode);
-		} catch {
-			// Keep the in-memory selection when persistent storage is unavailable.
-		}
+		writeStorage(BROWSER_MODE_STORAGE_KEY, mode);
 	};
 
 	const updateOutputFormat = (format: OutputFormat) => {
 		setOutputFormat(format);
-		try {
-			localStorage.setItem(OUTPUT_FORMAT_STORAGE_KEY, format);
-		} catch {
-			// Keep the in-memory selection when persistent storage is unavailable.
-		}
+		writeStorage(OUTPUT_FORMAT_STORAGE_KEY, format);
 	};
 	const [customArtwork, setCustomArtwork] = useState<File | null>(null);
 	const [customArtworkUrl, setCustomArtworkUrl] = useState<string | null>(null);
@@ -538,23 +554,12 @@ export default function App() {
 		setCustomArtworkUrl(url);
 		return () => URL.revokeObjectURL(url);
 	}, [customArtwork]);
-	const [nameAsArtistTitle, setNameAsArtistTitle] = useState(false);
-	useEffect(() => {
-		try {
-			setNameAsArtistTitle(
-				localStorage.getItem(NAME_AS_ARTIST_TITLE_STORAGE_KEY) === 'true',
-			);
-		} catch {
-			// Storage may be blocked when the Web UI is embedded cross-origin.
-		}
-	}, []);
+	const [nameAsArtistTitle, setNameAsArtistTitle] = useState(
+		() => readStorage(NAME_AS_ARTIST_TITLE_STORAGE_KEY) === 'true',
+	);
 	const updateNameAsArtistTitle = (value: boolean) => {
 		setNameAsArtistTitle(value);
-		try {
-			localStorage.setItem(NAME_AS_ARTIST_TITLE_STORAGE_KEY, String(value));
-		} catch {
-			// Keep the in-memory choice when persistent storage is unavailable.
-		}
+		writeStorage(NAME_AS_ARTIST_TITLE_STORAGE_KEY, String(value));
 	};
 	/** The tags before and after the last cleanup, so it can be undone until they are edited. */
 	const [tagCleanup, setTagCleanup] = useState<{
@@ -2623,27 +2628,15 @@ function OptionsDisclosure({
 	storageKey: string;
 	children: React.ReactNode;
 }) {
-	const ref = useRef<HTMLDetailsElement>(null);
-	useEffect(() => {
-		try {
-			if (ref.current && localStorage.getItem(storageKey) === 'true') {
-				ref.current.open = true;
-			}
-		} catch {
-			// Storage may be blocked when the Web UI is embedded cross-origin.
-		}
-	}, [storageKey]);
+	// Only the initial state comes from React, so toggling stays with the browser.
+	const [initiallyOpen] = useState(() => readStorage(storageKey) === 'true');
 	return (
 		<details
-			ref={ref}
 			className="options"
-			onToggle={(event) => {
-				try {
-					localStorage.setItem(storageKey, String(event.currentTarget.open));
-				} catch {
-					// Keep the in-memory state when persistent storage is unavailable.
-				}
-			}}
+			open={initiallyOpen}
+			onToggle={(event) =>
+				writeStorage(storageKey, String(event.currentTarget.open))
+			}
 		>
 			<summary>
 				<span className="options-title">{title}</span>
