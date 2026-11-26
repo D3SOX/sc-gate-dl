@@ -371,14 +371,17 @@ export function cleanMetadataFields(meta: Metadata): Metadata {
 	};
 }
 
-export function metadataNeedsCleanup(meta: Metadata): boolean {
-	const cleaned = cleanMetadataFields(meta);
+function metadataEquals(a: Metadata, b: Metadata): boolean {
 	return (
-		(meta.title || '') !== (cleaned.title || '') ||
-		(meta.artist || '') !== (cleaned.artist || '') ||
-		(meta.album || '') !== (cleaned.album || '') ||
-		(meta.genre || '') !== (cleaned.genre || '')
+		(a.title || '') === (b.title || '') &&
+		(a.artist || '') === (b.artist || '') &&
+		(a.album || '') === (b.album || '') &&
+		(a.genre || '') === (b.genre || '')
 	);
+}
+
+export function metadataNeedsCleanup(meta: Metadata): boolean {
+	return !metadataEquals(meta, cleanMetadataFields(meta));
 }
 
 export default function App() {
@@ -545,8 +548,11 @@ export default function App() {
 			// Keep the in-memory choice when persistent storage is unavailable.
 		}
 	};
-	/** The tags before the promo text was removed, so the removal can be undone. */
-	const [promoCleanup, setPromoCleanup] = useState<Metadata | null>(null);
+	/** The tags before and after the last cleanup, so it can be undone until they are edited. */
+	const [tagCleanup, setTagCleanup] = useState<{
+		before: Metadata;
+		after: Metadata;
+	} | null>(null);
 	/** Gate actions reported so far, in order; the last one is running. */
 	const [gateLog, setGateLog] = useState<string[]>([]);
 	const [startedAt, setStartedAt] = useState<number | null>(null);
@@ -1001,10 +1007,11 @@ export default function App() {
 
 				if (data.defaultMetadata) {
 					// Promo text like [FREE DL] is almost never wanted; undo is one click.
-					setMetadata(cleanMetadataFields(data.defaultMetadata));
-					setPromoCleanup(
+					const cleaned = cleanMetadataFields(data.defaultMetadata);
+					setMetadata(cleaned);
+					setTagCleanup(
 						metadataNeedsCleanup(data.defaultMetadata)
-							? data.defaultMetadata
+							? { before: data.defaultMetadata, after: cleaned }
 							: null,
 					);
 				}
@@ -1322,6 +1329,8 @@ export default function App() {
 		genre: '',
 	};
 	const canCleanupMetadata = metadataNeedsCleanup(metadata);
+	const canUndoCleanup =
+		tagCleanup !== null && metadataEquals(metadata, tagCleanup.after);
 	const inputIsTrackUrl = isTrackUrlInput(soundcloudUrl);
 	const outputFilenamePreview = job.downloadFilename
 		? previewProcessedFilename(job.downloadFilename, {
@@ -1459,7 +1468,7 @@ export default function App() {
 			error: null,
 		});
 		setMetadata({ title: '', artist: '', album: '', genre: '' });
-		setPromoCleanup(null);
+		setTagCleanup(null);
 		setGateLog([]);
 		setStartedAt(null);
 		setCustomArtwork(null);
@@ -2223,46 +2232,6 @@ export default function App() {
 										bring back the lost quality.
 									</p>
 								) : null}
-								{promoCleanup ? (
-									<div className="cleanup">
-										<p className="step-text">
-											Removed promo text like [FREE DL] and repeated artist
-											names.
-										</p>
-										<button
-											type="button"
-											className="btn-secondary btn-small"
-											disabled={isLoading}
-											onClick={() => {
-												setMetadata(promoCleanup);
-												setPromoCleanup(null);
-											}}
-										>
-											<Undo2 />
-											Undo
-										</button>
-									</div>
-								) : canCleanupMetadata ? (
-									<div className="cleanup">
-										<p className="step-text">
-											The tags contain promo text like [FREE DL] or a repeated
-											artist name.
-										</p>
-										<button
-											type="button"
-											className="btn-secondary btn-small"
-											disabled={isLoading}
-											onClick={() => {
-												setPromoCleanup(metadata);
-												setMetadata(cleanMetadataFields(metadata));
-											}}
-										>
-											<Eraser />
-											Remove promo text
-										</button>
-									</div>
-								) : null}
-
 								<div className="artwork-row">
 									<div className="artwork-thumb">
 										{customArtworkUrl ? (
@@ -2466,6 +2435,36 @@ export default function App() {
 										>
 											<FileCheck />
 											Keep the file's tags
+										</button>
+									) : null}
+									{canUndoCleanup ? (
+										<button
+											type="button"
+											className="btn-text btn-cleanup"
+											disabled={isLoading}
+											title="Put back the tags as they were before the cleanup"
+											onClick={() => {
+												setMetadata(tagCleanup.before);
+												setTagCleanup(null);
+											}}
+										>
+											<Undo2 />
+											<span className="btn-cleanup-label">Undo cleanup</span>
+										</button>
+									) : canCleanupMetadata ? (
+										<button
+											type="button"
+											className="btn-text btn-cleanup"
+											disabled={isLoading}
+											title="Remove promo text like [FREE DL] and artist names repeated in the title"
+											onClick={() => {
+												const cleaned = cleanMetadataFields(metadata);
+												setTagCleanup({ before: metadata, after: cleaned });
+												setMetadata(cleaned);
+											}}
+										>
+											<Eraser />
+											<span className="btn-cleanup-label">Clean up tags</span>
 										</button>
 									) : null}
 								</div>

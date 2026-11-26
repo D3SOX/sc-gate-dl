@@ -1001,17 +1001,6 @@
 	border-radius: var(--radius);
 }
 
-.cleanup {
-	display: flex;
-	flex-wrap: wrap;
-	align-items: center;
-	gap: var(--space-sm) var(--space-md);
-}
-
-.cleanup .step-text {
-	flex: 1 1 14rem;
-}
-
 .artwork-row {
 	display: flex;
 	align-items: center;
@@ -1183,7 +1172,27 @@
 	gap: var(--space-sm) var(--space-md);
 	padding-block: var(--space-md);
 	background: var(--bg);
+	container-type: inline-size;
 	border-top: 1px solid var(--hairline);
+}
+
+/* Edits the fields, so it sits apart from the buttons that save. */
+.btn-cleanup {
+	justify-content: center;
+	min-width: 44px;
+	margin-inline-start: auto;
+}
+
+/* Next to both save buttons, show only the icon in narrow windows. */
+@container (max-width: 33rem) {
+	.form-actions:has(> :nth-child(3)) .btn-cleanup-label {
+		position: absolute;
+		width: 1px;
+		height: 1px;
+		overflow: hidden;
+		clip-path: inset(50%);
+		white-space: nowrap;
+	}
 }
 
 .file-facts {
@@ -1261,6 +1270,11 @@
 	.form-actions > * {
 		flex: 1 1 auto;
 		padding-inline: var(--space-md);
+	}
+
+	.form-actions > .btn-cleanup {
+		flex: none;
+		padding-inline: var(--space-xs);
 	}
 }
 
