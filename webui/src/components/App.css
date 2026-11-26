@@ -39,9 +39,85 @@
 /* Masthead and title */
 .masthead {
 	display: flex;
+	align-items: flex-start;
+	gap: var(--space-md);
+}
+
+.masthead-text {
+	display: flex;
+	flex: 1;
 	flex-wrap: wrap;
 	align-items: baseline;
 	gap: var(--space-xs) var(--space-md);
+	min-width: 0;
+}
+
+.masthead-menu-button {
+	/* Centre the 44px target on the name's line. */
+	margin-top: -0.5rem;
+	anchor-name: --server-menu;
+	color: var(--type-soft);
+}
+
+.masthead-menu-button:hover:not(:disabled) {
+	color: var(--type);
+}
+
+/* Server tools, opened from the masthead */
+.menu {
+	position: fixed;
+	inset: auto;
+	top: var(--space-2xl);
+	right: var(--space-md);
+	width: min(20rem, calc(100vw - 2 * var(--space-md)));
+	padding: var(--space-xs);
+	margin: 0;
+	color: var(--type);
+	background: var(--surface-raised);
+	border: 1px solid var(--rule);
+	border-radius: var(--radius);
+	box-shadow: 0 12px 32px rgb(0 0 0 / 45%);
+}
+
+@supports (anchor-name: --a) {
+	.menu {
+		position-anchor: --server-menu;
+		top: anchor(bottom);
+		right: anchor(right);
+		margin-top: var(--space-xs);
+		position-try-fallbacks: flip-block;
+	}
+}
+
+.menu-item {
+	display: flex;
+	flex-direction: column;
+	width: 100%;
+	min-height: 44px;
+	padding: var(--space-sm) var(--space-md);
+	font: inherit;
+	font-weight: 500;
+	color: inherit;
+	text-align: left;
+	background: none;
+	border: 0;
+	border-radius: var(--radius);
+	cursor: pointer;
+}
+
+.menu-item:hover,
+.menu-item:focus-visible {
+	background: var(--surface);
+}
+
+.menu-item:focus-visible {
+	outline-offset: -2px;
+}
+
+.menu-hint {
+	font-size: 0.875rem;
+	font-weight: 400;
+	color: var(--type-soft);
 }
 
 .masthead-name {
@@ -106,7 +182,8 @@
 }
 
 .tracklist-item.is-done .tracklist-number {
-	border-color: var(--type-soft);
+	color: var(--accent);
+	border-color: var(--accent);
 }
 
 .tracklist-item.is-current {
@@ -123,10 +200,10 @@
 /* Banners */
 .banner {
 	display: grid;
-	grid-template-columns: auto minmax(0, 1fr);
-	gap: var(--space-sm) var(--space-md);
+	grid-template-columns: auto minmax(0, 1fr) auto;
+	gap: var(--space-md);
 	align-items: start;
-	padding: var(--space-md);
+	padding: var(--space-md) var(--space-xs) var(--space-md) var(--space-md);
 	background: var(--surface);
 	border: 1.5px solid;
 	border-radius: var(--radius);
@@ -160,15 +237,18 @@
 }
 
 .banner-message {
+	align-self: center;
 	overflow-wrap: anywhere;
 }
 
-.banner-actions {
-	display: flex;
-	flex-wrap: wrap;
-	grid-column: 2;
-	align-items: center;
-	gap: var(--space-sm) var(--space-md);
+/* The close button's 44px target overhangs the banner's padding. */
+.banner-dismiss {
+	margin-block: -0.625rem;
+	color: var(--type-soft);
+}
+
+.banner-dismiss:hover:not(:disabled) {
+	color: var(--type);
 }
 
 /* Step content */
@@ -264,6 +344,13 @@
 .field-hint {
 	font-size: 0.875rem;
 	color: var(--type-soft);
+}
+
+/* An input with its button on the same line */
+.input-row {
+	display: grid;
+	grid-template-columns: minmax(0, 1fr) auto;
+	gap: var(--space-sm);
 }
 
 /* Format choice */
@@ -574,22 +661,6 @@
 	}
 }
 
-.or {
-	display: flex;
-	align-items: center;
-	gap: var(--space-md);
-	font-size: 0.9375rem;
-	color: var(--type-soft);
-}
-
-.or::before,
-.or::after {
-	flex: 1;
-	height: 1px;
-	content: "";
-	background: var(--hairline);
-}
-
 /* Progress */
 .meter-group {
 	display: flex;
@@ -639,6 +710,87 @@
 .meter-stats span:first-child {
 	font-weight: 500;
 	color: var(--type);
+}
+
+/* Gate actions as they happen */
+.gate-log {
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-sm);
+	list-style: none;
+}
+
+.gate-log-item {
+	display: flex;
+	align-items: flex-start;
+	gap: var(--space-sm);
+	overflow-wrap: anywhere;
+}
+
+.gate-log-item.is-done {
+	color: var(--type-soft);
+}
+
+.gate-log-mark {
+	display: grid;
+	flex: none;
+	place-items: center;
+	width: 1.25rem;
+	height: 1.5rem;
+}
+
+.gate-log-item.is-done .gate-log-mark {
+	color: var(--success);
+}
+
+.gate-log-mark .spinner {
+	width: 0.875rem;
+	height: 0.875rem;
+	color: var(--accent);
+}
+
+/* Ways forward when no gate was found or the gate failed */
+.recovery {
+	list-style: none;
+	border-top: 1px solid var(--hairline);
+}
+
+.recovery-option {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: var(--space-sm) var(--space-md);
+	padding-block: var(--space-md);
+	border-bottom: 1px solid var(--hairline);
+}
+
+.recovery-option:last-child {
+	border-bottom: 0;
+}
+
+.recovery-text {
+	flex: 1 1 14rem;
+	min-width: 0;
+}
+
+.recovery-title {
+	font-weight: 500;
+}
+
+.recovery-hint {
+	font-size: 0.9375rem;
+	color: var(--type-soft);
+}
+
+.recovery-form {
+	display: flex;
+	flex: 1;
+	flex-direction: column;
+	gap: var(--space-sm);
+}
+
+.recovery-form .options {
+	border-bottom: 0;
 }
 
 /* Bandcamp album: pick a track from the listing */
@@ -831,58 +983,6 @@
 	flex: 1 1 14rem;
 }
 
-.existing {
-	display: flex;
-	flex-direction: column;
-	gap: var(--space-md);
-	padding: var(--space-lg);
-	background: var(--surface);
-	border-radius: var(--radius);
-}
-
-.existing h3 {
-	font-size: 1.0625rem;
-}
-
-.existing h3 + .step-text {
-	margin-top: var(--space-xs);
-	font-size: 0.9375rem;
-}
-
-.existing-list {
-	list-style: none;
-}
-
-.existing-row {
-	display: grid;
-	grid-template-columns: 3.75rem minmax(0, 1fr) auto;
-	align-items: center;
-	gap: var(--space-sm);
-	padding-block: var(--space-xs);
-	border-bottom: 1px solid var(--hairline);
-}
-
-.existing-label {
-	font-size: 0.9375rem;
-	color: var(--type-soft);
-}
-
-.existing-value {
-	overflow-wrap: anywhere;
-}
-
-.existing-cover {
-	display: block;
-	width: 3.75rem;
-	height: 3.75rem;
-	object-fit: cover;
-	border-radius: 2px;
-}
-
-.existing > .btn-secondary {
-	align-self: flex-start;
-}
-
 .artwork-row {
 	display: flex;
 	align-items: center;
@@ -935,6 +1035,20 @@
 
 .artwork-upload:hover:not(:has(input:disabled)) {
 	border-color: var(--type);
+}
+
+.existing-cover-button {
+	display: inline-flex;
+	align-items: center;
+	gap: var(--space-sm);
+}
+
+.existing-cover {
+	display: block;
+	width: 2rem;
+	height: 2rem;
+	object-fit: cover;
+	border-radius: 2px;
 }
 
 .artwork-upload:has(input:disabled) {
@@ -991,19 +1105,62 @@
 	cursor: not-allowed;
 }
 
+.field-existing {
+	display: flex;
+	align-items: baseline;
+	gap: var(--space-sm);
+	font-size: 0.875rem;
+	color: var(--type-soft);
+}
+
+.field-existing-value {
+	min-width: 0;
+	overflow-wrap: anywhere;
+}
+
+.field-existing .btn-text {
+	min-height: 0;
+	padding-block: var(--space-xs);
+	font-size: inherit;
+}
+
 .filename-block {
 	display: flex;
 	flex-direction: column;
-	gap: var(--space-sm);
+	gap: var(--space-xs);
 	padding-top: var(--space-md);
 	border-top: 1px solid var(--hairline);
 }
 
-.field input.filename-preview {
+.filename-preview {
+	overflow-wrap: anywhere;
+}
+
+.filename-preview-label {
 	color: var(--type-soft);
-	background: transparent;
-	border-style: dashed;
-	cursor: default;
+}
+
+.filename-preview-name {
+	font-weight: 500;
+}
+
+/* The save buttons stay in reach while the tags scroll. */
+.form-actions {
+	position: sticky;
+	bottom: 0;
+	z-index: 1;
+	display: flex;
+	flex-wrap: wrap;
+	gap: var(--space-sm) var(--space-md);
+	padding-block: var(--space-md);
+	background: var(--bg);
+	border-top: 1px solid var(--hairline);
+}
+
+.file-facts {
+	margin-top: var(--space-xs);
+	font-size: 0.9375rem;
+	color: var(--type-soft);
 }
 
 .actions {
@@ -1022,13 +1179,6 @@
 	font-size: 0.875rem;
 	color: var(--type-soft);
 	border-top: 1px solid var(--hairline);
-}
-
-.credits-actions {
-	display: flex;
-	flex-wrap: wrap;
-	gap: var(--space-sm);
-	margin-bottom: var(--space-xs);
 }
 
 /* One column: the object sits on top, the record slides out to the right. */
@@ -1052,26 +1202,36 @@
 		max-width: none;
 		padding-top: var(--space-xl);
 	}
+
+	/* Before a track is picked the sleeve only pushes the search down. */
+	.app.is-start .app-object {
+		display: none;
+	}
+
+	.app.is-start .app-notes {
+		grid-row: 1 / -1;
+	}
 }
 
 @media (max-width: 30rem) {
-	.tracklist-item:not(.is-current) .tracklist-label {
-		position: absolute;
-		width: 1px;
-		height: 1px;
-		overflow: hidden;
-		clip-path: inset(50%);
-		white-space: nowrap;
-	}
-
 	.step-block > :is(.btn-primary, .btn-secondary),
-	.search-results > .btn-secondary,
-	.existing > .btn-secondary {
+	.search-results > .btn-secondary {
 		align-self: stretch;
 	}
 
-	.actions > * {
+	.input-row {
+		grid-template-columns: minmax(0, 1fr);
+	}
+
+	.actions > *,
+	.recovery-option > :is(.btn-primary, .btn-secondary) {
 		flex: 1 1 100%;
+	}
+
+	/* Side by side, so the pinned bar stays one row tall. */
+	.form-actions > * {
+		flex: 1 1 auto;
+		padding-inline: var(--space-md);
 	}
 }
 

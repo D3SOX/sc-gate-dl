@@ -52,7 +52,7 @@ The login step below fills in the SoundCloud values.
 bun start --login
 ```
 
-Sign in to SoundCloud and Spotify in the windows that open. In the Web UI, **Initialize logins** in the footer does the same.
+Sign in to SoundCloud and Spotify in the windows that open. In the Web UI, **Initialize logins** in the menu next to the title does the same.
 
 You sign in to SoundCloud once, in a Firefox window with a fresh temporary profile. On a server, that window opens on the server's display, which the [remote browser view](server.md#-remote-headed-browser-with-novnc) shows. The gate browser then takes over this session to get a login of its own, because it must not share one with the API. Without Firefox, sc-gate-dl warns and you sign in in a CloakBrowser window instead. A gate that hits SoundCloud's sign-in page in a visible browser runs the same flow.
 

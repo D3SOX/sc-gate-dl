@@ -14,6 +14,12 @@ describe('cleanPromoTags', () => {
 		expect(cleanPromoTags('[PREMIERE] Artist - Track')).toBe('Artist - Track');
 		expect(cleanPromoTags('[PREMIERE]: Artist - Track')).toBe('Artist - Track');
 	});
+
+	test('keeps words that only end like a promo tag', () => {
+		expect(cleanPromoTags('About Now')).toBe('About Now');
+		expect(cleanPromoTags('Track OUT NOW')).toBe('Track');
+		expect(cleanPromoTags('Track [OUT NOW]')).toBe('Track');
+	});
 });
 
 describe('metadata cleanup', () => {
