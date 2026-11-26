@@ -858,6 +858,17 @@
 	margin-top: var(--space-2xl);
 }
 
+.search-results-header {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: var(--space-md);
+}
+
+.search-results-header > .btn-text {
+	flex-shrink: 0;
+}
+
 .step-heading.search-results-heading {
 	font-size: 1.125rem;
 }

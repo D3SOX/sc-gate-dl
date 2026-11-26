@@ -536,6 +536,7 @@ export default function App() {
 		null,
 	);
 	const artworkInputRef = useRef<HTMLInputElement>(null);
+	const soundcloudInputRef = useRef<HTMLInputElement>(null);
 	const cleanupToastShownRef = useRef(false);
 	const reviewTagsRef = useRef(true);
 	const signInWarningRef = useRef<string | null>(null);
@@ -998,14 +999,18 @@ export default function App() {
 			}
 
 			const page = data as SearchResponse;
-			setSearch((prev) => ({
-				query,
-				results:
-					offset > 0 && prev
-						? appendSearchResults(prev.results, page.results)
-						: page.results,
-				nextOffset: page.nextOffset,
-			}));
+			setSearch((prev) => {
+				if (offset > 0) {
+					// The search was cleared while more results loaded.
+					if (!prev || prev.query !== query) return prev;
+					return {
+						query,
+						results: appendSearchResults(prev.results, page.results),
+						nextOffset: page.nextOffset,
+					};
+				}
+				return { query, results: page.results, nextOffset: page.nextOffset };
+			});
 		} catch (err) {
 			setJob((prev) => ({
 				...prev,
@@ -1032,6 +1037,12 @@ export default function App() {
 		if (search && search.nextOffset !== null) {
 			void runSearch(search.query, search.nextOffset);
 		}
+	};
+
+	const clearSearch = () => {
+		setSearch(null);
+		setSoundcloudUrl('');
+		soundcloudInputRef.current?.focus();
 	};
 
 	const handleSearchResultSelect = (result: SearchResult) => {
@@ -1639,11 +1650,18 @@ export default function App() {
 								</label>
 								<div className="input-row">
 									<input
+										ref={soundcloudInputRef}
 										id="soundcloud-url"
 										type="text"
 										name="soundcloud-track-url"
 										value={soundcloudUrl}
 										onChange={(e) => setSoundcloudUrl(e.target.value)}
+										onKeyDown={(e) => {
+											if (e.key === 'Escape' && search) {
+												e.preventDefault();
+												clearSearch();
+											}
+										}}
 										placeholder="Track link, or artist and title"
 										autoComplete="off"
 										required
@@ -1724,11 +1742,21 @@ export default function App() {
 					)}
 					{step === 'url' && search && (
 						<section className="search-results" aria-label="Search results">
-							<h2 className="step-heading search-results-heading">
-								{search.results.length > 0
-									? `Results for “${search.query}”`
-									: `No tracks found for “${search.query}”`}
-							</h2>
+							<div className="search-results-header">
+								<h2 className="step-heading search-results-heading">
+									{search.results.length > 0
+										? `Results for “${search.query}”`
+										: `No tracks found for “${search.query}”`}
+								</h2>
+								<button
+									type="button"
+									className="btn-text"
+									disabled={isLoading}
+									onClick={clearSearch}
+								>
+									Clear
+								</button>
+							</div>
 							{search.results.length > 0 ? (
 								<ul className="search-result-list">
 									{search.results.map((result) => (
