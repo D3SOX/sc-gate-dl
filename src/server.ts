@@ -55,6 +55,7 @@ import {
 	OUTPUT_FORMATS,
 	type OutputFormat,
 } from './types';
+import { createVersionChecker } from './updateCheck';
 import {
 	artistTitleFilename,
 	extractAndResolveGateUrl,
@@ -101,6 +102,9 @@ const DELETE_AFTER_DOWNLOAD = deleteAfterDownloadEnabled(
 );
 const LIBRARY_DIR = libraryDirFromEnv();
 const API_PORT = apiPortFromEnv();
+const serverVersion = createVersionChecker();
+// Start the first check now, so the Web UI's first request rarely waits for it.
+void serverVersion();
 /** Web UI jobs stop for tags unless `SC_GATE_DL_REVIEW_TAGS=false`. */
 const REVIEW_TAGS = reviewTagsFromEnv();
 /** Initialize logins runs one at a time; see its route. */
@@ -956,6 +960,7 @@ const server = Bun.serve({
 				signInWarning:
 					firefoxDisabled() || findFirefox() ? null : FIREFOX_MISSING_WARNING,
 			}),
+		'/api/version': async () => jsonResponse(await serverVersion()),
 
 		'/api/search': {
 			GET: async (req) => {

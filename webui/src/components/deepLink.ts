@@ -50,6 +50,22 @@ export function parseSignInWarning(value: unknown): string | null {
 	return typeof warning === 'string' && warning ? warning : null;
 }
 
+/** The running and latest commit from `GET /api/version` when the server is behind. */
+export function parseOutdatedServer(
+	value: unknown,
+): { commit: string; latestCommit: string } | null {
+	const version = value as {
+		commit?: unknown;
+		latestCommit?: unknown;
+		outdated?: unknown;
+	} | null;
+	if (version?.outdated !== true) return null;
+	const { commit, latestCommit } = version;
+	return typeof commit === 'string' && typeof latestCommit === 'string'
+		? { commit, latestCommit }
+		: null;
+}
+
 export function parseReviewTags(value: unknown): boolean {
 	return (value as { reviewTags?: unknown } | null)?.reviewTags !== false;
 }

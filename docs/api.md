@@ -70,6 +70,7 @@ Finish the job with `POST /api/job/:id/metadata`:
 | Endpoint | Purpose |
 | --- | --- |
 | `GET /api/capabilities` | Browser modes, `BROWSER_VIEW_URL`, whether library jobs and tag review are on, and a warning when Firefox is missing |
+| `GET /api/version` | The `commit` the server started from, the `latestCommit` on origin's default branch, and whether the server is `outdated` |
 | `GET /api/search`, `GET /api/artwork` | [Search and artwork](#-search-and-artwork) |
 | `POST /api/job` | Create a job |
 | `GET /api/job/:id` | The job and its progress |

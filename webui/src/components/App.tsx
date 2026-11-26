@@ -34,6 +34,7 @@ import { resolveApiBase } from './apiBase';
 import {
 	parseAvailableBrowserModes,
 	parseBrowserViewUrl,
+	parseOutdatedServer,
 	parseReviewTags,
 	parseSignInWarning,
 	readRequestedBrowserMode,
@@ -571,6 +572,27 @@ export default function App() {
 		jobId: null,
 	});
 	const formatPercent = (value?: number) => Math.round(value ?? 0);
+
+	useEffect(() => {
+		let cancelled = false;
+		void fetch(`${API_BASE}/api/version`)
+			.then((response) => (response.ok ? response.json() : null))
+			.then((version) => {
+				const outdated = parseOutdatedServer(version);
+				if (cancelled || !outdated) return;
+				toast.warning('The server is out of date', {
+					id: 'server-outdated',
+					description: `It runs ${outdated.commit.slice(0, 7)}, but the latest commit is ${outdated.latestCommit.slice(0, 7)}. Update it and restart the server.`,
+					duration: Number.POSITIVE_INFINITY,
+				});
+			})
+			.catch(() => {
+				// An older server has no version endpoint.
+			});
+		return () => {
+			cancelled = true;
+		};
+	}, []);
 
 	useEffect(() => {
 		unloadJobRef.current = {

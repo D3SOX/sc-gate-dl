@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import {
 	parseAvailableBrowserModes,
 	parseBrowserViewUrl,
+	parseOutdatedServer,
 	parseReviewTags,
 	readRequestedBrowserMode,
 	readRequestedOutputFormat,
@@ -137,5 +138,23 @@ describe('output format and review settings', () => {
 		expect(parseReviewTags({ reviewTags: true })).toBeTrue();
 		expect(parseReviewTags({})).toBeTrue();
 		expect(parseReviewTags(null)).toBeTrue();
+	});
+});
+
+describe('outdated server notice', () => {
+	test('returns both commits when the server is outdated', () => {
+		expect(
+			parseOutdatedServer({ commit: 'a', latestCommit: 'b', outdated: true }),
+		).toEqual({ commit: 'a', latestCommit: 'b' });
+	});
+
+	test('ignores up-to-date and malformed responses', () => {
+		expect(
+			parseOutdatedServer({ commit: 'a', latestCommit: 'a', outdated: false }),
+		).toBeNull();
+		expect(
+			parseOutdatedServer({ commit: null, latestCommit: 'b', outdated: true }),
+		).toBeNull();
+		expect(parseOutdatedServer(null)).toBeNull();
 	});
 });

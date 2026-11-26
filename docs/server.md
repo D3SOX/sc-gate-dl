@@ -211,7 +211,7 @@ systemctl --user status sc-gate-dl.target
 journalctl --user -u sc-gate-app.service -f
 ```
 
-To update sc-gate-dl, only the app service needs a restart. It rebuilds the Web UI when it starts:
+The Web UI tells you when the server doesn't run the latest commit. It asks the checkout's `origin` remote at most once an hour. To update sc-gate-dl, only the app service needs a restart. It rebuilds the Web UI when it starts:
 
 ```bash
 cd ~/sc-gate-dl
