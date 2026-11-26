@@ -27,7 +27,7 @@ curl -fsSL https://raw.githubusercontent.com/D3SOX/sc-gate-dl/master/install-ser
 
 It installs the packages and Bun, clones sc-gate-dl to `~/sc-gate-dl` (set `SC_GATE_DL_DIR` for another folder), creates `.env`, asks for the VNC password, and starts the systemd user services. The API only starts once you're logged in to SoundCloud, so the script then runs `bun start --login` and you sign in through noVNC at `http://SERVER:6080/vnc.html`. Afterwards, check the gate values in `.env` as described in [Installation](installation.md#-1-create-the-env-file) and restart the app service.
 
-Running it again updates sc-gate-dl and restarts the stack. It keeps `.env` and the VNC password, but rewrites the unit files. On Debian, Bandcamp downloads also need yt-dlp's `curl_cffi` backend, which the script doesn't install.
+Running it again updates sc-gate-dl and restarts the stack. It keeps `.env` and the VNC password, but rewrites the unit files. On Debian, the services use yt-dlp's standalone build in `~/.local/share/sc-gate-dl/bin` instead of Debian's `yt-dlp`, because it bundles the `curl_cffi` backend Bandcamp needs. A rerun updates it.
 
 ### ✅ What you need
 

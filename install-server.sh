@@ -34,7 +34,7 @@ main() {
 	export XDG_RUNTIME_DIR=${XDG_RUNTIME_DIR:-/run/user/$(id -u)}
 
 	step "Installing packages"
-	install_packages
+	install_packages "$share_dir/bin"
 
 	if ! command -v bun >/dev/null && [ ! -x "$HOME/.bun/bin/bun" ]; then
 		step "Installing Bun"
@@ -181,17 +181,38 @@ install_packages() {
 		# shellcheck disable=SC2024
 		sudo pacman -S --needed "${missing[@]}" </dev/tty
 	elif command -v apt-get >/dev/null; then
+		# Debian's yt-dlp lags behind the sites it downloads from, and Debian
+		# doesn't package curl_cffi, which Bandcamp needs. yt-dlp's standalone
+		# builds bundle it, so the services use one of those where it exists.
+		local ytdlp_asset=
+		case $(uname -m) in
+		x86_64) ytdlp_asset=yt-dlp_linux ;;
+		aarch64) ytdlp_asset=yt-dlp_linux_aarch64 ;;
+		esac
 		# libnss3 is the one CloakBrowser library firefox-esr doesn't pull in.
 		# Droploud's Firefox repost needs AT-SPI, XTest and a user session bus.
+		local packages=(git curl unzip ffmpeg xvfb xauth x11vnc python3 libnss3 iproute2
+			firefox-esr at-spi2-core libxtst6 dbus-user-session)
+		[ -n "$ytdlp_asset" ] || packages+=(yt-dlp)
 		local missing=() pkg
-		for pkg in git curl unzip ffmpeg yt-dlp xvfb xauth x11vnc python3 \
-			libnss3 iproute2 firefox-esr at-spi2-core libxtst6 dbus-user-session; do
+		for pkg in "${packages[@]}"; do
 			[ "$(dpkg-query -W -f='${db:Status-Status}' "$pkg" 2>/dev/null)" = installed ] ||
 				missing+=("$pkg")
 		done
-		[ "${#missing[@]}" -gt 0 ] || return 0
-		sudo apt-get update
-		sudo apt-get install -y "${missing[@]}"
+		if [ "${#missing[@]}" -gt 0 ]; then
+			sudo apt-get update
+			sudo apt-get install -y "${missing[@]}"
+		fi
+		[ -n "$ytdlp_asset" ] || return 0
+		if [ -x "$1/yt-dlp" ]; then
+			"$1/yt-dlp" -U
+		else
+			mkdir -p "$1"
+			curl -fsSL -o "$1/yt-dlp.part" \
+				"https://github.com/yt-dlp/yt-dlp/releases/latest/download/$ytdlp_asset"
+			chmod 755 "$1/yt-dlp.part"
+			mv "$1/yt-dlp.part" "$1/yt-dlp"
+		fi
 	else
 		printf 'Unknown package manager. Install git, curl, unzip, ffmpeg, yt-dlp, Firefox,\n'
 		printf 'Xvfb, xauth, x11vnc and python3 yourself, then press Enter.\n'
@@ -278,7 +299,8 @@ PartOf=sc-gate-dl.target
 [Service]
 Type=simple
 WorkingDirectory=$app_dir
-Environment=PATH=$(dirname "$bun"):/usr/local/bin:/usr/bin
+# $share_dir/bin holds the yt-dlp build the script installs on Debian.
+Environment=PATH=$(dirname "$bun"):$share_dir/bin:/usr/local/bin:/usr/bin
 Environment=DISPLAY=:99
 Environment=XAUTHORITY=$xauthority
 Environment=XDG_SESSION_TYPE=x11
