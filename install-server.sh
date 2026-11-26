@@ -96,7 +96,7 @@ main() {
 	step "Starting the services"
 	# Lingering starts the services at boot without a login. It also starts the
 	# user's service manager now if this session didn't.
-	sudo loginctl enable-linger "$USER"
+	[ -e "/var/lib/systemd/linger/$USER" ] || sudo loginctl enable-linger "$USER"
 	wait_for "the systemd user manager" test -S "$XDG_RUNTIME_DIR/bus"
 	systemd-analyze --user verify "$unit_dir"/sc-gate-*.service "$unit_dir/sc-gate-dl.target"
 	systemctl --user daemon-reload
@@ -171,16 +171,27 @@ install_packages() {
 		for cmd in yt-dlp firefox; do
 			PATH=/usr/local/bin:/usr/bin command -v "$cmd" >/dev/null || optional+=("$cmd")
 		done
+		# pacman -T prints the packages nothing installed provides, so a rerun
+		# needs no sudo.
+		local missing
+		mapfile -t missing < <(pacman -T git curl unzip ffmpeg python-curl_cffi "${optional[@]}" \
+			xorg-server-xvfb xorg-xauth x11vnc python iproute2 at-spi2-core libxtst || true)
+		[ "${#missing[@]}" -gt 0 ] || return 0
 		# pacman asks for confirmation on the terminal; sudo needn't open it.
 		# shellcheck disable=SC2024
-		sudo pacman -S --needed git curl unzip ffmpeg python-curl_cffi "${optional[@]}" \
-			xorg-server-xvfb xorg-xauth x11vnc python iproute2 at-spi2-core libxtst </dev/tty
+		sudo pacman -S --needed "${missing[@]}" </dev/tty
 	elif command -v apt-get >/dev/null; then
-		sudo apt-get update
 		# libnss3 is the one CloakBrowser library firefox-esr doesn't pull in.
 		# Droploud's Firefox repost needs AT-SPI, XTest and a user session bus.
-		sudo apt-get install -y git curl unzip ffmpeg yt-dlp xvfb xauth x11vnc python3 \
-			libnss3 iproute2 firefox-esr at-spi2-core libxtst6 dbus-user-session
+		local missing=() pkg
+		for pkg in git curl unzip ffmpeg yt-dlp xvfb xauth x11vnc python3 \
+			libnss3 iproute2 firefox-esr at-spi2-core libxtst6 dbus-user-session; do
+			[ "$(dpkg-query -W -f='${db:Status-Status}' "$pkg" 2>/dev/null)" = installed ] ||
+				missing+=("$pkg")
+		done
+		[ "${#missing[@]}" -gt 0 ] || return 0
+		sudo apt-get update
+		sudo apt-get install -y "${missing[@]}"
 	else
 		printf 'Unknown package manager. Install git, curl, unzip, ffmpeg, yt-dlp, Firefox,\n'
 		printf 'Xvfb, xauth, x11vnc and python3 yourself, then press Enter.\n'
