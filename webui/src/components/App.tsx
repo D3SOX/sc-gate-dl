@@ -387,6 +387,9 @@ export function metadataNeedsCleanup(meta: Metadata): boolean {
 	return !metadataEquals(meta, cleanMetadataFields(meta));
 }
 
+const SERVER_OUTDATED_TOAST_ID = 'server-outdated';
+const VERSION_RECHECK_MS = 15 * 60 * 1000;
+
 export default function App() {
 	const [step, setStep] = useState<Step>('url');
 	const [soundcloudUrl, setSoundcloudUrl] = useState('');
@@ -588,22 +591,44 @@ export default function App() {
 
 	useEffect(() => {
 		let cancelled = false;
-		void fetch(`${API_BASE}/api/version`)
-			.then((response) => (response.ok ? response.json() : null))
-			.then((version) => {
-				const outdated = parseOutdatedServer(version);
-				if (cancelled || !outdated) return;
+		// The latest commit the notice was shown for, so a dismissed notice
+		// only comes back for a newer commit.
+		let notifiedCommit: string | null = null;
+		const checkVersion = async () => {
+			try {
+				const response = await fetch(`${API_BASE}/api/version`);
+				if (!response.ok || cancelled) return;
+				const outdated = parseOutdatedServer(await response.json());
+				if (cancelled) return;
+				if (!outdated) {
+					toast.dismiss(SERVER_OUTDATED_TOAST_ID);
+					notifiedCommit = null;
+					return;
+				}
+				if (outdated.latestCommit === notifiedCommit) return;
+				notifiedCommit = outdated.latestCommit;
 				toast.warning('The server is out of date', {
-					id: 'server-outdated',
+					id: SERVER_OUTDATED_TOAST_ID,
 					description: `It runs ${outdated.commit.slice(0, 7)}, but the latest commit is ${outdated.latestCommit.slice(0, 7)}. Update it and restart the server.`,
 					duration: Number.POSITIVE_INFINITY,
 				});
-			})
-			.catch(() => {
+			} catch {
 				// An older server has no version endpoint.
-			});
+			}
+		};
+		let lastCheck = Date.now();
+		// The server caches its result, so this only limits requests.
+		const checkOnReturn = () => {
+			if (document.visibilityState !== 'visible') return;
+			if (Date.now() - lastCheck < VERSION_RECHECK_MS) return;
+			lastCheck = Date.now();
+			void checkVersion();
+		};
+		void checkVersion();
+		document.addEventListener('visibilitychange', checkOnReturn);
 		return () => {
 			cancelled = true;
+			document.removeEventListener('visibilitychange', checkOnReturn);
 		};
 	}, []);
 

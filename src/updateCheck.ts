@@ -1,7 +1,7 @@
 import { resolve } from 'node:path';
 
 const REPO_DIR = resolve(import.meta.dir, '..');
-const CHECK_INTERVAL_MS = 60 * 60 * 1000;
+const CHECK_INTERVAL_MS = 15 * 60 * 1000;
 
 export type ServerVersion = {
 	/** The commit the server started from, or null outside a Git checkout. */
@@ -70,7 +70,7 @@ export async function checkServerVersion(
 	}
 }
 
-/** Remembers the startup commit and checks for a newer one at most hourly. */
+/** Remembers the startup commit and checks for a newer one at most every 15 minutes. */
 export function createVersionChecker(repoDir = REPO_DIR) {
 	// Read now, so a `git pull` without a restart still counts as outdated.
 	const startupCommit = readHeadCommit(repoDir);
