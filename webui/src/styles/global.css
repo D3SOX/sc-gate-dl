@@ -104,7 +104,8 @@ a {
 	text-underline-offset: 0.2em;
 }
 
-a:hover {
+/* :where() keeps this below class rules, so links styled as buttons keep their colors */
+a:where(:hover) {
 	color: var(--accent);
 	text-decoration-thickness: 2px;
 }
