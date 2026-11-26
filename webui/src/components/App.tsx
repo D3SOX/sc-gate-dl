@@ -1749,6 +1749,7 @@ export default function App() {
 							</div>
 							<OptionsDisclosure
 								title="Options"
+								storageKey="sc-gate-dl-options-open"
 								current={`${OUTPUT_FORMAT_OPTIONS.find(({ value }) => value === outputFormat)?.label ?? outputFormat} · ${browserOptionsSummary}`}
 							>
 								<fieldset className="field">
@@ -1978,6 +1979,7 @@ export default function App() {
 										</div>
 										<OptionsDisclosure
 											title="Browser options"
+											storageKey="sc-gate-dl-browser-options-open"
 											current={BROWSER_MODE_LABELS[browserMode]}
 										>
 											<BrowserModeField
@@ -2571,14 +2573,37 @@ function Banner({
 function OptionsDisclosure({
 	title,
 	current,
+	storageKey,
 	children,
 }: {
 	title: string;
 	current: string;
+	/** Remembers whether the disclosure was left open. */
+	storageKey: string;
 	children: React.ReactNode;
 }) {
+	const ref = useRef<HTMLDetailsElement>(null);
+	useEffect(() => {
+		try {
+			if (ref.current && localStorage.getItem(storageKey) === 'true') {
+				ref.current.open = true;
+			}
+		} catch {
+			// Storage may be blocked when the Web UI is embedded cross-origin.
+		}
+	}, [storageKey]);
 	return (
-		<details className="options">
+		<details
+			ref={ref}
+			className="options"
+			onToggle={(event) => {
+				try {
+					localStorage.setItem(storageKey, String(event.currentTarget.open));
+				} catch {
+					// Keep the in-memory state when persistent storage is unavailable.
+				}
+			}}
+		>
 			<summary>
 				<span className="options-title">{title}</span>
 				<span className="options-current">{current}</span>
