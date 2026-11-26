@@ -260,7 +260,8 @@ export function cleanPromoTags(value: string): string {
 		'',
 	);
 	result = result.replace(
-		new RegExp(String.raw`(?:${PROMO_TAG})\s*$`, 'gi'),
+		// The tag must start a word, or `About Now` would lose `out Now`.
+		new RegExp(String.raw`\b(?:${PROMO_TAG})\s*$`, 'gi'),
 		'',
 	);
 	result = result.replace(
@@ -1297,8 +1298,10 @@ export default function App() {
 		existingTagRows.length > 0 || job.hasExistingArtwork;
 	const phaseIndex = phaseIndexFor(step);
 	const hasFailed = Boolean(job.jobId) && job.progress?.stage === 'error';
+	// Converting the download can fail after the UI reached the save step.
 	const showRecovery =
-		(step === 'gate' && !isHandlingGate) || (step === 'download' && hasFailed);
+		(step === 'gate' && !isHandlingGate) ||
+		((step === 'download' || step === 'metadata') && hasFailed);
 	const retryModes = hasFailed
 		? RETRY_ORDER.filter(
 				(mode) =>
@@ -2107,6 +2110,7 @@ export default function App() {
 
 					{/* Save: audio processing */}
 					{step === 'metadata' &&
+						!hasFailed &&
 						job.progress?.stage === 'processing_audio' && (
 							<div className="step-block">
 								<h2 className="step-heading" aria-live="polite">
@@ -2124,6 +2128,7 @@ export default function App() {
 						)}
 					{/* Save: tags */}
 					{step === 'metadata' &&
+						!hasFailed &&
 						job.progress?.stage !== 'processing_audio' && (
 							<form onSubmit={handleMetadataSubmit} className="step-block">
 								<h2 className="step-heading">Check the tags</h2>
