@@ -164,9 +164,16 @@ fail() {
 
 install_packages() {
 	if command -v pacman >/dev/null; then
+		# --needed only skips the exact package name, so an AUR build such as
+		# yt-dlp-nightly-bin would conflict. Keep any yt-dlp or Firefox the
+		# services find on their PATH.
+		local optional=() cmd
+		for cmd in yt-dlp firefox; do
+			PATH=/usr/local/bin:/usr/bin command -v "$cmd" >/dev/null || optional+=("$cmd")
+		done
 		# pacman asks for confirmation on the terminal; sudo needn't open it.
 		# shellcheck disable=SC2024
-		sudo pacman -S --needed git curl unzip ffmpeg yt-dlp python-curl_cffi firefox \
+		sudo pacman -S --needed git curl unzip ffmpeg python-curl_cffi "${optional[@]}" \
 			xorg-server-xvfb xorg-xauth x11vnc python iproute2 at-spi2-core libxtst </dev/tty
 	elif command -v apt-get >/dev/null; then
 		sudo apt-get update
